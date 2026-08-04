@@ -18,8 +18,11 @@ import numpy as np
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from utils.clean_data import clean_data  # noqa: E402
+from utils.json_to_csv import json_to_csv_folder  # noqa: E402
 from Rule_based import canonize as C  # noqa: E402
 from Rule_based import cluster as CL  # noqa: E402
 from Rule_based import features as F  # noqa: E402
@@ -32,6 +35,7 @@ from Rule_based.score import JourneyScorer  # noqa: E402
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--preprocess", action="store_true", default=False, help="run the preprocess step first")
     p.add_argument("--input", default="data/final_clean_events.csv")
     p.add_argument("--output", default="outputs/journey")
     p.add_argument("--level", default="L2", choices=["L1", "L2", "L3"])
@@ -47,45 +51,44 @@ def banner(text: str) -> None:
     print(f"\n{'=' * 78}\n{text}\n{'=' * 78}")
 
 
-def main() -> int:
-    args = parse_args()
-    cfg = PipelineConfig(input_csv=Path(args.input), output_dir=Path(args.output))
-    cfg.tokens.level = args.level
-    cfg.segment.idle_gap_seconds = args.idle_gap
-    cfg.segment.use_entropy_boundaries = args.entropy
-    cfg.cluster.min_cluster_size = args.min_cluster_size
-    cfg.post.drop_chrome = not args.keep_chrome
-
-    out_dir = REPO_ROOT / cfg.output_dir
-    out_dir.mkdir(parents=True, exist_ok=True)
+def run_cluster_journey(
+    raw: pd.DataFrame,
+    platform: str,
+    cfg: PipelineConfig,
+    out_dir: Path,
+    *,
+    check_stability: bool = True,
+) -> dict[str, object]:
+    """Run the complete, platform-agnostic clustering pipeline."""
+    platform = platform.lower().strip()
+    prefix = f"{platform}_"
     reports: dict[str, pd.DataFrame] = {}
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    # ---------------------------------------------------------------- load
-    banner("STAGE 0 - load")
-    raw = pd.read_csv(REPO_ROOT / cfg.input_csv, low_memory=False)
+    banner(f"{platform.upper()} - STAGE 0 - input")
     print(f"rows={len(raw):,}  sessions={raw.session_id.nunique():,}  columns={len(raw.columns)}")
 
-    # ------------------------------------------------------------ canonize
-    banner("STAGE 1 - canonize (role-correct screen/target)")
+    banner(f"{platform.upper()} - STAGE 1 - canonize")
     canon = C.canonize_events(raw, cfg.canonize)
     reports["canonization"] = C.canonization_report(raw, canon)
     print(reports["canonization"].to_string(index=False))
 
-    # ------------------------------------------------------------ tokenize
-    banner("STAGE 2 - tokenize (multi-resolution)")
+    banner(f"{platform.upper()} - STAGE 2 - tokenize")
     tok = T.build_tokens(canon, cfg.canonize)
     for level in ("L1", "L2", "L3"):
         col = {"L1": "token_l1", "L2": "token_l2", "L3": "token_l3"}[level]
         vc = tok[col].value_counts()
+        coverage = vc.head(100).sum() / len(tok) if len(tok) else 0.0
         print(
             f"{level}: vocab={len(vc):>5}  singletons={(vc == 1).sum():>4} "
-            f"({(vc == 1).mean():.1%})  top100_coverage={vc.head(100).sum() / len(tok):.1%}"
+            f"({(vc == 1).mean():.1%})  top100_coverage={coverage:.1%}"
         )
-    dictionary = T.token_dictionary(tok, cfg.tokens.level)
-    dictionary.to_csv(out_dir / "token_dictionary.csv", index=False)
+    T.token_dictionary(tok, cfg.tokens.level).to_csv(
+        out_dir / f"{prefix}token_dictionary.csv", index=False
+    )
 
     # ------------------------------------------------------------- segment
-    banner("STAGE 3 - segment sessions into journeys")
+    banner(f"{platform.upper()} - STAGE 3 - segment sessions into journeys")
     reports["idle_gap_sweep"] = S.sweep_idle_gap(tok, cfg.segment)
     print("idle-gap sensitivity:")
     print(reports["idle_gap_sweep"].to_string(index=False))
@@ -119,6 +122,8 @@ def main() -> int:
     journeys_all = journeys.copy()
     journeys = journeys.loc[keep].reset_index(drop=True)
     sequences = [s for s, k in zip(sequences, keep) if k]
+    if journeys.empty:
+        raise ValueError(f"{platform}: no journeys meet the minimum length")
 
     # -------------------------------------------------------------- features
     banner("STAGE 5 - journey representation")
@@ -135,7 +140,7 @@ def main() -> int:
     print("\nKMeans baseline sweep:")
     print(reports["kmeans_sweep"].to_string(index=False))
 
-    if not args.no_stability:
+    if check_stability:
         reports["stability"] = CL.stability_check(matrix, cfg.cluster)
         print("\nstability (subsample ARI):")
         print(reports["stability"].to_string(index=False))
@@ -181,7 +186,7 @@ def main() -> int:
     scorer = JourneyScorer.from_training_run(
         cfg, vectorizer, matrix, labels, journeys, sequences, bank
     )
-    scorer.save(out_dir / "journey_scorer.pkl")
+    scorer.save(out_dir / f"{prefix}journey_scorer.pkl")
 
     # hold-out check: score the last calendar day as if it were unseen data
     cutoff = raw["created_at"].max()
@@ -204,41 +209,82 @@ def main() -> int:
             .head(10)
             .to_string()
         )
-        scored.to_csv(out_dir / "scored_holdout.csv", index=False)
+        scored.to_csv(out_dir / f"{prefix}scored_holdout.csv", index=False)
 
     # ---------------------------------------------------------------- save
     banner("STAGE 9 - write artefacts")
     journeys["sequence"] = [" -> ".join(s) for s in sequences]
-    journeys.to_csv(out_dir / "journeys.csv", index=False)
-    journeys_all.to_csv(out_dir / "journeys_all_including_short.csv", index=False)
-    catalog.to_json(out_dir / "cluster_catalog.json", orient="records", indent=2)
-    ngrams.to_csv(out_dir / "cluster_ngrams.csv", index=False)
+    journeys.to_csv(out_dir / f"{prefix}journeys.csv", index=False)
+    journeys_all.to_csv(out_dir / f"{prefix}journeys_all_including_short.csv", index=False)
+    catalog.to_json(out_dir / f"{prefix}cluster_catalog.json", orient="records", indent=2)
+    ngrams.to_csv(out_dir / f"{prefix}cluster_ngrams.csv", index=False)
     seg[
         [
             "record_id", "session_id", "journey_id", "journey_pos", "boundary_reason",
-            "ts", "event_type", "OS", "screen", "target", "screen_class",
+            "ts", "key", "segmentation.segment", "screen", "target", "screen_class",
             "token_l1", "token_l2", "token_l3", "duration_clip", "gap_prev_s",
         ]
-    ].to_csv(out_dir / "events_canonical.csv", index=False)
+    ].to_csv(out_dir / f"{prefix}events_canonical.csv", index=False)
 
-    with (out_dir / "sequences.jsonl").open("w", encoding="utf-8") as fh:
+    with (out_dir / f"{prefix}sequences.jsonl").open("w", encoding="utf-8") as fh:
         for jid, seq in zip(journeys["journey_id"], sequences):
             fh.write(json.dumps({"journey_id": jid, "tokens": seq}) + "\n")
 
     for name, frame in reports.items():
-        frame.to_csv(out_dir / f"report_{name}.csv", index=False)
+        frame.to_csv(out_dir / f"{prefix}report_{name}.csv", index=False)
 
-    (out_dir / "run_config.json").write_text(
+    (out_dir / f"{prefix}run_config.json").write_text(
         json.dumps({"config": cfg.to_dict(), "feature_info": info, "hdbscan": hstats}, indent=2),
         encoding="utf-8",
     )
 
-    lines = ["# Journey Pipeline Run\n"]
+    lines = [f"# {platform.title()} Journey Pipeline Run\n"]
     for name, frame in reports.items():
         lines.append(f"\n## {name}\n\n{frame.head(40).to_markdown(index=False)}\n")
-    (out_dir / "RUN_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+    (out_dir / f"{prefix}RUN_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
 
-    print(f"\nartefacts written to {out_dir}")
+    return {
+        "journeys": journeys,
+        "sequences": sequences,
+        "labels": labels,
+        "model": model,
+        "scorer": scorer,
+        "catalog": catalog,
+        "reports": reports,
+    }
+
+
+def main() -> int:
+    args = parse_args()
+    config = PipelineConfig(input_csv=Path(args.input), output_dir=Path(args.output))
+    config.tokens.level = args.level
+    config.segment.idle_gap_seconds = args.idle_gap
+    config.segment.use_entropy_boundaries = args.entropy
+    config.cluster.min_cluster_size = args.min_cluster_size
+    config.post.drop_chrome = not args.keep_chrome
+
+    out_dir = REPO_ROOT / config.output_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    android_path = out_dir / "final_clean_events_android.csv"
+    ios_path = out_dir / "final_clean_events_ios.csv"
+
+    if args.preprocess:
+        banner("PREPROCESSING")
+        combined_path = out_dir / "final_clean_events.csv"
+        json_to_csv_folder(REPO_ROOT / config.input_csv, combined_path)
+        android_df, ios_df = clean_data(pd.read_csv(combined_path, low_memory=False))
+        android_df.to_csv(android_path, index=False)
+        ios_df.to_csv(ios_path, index=False)
+
+    android_df = pd.read_csv(android_path, low_memory=False)
+    ios_df = pd.read_csv(ios_path, low_memory=False)
+    run_cluster_journey(
+        android_df, "android", config, out_dir, check_stability=not args.no_stability
+    )
+    run_cluster_journey(
+        ios_df, "ios", config, out_dir, check_stability=not args.no_stability
+    )
+    print(f"\nall artefacts written to {out_dir}")
     return 0
 
 

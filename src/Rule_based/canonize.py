@@ -185,13 +185,13 @@ def canonize_events(df: pd.DataFrame, cfg: CanonizeConfig) -> pd.DataFrame:
 def canonization_report(raw: pd.DataFrame, canon: pd.DataFrame) -> pd.DataFrame:
     """Before/after vocabulary counts — evidence that canonisation paid off."""
     raw_triples = (
-        raw["event_type"].astype(str)
+        raw["key"].astype(str)
         + "|"
-        + raw["segment_name"].astype(str)
+        + raw["segmentation.name"].astype(str)
         + "|"
-        + raw["screen_name"].astype(str)
+        + raw["segmentation.screen_id"].astype(str)
     )
-    canon_triples = canon["event_type"] + "|" + canon["screen"] + "|" + canon["target"]
+    canon_triples = canon["key"] + "|" + canon["screen"] + "|" + canon["target"]
 
     def _stats(series: pd.Series, label: str) -> dict[str, object]:
         vc = series.value_counts()

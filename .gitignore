@@ -1,5 +1,6 @@
 .venv/
 outputs/
+output/
 data/
 *.pkl
 docs/pdf/
@@ -10,6 +11,7 @@ docs/details
 
 .cache/
 **/__pycache__/
+.codex_tmp/
 
 
 *.pptx

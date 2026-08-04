@@ -59,6 +59,23 @@ def map_values(df: pd.DataFrame, column_names: list[str] = ["key"], mapping_dict
             df[column_name] = df[column_name].map(mapping_dict[column_name], na_action='ignore')
     return df
 
+def clean_data(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean and preprocess the DataFrame by dropping unwanted columns, renaming columns, and mapping values.
+
+    Parameters:
+    df (pd.DataFrame): The DataFrame to be cleaned.
+
+    Returns:
+    pd.DataFrame: A cleaned and preprocessed DataFrame.
+    """
+    df = drop_columns(df)
+    df = rename_columns(df)
+    df = map_values(df)
+    android_df = df[df['segmentation.segment'] == 'Android']
+    ios_df = df[df['segmentation.segment'] == 'iOS']
+    return android_df, ios_df
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Clean and preprocess data.")

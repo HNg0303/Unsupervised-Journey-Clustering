@@ -121,10 +121,10 @@ def token_dictionary(tokens: pd.DataFrame, level: str) -> pd.DataFrame:
         .agg(
             event_frequency=("record_id", "size"),
             session_frequency=("session_id", "nunique"),
-            event_type=("event_type", "first"),
+            event_type=("key", "first"),
             screen=("screen", "first"),
             screen_class=("screen_class", "first"),
-            os=("OS", "first"),
+            os=("segmentation.segment", "first"),
             first_seen=("ts", "min"),
             last_seen=("ts", "max"),
             mean_duration_s=("duration_clip", "mean"),

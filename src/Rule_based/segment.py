@@ -138,14 +138,12 @@ def assign_journeys(tokens: pd.DataFrame, cfg: SegmentConfig) -> pd.DataFrame:
 
         # Check the rules in data production.
 
-
-        
         if new_session:
             reason = "session_start"
         elif gap[i] > cfg.idle_gap_seconds:
             reason = "idle_gap"
-        # elif since_cut >= cfg.max_journey_length:
-        #     reason = "length_cap"
+        elif since_cut >= cfg.max_journey_length:
+            reason = "length_cap"
         elif (
             cfg.cut_on_root_return
             and _is_root(screen_bare[i])

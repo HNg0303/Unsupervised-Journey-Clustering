@@ -20,28 +20,35 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from utils.json_to_csv import json_to_csv
-from utils.clean_data import drop_columns, rename_columns, map_values
-
-
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from utils.json_to_csv import json_to_csv  # noqa: E402
+from utils.clean_data import clean_data  # noqa: E402
 from Rule_based.score import JourneyScorer  # noqa: E402
+from Rule_based.cluster_mapping import apply_cluster_mapping  # noqa: E402
 
-MODEL_DIR = REPO_ROOT / "outputs" / "clusters"
+MODEL_DIR = REPO_ROOT / "output" / "clusters"
+TEST_OUTPUT_DIR = REPO_ROOT / "output" / "test"
+TEST_OUTPUT_DIR.mkdir(exist_ok=True, parents=True)
+
+TEST_RAW_DIR = REPO_ROOT / "data" / "test_data"
+
+
 DEFAULT_RAW = {
-    "android": "data/clean_july_events_android.csv",
-    "ios": "data/clean_july_events_ios.csv",
+    "android": "data/test/clean_july_events_android.csv",
+    "ios": "data/test/clean_july_events_ios.csv",
 }
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--json", action = "store_true", help="convert JSON to CSV and exit")
     p.add_argument("--platform", required=True, choices=["android", "ios"])
-    p.add_argument("--input", help="raw events CSV to score")
+    p.add_argument("--input", help="raw events CSV/JSON to score")
     p.add_argument(
         "--holdout-days",
         type=float,
@@ -56,26 +63,44 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
-    scorer = JourneyScorer.load(MODEL_DIR / f"{args.platform}_scorer.pkl")
+    if args.json:
+        if not args.input:
+            print("ERROR: --input is required for JSON conversion", file=sys.stderr)
+            return 1
+        input_file = Path(args.input)
+        input_path = TEST_RAW_DIR / str(input_file)
+        json_to_csv(input_path, TEST_RAW_DIR / f"{input_file.stem}.csv")
+        input_df = pd.read_csv(TEST_RAW_DIR / f"{input_file.stem}.csv", low_memory=False)
+        android_df, ios_df = clean_data(input_df)
+        if args.platform == "android":
+            out = TEST_RAW_DIR / f"{input_file.stem}_android.csv"
+            android_df.to_csv(out, index=False)
+        elif args.platform == "ios":
+            out = TEST_RAW_DIR / f"{input_file.stem}_ios.csv"
+            ios_df.to_csv(out, index=False)
+        print(f"converted {args.input} -> {out}")
+
+    scorer = JourneyScorer.load(MODEL_DIR / f"{args.platform}_journey_scorer.pkl")
     print(
         f"loaded scorer: {len(scorer.centroids)} archetypes, "
         f"{len(scorer.markov.vocab):,} tokens in vocabulary"
     )
 
-    path = Path(args.input) if args.input else REPO_ROOT / DEFAULT_RAW[args.platform]
-    raw = pd.read_csv(path, low_memory=False)
+    raw = android_df if args.platform == "android" else ios_df
 
     if args.holdout_days:
         ts = pd.to_datetime(raw["created_at"], utc=True, format="mixed")
         cutoff = ts.max() - pd.Timedelta(days=args.holdout_days)
         raw = raw.loc[ts >= cutoff]
         print(f"holdout: last {args.holdout_days} day(s) -> {len(raw):,} events since {cutoff}")
-    print(f"input: {path.name}  events={len(raw):,}  sessions={raw.session_id.nunique():,}")
 
     scored = scorer.score(raw)
     if scored.empty:
         print("no journey long enough to score")
         return 0
+
+    mapping_path = REPO_ROOT / "output" / f"{args.platform}_cluster_class_mapping.json"
+    scored = apply_cluster_mapping(scored, mapping_path)
 
     n = len(scored)
     print(f"\nscored journeys: {n:,}")
@@ -93,7 +118,7 @@ def main() -> int:
         print(flags.value_counts().to_string())
 
     print(f"\nmost anomalous journeys (lowest Markov log-prob):")
-    cols = ["journey_id", "cluster", "n_events_final", "back_rate",
+    cols = ["journey_id", "cluster", "class_group", "class_name", "n_events_final", "back_rate",
             "n_loop_removed", "markov_logprob", "friction_flags"]
     print(scored.nsmallest(args.top, "markov_logprob")[cols].to_string(index=False))
 
@@ -110,8 +135,9 @@ def main() -> int:
             if top.empty:
                 print("    -> no observed continuation (journey ends here)")
 
-    out = Path(args.output) if args.output else MODEL_DIR / f"{args.platform}_scored.csv"
-    scored.to_csv(out, index=False)
+    out = TEST_OUTPUT_DIR / f"{args.output}_{args.platform}_scored.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    scored.to_csv(out, index=False, encoding="utf-8-sig")
     print(f"\nwritten to {out}")
     return 0
 

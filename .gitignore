@@ -10,7 +10,9 @@ docs/details
 
 
 .cache/
-**/__pycache__/
+__pycache__/
+*.py[cod]
+*$py.class
 .codex_tmp/
 
 

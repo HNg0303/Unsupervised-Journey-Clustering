@@ -1,0 +1,1 @@
+﻿{"schema_version":"1.0","distance_p95":1.1338483313108663,"markov_p05":-4.6398522796713,"markov_p01":-5.03812319276212,"back_rate_p90":0.2,"loops_p90":0,"revisit_p90":0.3333,"span_p95":104.1425,"idle_gap_seconds":90,"root_return_min_events":6,"max_journey_length":80,"min_journey_length":4}

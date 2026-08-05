@@ -1,0 +1,7 @@
+vn.hifpt.clickstream.app-pngs-0 D:\Company\Unsupervised-Journey-Clustering\mobile\android\app\build\generated\res\pngs\debug
+vn.hifpt.clickstream.app-resValues-1 D:\Company\Unsupervised-Journey-Clustering\mobile\android\app\build\generated\res\resValues\debug
+vn.hifpt.clickstream.app-packageDebugResources-2 D:\Company\Unsupervised-Journey-Clustering\mobile\android\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
+vn.hifpt.clickstream.app-packageDebugResources-3 D:\Company\Unsupervised-Journey-Clustering\mobile\android\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
+vn.hifpt.clickstream.app-debug-4 D:\Company\Unsupervised-Journey-Clustering\mobile\android\app\build\intermediates\merged_res\debug\mergeDebugResources
+vn.hifpt.clickstream.app-debug-5 D:\Company\Unsupervised-Journey-Clustering\mobile\android\app\src\debug\res
+vn.hifpt.clickstream.app-main-6 D:\Company\Unsupervised-Journey-Clustering\mobile\android\app\src\main\res

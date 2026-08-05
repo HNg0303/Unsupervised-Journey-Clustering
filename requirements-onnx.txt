@@ -1,0 +1,4 @@
+# Install in the same environment that can load JourneyScorer pickle.
+onnx>=1.16,<2
+onnxruntime>=1.18,<2
+

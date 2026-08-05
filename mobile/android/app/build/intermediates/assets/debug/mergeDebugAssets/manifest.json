@@ -1,0 +1,17 @@
+{
+  "platform": "android",
+  "model": "journey_classifier.onnx",
+  "preprocessing": "preprocessing.json",
+  "taxonomy": "class_mapping.json",
+  "markov": "markov.json",
+  "friction_config": "friction_config.json",
+  "outputs": [
+    "cluster",
+    "distance",
+    "geometric_anomaly",
+    "markov_logprob",
+    "friction_flags",
+    "next_action"
+  ],
+  "note": "Markov transitions and friction thresholds are exported as compact JSON for Android."
+}

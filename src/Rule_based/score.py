@@ -192,9 +192,18 @@ def _assign(matrix: np.ndarray, centroids: dict[int, np.ndarray]) -> tuple[np.nd
         return np.full(matrix.shape[0], -1), np.zeros(matrix.shape[0])
     keys = np.array(sorted(centroids))
     stack = np.vstack([centroids[k] for k in keys])
-    dist = np.linalg.norm(matrix[:, None, :] - stack[None, :, :], axis=2)
-    best = np.argmin(dist, axis=1)
-    return keys[best], dist[np.arange(len(best)), best]
+    labels = np.empty(matrix.shape[0], dtype=keys.dtype)
+    minimum = np.empty(matrix.shape[0], dtype=float)
+    # A full N x K x D broadcast exceeded 49 GiB on production.  Chunking has
+    # identical results and bounds peak memory independently of event volume.
+    chunk_size = max(256, min(4096, 20_000_000 // max(len(keys) * matrix.shape[1], 1)))
+    for start in range(0, matrix.shape[0], chunk_size):
+        stop = min(start + chunk_size, matrix.shape[0])
+        distance = np.linalg.norm(matrix[start:stop, None, :] - stack[None, :, :], axis=2)
+        best = np.argmin(distance, axis=1)
+        labels[start:stop] = keys[best]
+        minimum[start:stop] = distance[np.arange(stop - start), best]
+    return labels, minimum
 
 
 if __name__ == "__main__":

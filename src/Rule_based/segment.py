@@ -55,7 +55,7 @@ def _is_root(screen_bare: str) -> bool:
 
 
 def _is_auth_action(event_type: str, target: str) -> bool:
-    if event_type != "Action":
+    if event_type != "action":
         return False
     low = target.lower()
     return any(marker in low for marker in AUTH_ACTION_MARKERS)
@@ -112,17 +112,16 @@ def entropy_boundary_scores(
 def assign_journeys(tokens: pd.DataFrame, cfg: SegmentConfig) -> pd.DataFrame:
     """Add `journey_id`, `journey_pos` and `boundary_reason` columns.
 
-    Input  : canonical+tokenised events sorted by (session_id, ts) with L1/L2/L3 token columns.
+    Input  : canonical+tokenised events sorted by platform/session/event_time.
     Output : same frame with journey assignment; one journey never spans
              two sessions.
     """
     df = tokens.reset_index(drop=True)
 
-    session = df["session_id"].to_numpy()
-    gap = df["gap_prev_s"].to_numpy()
-    screen_bare = df["screen_bare"].to_numpy()
-    event_type = df["key"].to_numpy()
-    target = df["target"].to_numpy()
+    session = (df["platform"].astype(str) + "\x1f" + df["session_id"].astype(str)).to_numpy()
+    gap = df["gap_prev_seconds"].fillna(0.0).to_numpy(dtype=float)
+    segment_name = df["segment_name"].to_numpy()
+    event_type = df["event_type"].to_numpy()
 
     journey_ids = np.empty(len(df), dtype=object)
     reasons = np.empty(len(df), dtype=object)
@@ -146,15 +145,16 @@ def assign_journeys(tokens: pd.DataFrame, cfg: SegmentConfig) -> pd.DataFrame:
             reason = "length_cap"
         elif (
             cfg.cut_on_root_return
-            and _is_root(screen_bare[i])
-            and not _is_root(screen_bare[i - 1])
+            and event_type[i] == "view"
+            and _is_root(segment_name[i])
+            and not _is_root(segment_name[i - 1])
             and since_cut >= cfg.root_return_min_events
         ):
             reason = "root_return"
         elif (
             cfg.cut_on_auth_change
-            and _is_auth_action(event_type[i], target[i])
-            and not _is_auth_action(event_type[i - 1], target[i - 1])
+            and _is_auth_action(event_type[i], segment_name[i])
+            and not _is_auth_action(event_type[i - 1], segment_name[i - 1])
         ):
             reason = "auth_change"
 
@@ -243,7 +243,7 @@ def segmentation_report(df: pd.DataFrame, cfg: SegmentConfig) -> pd.DataFrame:
 
 
 def sweep_idle_gap(
-    tokens: pd.DataFrame, cfg: SegmentConfig, grid: tuple[float, ...] = (30, 60, 90, 120, 300, 900)
+    tokens: pd.DataFrame, cfg: SegmentConfig, grid: tuple[float, ...] = (30, 60, 90, 120, 300, 900, 1800)
 ) -> pd.DataFrame:
     """Sensitivity of journey count/length to the idle-gap threshold."""
     rows = []

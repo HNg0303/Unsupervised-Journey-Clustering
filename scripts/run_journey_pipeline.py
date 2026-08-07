@@ -10,19 +10,19 @@ outputs/journey/.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import train_test_split
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from utils.clean_data import clean_data  # noqa: E402
-from utils.json_to_csv import json_to_csv_folder  # noqa: E402
 from Rule_based import canonize as C  # noqa: E402
 from Rule_based import cluster as CL  # noqa: E402
 from Rule_based import features as F  # noqa: E402
@@ -31,16 +31,17 @@ from Rule_based import segment as S  # noqa: E402
 from Rule_based import tokens as T  # noqa: E402
 from Rule_based.config import PipelineConfig  # noqa: E402
 from Rule_based.score import JourneyScorer  # noqa: E402
+from Rule_based.production import read_production_folder  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--preprocess", action="store_true", default=False, help="run the preprocess step first")
-    p.add_argument("--input", default="data/final_clean_events.csv")
-    p.add_argument("--output", default="outputs/journey")
+    p.add_argument("--preprocess", action="store_true", help="canonicalize production CSV files first")
+    p.add_argument("--input", default="data/train_data/raw_data_production/data_raw_sample")
+    p.add_argument("--output", default="output/clusters_with_screen")
     p.add_argument("--level", default="L2", choices=["L1", "L2", "L3"])
     p.add_argument("--idle-gap", type=float, default=90.0)
-    p.add_argument("--min-cluster-size", type=int, default=15)
+    p.add_argument("--min-cluster-size", type=int, default=100)
     p.add_argument("--entropy", action="store_true", help="add branching-entropy boundaries")
     p.add_argument("--keep-chrome", action="store_true", help="do not drop OS chrome screens")
     p.add_argument("--no-stability", action="store_true")
@@ -70,7 +71,12 @@ def run_cluster_journey(
 
     banner(f"{platform.upper()} - STAGE 1 - canonize")
     canon = C.canonize_events(raw, cfg.canonize)
-    reports["canonization"] = C.canonization_report(raw, canon)
+    reports["canonization"] = pd.DataFrame([{
+        "stage": "canonical event_type@segment_name",
+        "vocabulary": int(canon.event_token.nunique()),
+        "singletons": int((canon.event_token.value_counts() == 1).sum()),
+        "rows": int(len(canon)),
+    }])
     print(reports["canonization"].to_string(index=False))
 
     banner(f"{platform.upper()} - STAGE 2 - tokenize")
@@ -89,7 +95,8 @@ def run_cluster_journey(
 
     # ------------------------------------------------------------- segment
     banner(f"{platform.upper()} - STAGE 3 - segment sessions into journeys")
-    reports["idle_gap_sweep"] = S.sweep_idle_gap(tok, cfg.segment)
+    sweep_events = tok if len(tok) <= 200_000 else tok.iloc[:200_000].copy()
+    reports["idle_gap_sweep"] = S.sweep_idle_gap(sweep_events, cfg.segment)
     print("idle-gap sensitivity:")
     print(reports["idle_gap_sweep"].to_string(index=False))
 
@@ -136,14 +143,20 @@ def run_cluster_journey(
     labels, model, hstats = CL.fit_hdbscan(matrix, cfg.cluster)
     print("HDBSCAN:", json.dumps(hstats, indent=2))
 
-    reports["kmeans_sweep"] = CL.sweep_kmeans(matrix, cfg.cluster)
+    if len(matrix) > 50_000:
+        rng = np.random.default_rng(cfg.cluster.random_state)
+        sweep_idx = np.sort(rng.choice(len(matrix), 50_000, replace=False))
+        sweep_matrix = matrix[sweep_idx]
+    else:
+        sweep_matrix = matrix
+    reports["kmeans_sweep"] = CL.sweep_kmeans(sweep_matrix, cfg.cluster)
     print("\nKMeans baseline sweep:")
     print(reports["kmeans_sweep"].to_string(index=False))
 
-    if check_stability:
-        reports["stability"] = CL.stability_check(matrix, cfg.cluster)
-        print("\nstability (subsample ARI):")
-        print(reports["stability"].to_string(index=False))
+    # if check_stability:
+    #     reports["stability"] = CL.stability_check(matrix, cfg.cluster)
+    #     print("\nstability (subsample ARI):")
+    #     print(reports["stability"].to_string(index=False))
 
     catalog = CL.cluster_catalog(journeys, sequences, labels, matrix)
     reports["cluster_catalog"] = catalog.drop(columns=["os_mix"])
@@ -189,9 +202,9 @@ def run_cluster_journey(
     scorer.save(out_dir / f"{prefix}journey_scorer.pkl")
 
     # hold-out check: score the last calendar day as if it were unseen data
-    cutoff = raw["created_at"].max()
-    last_day = pd.to_datetime(cutoff, utc=True, format="mixed").normalize()
-    unseen = raw[pd.to_datetime(raw["created_at"], utc=True, format="mixed") >= last_day]
+    event_time = pd.to_datetime(raw["event_time"], utc=True, format="mixed")
+    last_day = event_time.max().normalize()
+    unseen = raw[event_time >= last_day]
     if len(unseen) > 500:
         scored = scorer.score(unseen)
         print(
@@ -221,8 +234,8 @@ def run_cluster_journey(
     seg[
         [
             "record_id", "session_id", "journey_id", "journey_pos", "boundary_reason",
-            "ts", "key", "segmentation.segment", "screen", "target", "screen_class",
-            "token_l1", "token_l2", "token_l3", "duration_clip", "gap_prev_s",
+            "event_time", "event_type", "segment_name", "event_token", "platform",
+            "token_l1", "gap_prev_seconds", "gap_next_seconds",
         ]
     ].to_csv(out_dir / f"{prefix}events_canonical.csv", index=False)
 
@@ -265,25 +278,40 @@ def main() -> int:
 
     out_dir = REPO_ROOT / config.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-    android_path = out_dir / "final_clean_events_android.csv"
-    ios_path = out_dir / "final_clean_events_ios.csv"
+    android_train_path = out_dir / "canonical_events_android.csv"
+    ios_train_path = out_dir / "canonical_events_ios.csv"
+
+    android_test_path = out_dir / "canonical_events_android_test.csv"
+    ios_test_path = out_dir / "canonical_events_ios_test.csv"
 
     if args.preprocess:
         banner("PREPROCESSING")
-        combined_path = out_dir / "final_clean_events.csv"
-        json_to_csv_folder(REPO_ROOT / config.input_csv, combined_path)
-        android_df, ios_df = clean_data(pd.read_csv(combined_path, low_memory=False))
-        android_df.to_csv(android_path, index=False)
-        ios_df.to_csv(ios_path, index=False)
+        combined, validation = read_production_folder(
+            REPO_ROOT / config.input_csv,
+            cfg=config.canonize,
+            segment_cfg=config.segment,
+        )
+        validation.to_csv(out_dir / "preprocessing_report.csv", index=False)
+        android_df = combined.loc[combined.platform.eq("android")].copy()
+        ios_df = combined.loc[combined.platform.eq("ios")].copy()
+        android_df_train, android_df_test = train_test_split(android_df, test_size=0.2, random_state=42)
+        ios_df_train, ios_df_test = train_test_split(ios_df, test_size=0.2, random_state=42)
 
-    android_df = pd.read_csv(android_path, low_memory=False)
-    ios_df = pd.read_csv(ios_path, low_memory=False)
-    run_cluster_journey(
-        android_df, "android", config, out_dir, check_stability=not args.no_stability
-    )
-    run_cluster_journey(
-        ios_df, "ios", config, out_dir, check_stability=not args.no_stability
-    )
+        android_df_train.to_csv(android_train_path, index=False)
+        ios_df_train.to_csv(ios_train_path, index=False)
+
+        android_df_test.to_csv(android_test_path, index=False) 
+        ios_df_test.to_csv(ios_test_path, index=False)
+
+    if not android_train_path.exists() or not ios_train_path.exists():
+        raise FileNotFoundError("canonical files are missing; run with --preprocess first")
+    for platform, path in (("android", android_train_path), ("ios", ios_train_path)):
+        platform_df = pd.read_csv(path, low_memory=False, parse_dates=["event_time"])
+        run_cluster_journey(
+            platform_df, platform, config, out_dir, check_stability=not args.no_stability
+        )
+        del platform_df
+        gc.collect()
     print(f"\nall artefacts written to {out_dir}")
     return 0
 

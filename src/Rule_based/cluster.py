@@ -42,8 +42,12 @@ def _quality(matrix: np.ndarray, labels: np.ndarray) -> dict[str, float]:
     uniq = np.unique(labels[mask])
     if uniq.size < 2 or mask.sum() < 3:
         return {"silhouette": float("nan"), "davies_bouldin": float("nan"), "calinski_harabasz": float("nan")}
+    sample_size = min(10_000, int(mask.sum()))
     return {
-        "silhouette": round(float(silhouette_score(matrix[mask], labels[mask])), 4),
+        "silhouette": round(float(silhouette_score(
+            matrix[mask], labels[mask], sample_size=sample_size,
+            random_state=42 if sample_size < int(mask.sum()) else None,
+        )), 4),
         "davies_bouldin": round(float(davies_bouldin_score(matrix[mask], labels[mask])), 4),
         "calinski_harabasz": round(float(calinski_harabasz_score(matrix[mask], labels[mask])), 2),
     }
@@ -221,8 +225,8 @@ def cluster_catalog(
                 "mean_back_rate": round(float(sub["back_rate"].mean()), 4),
                 "mean_revisit_ratio": round(float(sub["revisit_ratio"].mean()), 4),
                 "loop_journey_share": round(float((sub["n_loop_removed"] > 0).mean()), 4),
-                "top_entry_screen": sub["entry_screen"].mode().iat[0] if not sub["entry_screen"].isna().all() else None,
-                "top_exit_screen": sub["exit_screen"].mode().iat[0] if not sub["exit_screen"].isna().all() else None,
+                "top_entry_token": sub["entry_token"].mode().iat[0] if not sub["entry_token"].isna().all() else None,
+                "top_exit_token": sub["exit_token"].mode().iat[0] if not sub["exit_token"].isna().all() else None,
                 "medoid_journey_id": journeys.iloc[medoid_global]["journey_id"],
                 "medoid_length": len(medoid_seq),
                 "medoid_path": " -> ".join(medoid_seq[:14]) + (" ..." if len(medoid_seq) > 14 else ""),

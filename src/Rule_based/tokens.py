@@ -36,19 +36,14 @@ def _shallow_path(target: str, depth: int) -> str:
 
 
 def build_tokens(canon: pd.DataFrame, cfg: CanonizeConfig) -> pd.DataFrame:
-    """Attach token_l1 / token_l2 / token_l3 columns to canonical events."""
+    """Attach the production token (``event_type@segment_name``).
+
+    Legacy level columns remain aliases so persisted scorers and reporting code
+    have one migration path, but they no longer carry different semantics.
+    """
     out = canon.copy()
-    prefix = out["key"]
-
-    out["token_l1"] = prefix + "@" + out["screen"] # screen only. Event_type + Screen.
-
-    mid = [_shallow_path(t, cfg.action_path_depth_mid) for t in out["target"]]
-    out["token_l2"] = out["token_l1"].where(
-        out["target"].eq(MISSING), out["token_l1"] + "#" + pd.Series(mid, index=out.index) # If not missing row then we add the shallow path to the token_l1 to create token_l2.
-    )
-    out["token_l3"] = out["token_l1"].where(
-        out["target"].eq(MISSING), out["token_l1"] + "#" + out["target"] # If not missing row then we add the full path to the token_l1 to create token_l3.
-    )
+    for column in ("token_l1", "token_l2", "token_l3"):
+        out[column] = out["event_token"]
     return out
 
 
@@ -121,13 +116,11 @@ def token_dictionary(tokens: pd.DataFrame, level: str) -> pd.DataFrame:
         .agg(
             event_frequency=("record_id", "size"),
             session_frequency=("session_id", "nunique"),
-            event_type=("key", "first"),
-            screen=("screen", "first"),
-            screen_class=("screen_class", "first"),
-            os=("segmentation.segment", "first"),
-            first_seen=("ts", "min"),
-            last_seen=("ts", "max"),
-            mean_duration_s=("duration_clip", "mean"),
+            event_type=("event_type", "first"),
+            segment_name=("segment_name", "first"),
+            platform=("platform", "first"),
+            first_seen=("event_time", "min"),
+            last_seen=("event_time", "max"),
         )
         .reset_index()
         .rename(columns={col: "token"})

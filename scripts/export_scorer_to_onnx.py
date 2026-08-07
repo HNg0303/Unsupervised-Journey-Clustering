@@ -11,6 +11,7 @@ performs nearest-centroid assignment plus the learned distance rejection.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 import shutil
@@ -40,7 +41,7 @@ def _install_pickle_compatibility() -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", required=True, choices=["android", "ios"])
-    parser.add_argument("--model-dir", default="output/clusters")
+    parser.add_argument("--model-dir", default="output/clusters_with_screen")
     parser.add_argument("--output-dir", help="default: output/mobile/<platform>")
     parser.add_argument("--opset", type=int, default=17)
     return parser.parse_args()
@@ -50,13 +51,54 @@ def _as_list(value: np.ndarray) -> list:
     return np.asarray(value).tolist()
 
 
+def enrich_cluster_names(mapping: dict, platform: str, catalog_path: Path | None = None) -> dict:
+    """Add the evidence-backed shareholder cluster name to each class row."""
+    catalog_path = catalog_path or REPO_ROOT / "output" / "clusters_with_screen" / "shareholder_cluster_catalog_vi.json"
+    if not catalog_path.exists():
+        return mapping
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    platform_entry = next(
+        (item for item in catalog.get("platforms", []) if item.get("platform") == platform),
+        None,
+    )
+    if platform_entry is None:
+        return mapping
+    english_path = catalog_path.with_name("shareholder_cluster_catalog.json")
+    english_catalog = json.loads(english_path.read_text(encoding="utf-8")) if english_path.exists() else {}
+    english_platform = next(
+        (item for item in english_catalog.get("platforms", []) if item.get("platform") == platform),
+        {},
+    )
+    family_codes = {
+        int(item["cluster_id"]): item.get("business_family", "other")
+        for item in english_platform.get("clusters", [])
+    }
+    classes = []
+    for item in platform_entry.get("clusters", []):
+        cluster = int(item["cluster_id"])
+        name = item.get("cluster_name", f"Cluster {cluster}")
+        classes.append({
+            "cluster": cluster,
+            "class_group_code": family_codes.get(cluster, "other"),
+            "class_group": item.get("business_family", "khác"),
+            "class_code": "unknown_journey" if cluster == -1 else f"cluster_{cluster}",
+            "class_name": name,
+            "cluster_name": name,
+            "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+            "naming_confidence": item.get("naming_confidence", "unknown"),
+        })
+    mapping["classes"] = sorted(classes, key=lambda row: int(row["cluster"]))
+    mapping["cluster_name_source"] = "output/clusters_with_screen/shareholder_cluster_catalog_vi.json"
+    return mapping
+
+
 def export_preprocessing(scorer: JourneyScorer, destination: Path, platform: str) -> None:
     vectorizer = scorer.vectorizer
     if vectorizer.svd is None:
         raise ValueError("scorer vectorizer has no fitted SVD")
     vocabulary = sorted(vectorizer.tfidf.vocabulary_.items(), key=lambda item: item[1])
     payload = {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "platform": platform,
         "contract": "ONNX input is the concatenated sequence and numeric feature vector.",
         "ngram_range": list(vectorizer.tfidf.ngram_range),
@@ -68,7 +110,7 @@ def export_preprocessing(scorer: JourneyScorer, destination: Path, platform: str
         "numeric_columns": list(vectorizer.numeric_columns),
         "numeric_log1p_columns": [
             "n_events_final", "n_unique_tokens", "n_loop_removed",
-            "n_dedup_removed", "span_seconds", "total_dwell_s", "median_gap_s",
+            "n_dedup_removed", "span_seconds", "median_gap_s", "p90_gap_s", "max_gap_s",
         ],
         "numeric_mean": _as_list(vectorizer.scaler.mean_),
         "numeric_scale": _as_list(vectorizer.scaler.scale_),
@@ -158,7 +200,7 @@ def export_markov(scorer: JourneyScorer, destination: Path) -> None:
         return {"transitions": transitions, "totals": totals}
 
     payload = {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "smoothing": float(bank.smoothing),
         "vocabulary": list(bank.vocab),
         "global": bucket(-999),
@@ -176,7 +218,7 @@ def export_friction_config(scorer: JourneyScorer, destination: Path) -> None:
     thresholds = scorer.thresholds
     segment = scorer.cfg.segment
     payload = {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "distance_p95": float(thresholds.distance_p95),
         "markov_p05": float(thresholds.markov_p05),
         "markov_p01": float(thresholds.markov_p01),
@@ -203,11 +245,30 @@ def main() -> int:
     export_preprocessing(scorer, output_dir / "preprocessing.json", args.platform)
     export_markov(scorer, output_dir / "markov.json")
     export_friction_config(scorer, output_dir / "friction_config.json")
-    shutil.copyfile(
-        REPO_ROOT / "output" / f"{args.platform}_cluster_class_mapping.json",
-        output_dir / "class_mapping.json",
+    mapping_source = REPO_ROOT / "output" / "mobile" / args.platform / "class_mapping.json"
+    if not mapping_source.exists():
+        mapping_source = REPO_ROOT / "output" / f"{args.platform}_cluster_class_mapping.json"
+    if mapping_source.exists():
+        shutil.copyfile(mapping_source, output_dir / "class_mapping.json")
+    else:
+        fallback = {"schema_version": "2.0", "classes": [
+            {"cluster": -1, "class_code": "unknown", "class_name": "Unknown journey"},
+            *[
+                {"cluster": int(cluster), "class_code": f"C{cluster}", "class_name": f"Cluster {cluster}"}
+                for cluster in sorted(scorer.centroids)
+            ],
+        ]}
+        (output_dir / "class_mapping.json").write_text(
+            json.dumps(fallback, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    mapping_path = output_dir / "class_mapping.json"
+    mapping_payload = enrich_cluster_names(
+        json.loads(mapping_path.read_text(encoding="utf-8")), args.platform
     )
+    mapping_path.write_text(json.dumps(mapping_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    files = ["journey_classifier.onnx", "preprocessing.json", "markov.json", "friction_config.json", "class_mapping.json"]
     manifest = {
+        "schema_version": "2.0",
         "platform": args.platform,
         "model": "journey_classifier.onnx",
         "preprocessing": "preprocessing.json",
@@ -219,6 +280,10 @@ def main() -> int:
             "friction_flags", "next_action",
         ],
         "note": "Markov transitions and friction thresholds are exported as compact JSON for Android.",
+        "sha256": {
+            name: hashlib.sha256((output_dir / name).read_bytes()).hexdigest()
+            for name in files
+        },
     }
     (output_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"

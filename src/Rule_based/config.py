@@ -92,8 +92,7 @@ class CanonizeConfig:
     canonize_urls: bool = True
     # Mask digit-heavy / uuid-like segments inside slash-delimited names.
     mask_id_segments: bool = True
-    # Clip duration outliers (seconds). Backend emits multi-hour values that are
-    # clearly instrumentation artefacts, not dwell time.
+    # Retained for pickle compatibility only; production never uses duration.
     duration_clip_seconds: float = 1800.0
     # Depth at which action paths are truncated for the mid-resolution token.
     action_path_depth_mid: int = 3
@@ -122,9 +121,9 @@ class PostProcessConfig:
     max_cycle_period: int = 4
     min_cycle_repeats: int = 2
     # Drop OS-chrome screens from the modelling stream (still counted).
-    drop_chrome: bool = True
+    drop_chrome: bool = False
     # Drop boot/splash screens from the modelling stream (still counted).
-    drop_boot: bool = True
+    drop_boot: bool = False
 
 
 @dataclass
@@ -188,7 +187,7 @@ class ClusterConfig:
     """Clustering + model selection."""
 
     method: str = "hdbscan"  # hdbscan | kmeans
-    min_cluster_size: int = 15
+    min_cluster_size: int = 100
     min_samples: int = 5
     kmeans_k_grid: tuple[int, ...] = (6, 8, 10, 12, 15, 20, 25, 30)
     random_state: int = 42

@@ -40,8 +40,9 @@ NUMERIC_COLUMNS: tuple[str, ...] = (
     "n_loop_removed",
     "n_dedup_removed",
     "span_seconds",
-    "total_dwell_s",
     "median_gap_s",
+    "p90_gap_s",
+    "max_gap_s",
 )
 
 # Tokens are opaque strings containing '/', '#', ':' and '?'. Joining them with
@@ -70,8 +71,9 @@ def numeric_matrix(journeys: pd.DataFrame) -> tuple[np.ndarray, list[str]]:
             "n_loop_removed",
             "n_dedup_removed",
             "span_seconds",
-            "total_dwell_s",
             "median_gap_s",
+            "p90_gap_s",
+            "max_gap_s",
         )
         if c in cols
     ]

@@ -126,15 +126,15 @@ def build_journey_sequences(
 
     tok = df[token_col].to_numpy()
     extras = {c: df[c].to_numpy() for c in extra_token_cols}
-    screen_class = df["screen_class"].to_numpy()
-    is_action = (df["key"].to_numpy() == "Action")
-    is_back = _as_bool(df["is_back"])
-    gap = df["gap_prev_s"].to_numpy(dtype=float)
-    dwell = df["duration_clip"].to_numpy(dtype=float)
-    screen = df["screen"].to_numpy()
+    is_action = (df["event_type"].to_numpy() == "action")
+    names = df["segment_name"].astype(str)
+    is_back = names.str.lower().str.contains(
+        r"btn_back|backbutton|handleback|nav_back|/back|goback|close|dismiss|cancel", regex=True
+    ).to_numpy()
+    gap = df["gap_prev_seconds"].fillna(0.0).to_numpy(dtype=float)
     # read back from CSV `ts` is a string, and only some rows carry fractional
     # seconds - a single inferred format silently NaTs the rest
-    ts = pd.to_datetime(df["ts"], utc=True, format="mixed").to_numpy()
+    ts = pd.to_datetime(df["event_time"], utc=True, format="mixed").to_numpy()
     session = df["session_id"].to_numpy()
     reason = df["boundary_reason"].to_numpy()
 
@@ -143,7 +143,7 @@ def build_journey_sequences(
 
     device = _col("device_id")
     customer = _col("customer_id")
-    os_col = _col("segmentation.segment")
+    os_col = _col("platform")
 
     records: list[dict[str, object]] = []
     sequences: list[list[str]] = []
@@ -151,14 +151,7 @@ def build_journey_sequences(
 
     for lo, hi in zip(starts, ends):
         raw_len = int(hi - lo)
-        cls = screen_class[lo:hi]
-
-        keep = np.ones(raw_len, dtype=bool)
-        if cfg.drop_chrome:
-            keep &= cls != "chrome"
-        if cfg.drop_boot:
-            keep &= cls != "boot"
-        rows = np.flatnonzero(keep) + lo
+        rows = np.arange(lo, hi)
 
         pos, n_dedup, n_loop = clean_positions(tok[rows].tolist(), cfg)
         rows = rows[pos]
@@ -170,7 +163,7 @@ def build_journey_sequences(
         n = len(seq)
         act = is_action[rows]
         gaps = gap[rows][1:] if n > 1 else np.zeros(0)
-        dwells = dwell[rows][~act] if n else np.zeros(0)
+        gaps = gaps[np.isfinite(gaps) & (gaps >= 0)]
 
         records.append(
             {
@@ -187,7 +180,7 @@ def build_journey_sequences(
                 "n_events_raw": raw_len,
                 "n_events_final": n,
                 "n_unique_tokens": len(set(seq)),
-                "n_dropped_screens": int(raw_len - keep.sum()),
+                "n_dropped_screens": 0,
                 "n_dedup_removed": n_dedup,
                 "n_loop_removed": n_loop,
                 # --- behaviour -----------------------------------------------
@@ -198,11 +191,12 @@ def build_journey_sequences(
                 "span_seconds": round(
                     float((ts[hi - 1] - ts[lo]) / np.timedelta64(1, "s")), 3
                 ),
-                "total_dwell_s": round(float(dwells.sum()), 2),
                 "median_gap_s": round(float(np.median(gaps)), 3) if gaps.size else 0.0,
+                "p90_gap_s": round(float(np.quantile(gaps, 0.90)), 3) if gaps.size else 0.0,
+                "max_gap_s": round(float(np.max(gaps)), 3) if gaps.size else 0.0,
                 # --- endpoints -------------------------------------------------
-                "entry_screen": screen[rows][0] if n else None,
-                "exit_screen": screen[rows][-1] if n else None,
+                "entry_token": tok[rows][0] if n else None,
+                "exit_token": tok[rows][-1] if n else None,
             }
         )
 

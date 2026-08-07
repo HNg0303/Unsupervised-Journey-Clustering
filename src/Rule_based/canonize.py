@@ -85,13 +85,13 @@ def canonize_url(raw: str, *, mask_ids: bool = True) -> str:
     return f"{host}{path}{suffix}"
 
 
-def canonize_name(raw: object, *, cfg: CanonizeConfig) -> str:
+def canonize_name(raw: object, *, cfg: CanonizeConfig, missing: str = MISSING) -> str:
     """Canonicalise one screen/segment string without semantic merging."""
-    if raw is None or (isinstance(raw, float) and np.isnan(raw)):
-        return MISSING
+    if raw is None or pd.isna(raw):
+        return missing
     text = str(raw).strip()
     if not text or text.lower() in {"nan", "none", "null"}:
-        return MISSING
+        return missing
 
     if cfg.canonize_urls and "://" in text:
         return canonize_url(text, mask_ids=cfg.mask_id_segments)
@@ -116,82 +116,22 @@ def is_back_action(target: str) -> bool:
 
 
 def canonize_events(df: pd.DataFrame, cfg: CanonizeConfig) -> pd.DataFrame:
-    """Raw event rows -> role-correct canonical events, sorted within session.
+    """Return canonical production events, accepting raw or canonical input."""
+    if set(("event_time", "event_type", "segment_name", "event_token")).issubset(df.columns):
+        out = df.copy()
+        out["event_time"] = pd.to_datetime(out["event_time"], utc=True, format="mixed", errors="coerce")
+        return out.sort_values(
+            ["platform", "session_id", "event_time", "source_file", "source_row_number"], kind="mergesort"
+        ).reset_index(drop=True)
+    from .production import canonicalize_frame
 
-    Input columns required:
-        record_id, session_id, device_id, customer_id, created_at, timestamp,
-        event_type, OS, segment_name, screen_name, duration
-
-    Output adds:
-        ts, screen_bare, screen, target, screen_class, is_back,
-        duration_clip, gap_prev_s
-    """
-    required = {
-        "record_id",
-        "session_id",
-        "created_at",
-        "key",
-        "segmentation.segment",
-        "segmentation.name",
-        "segmentation.screen_id",
-        "duration",
-    }
-    missing = required - set(df.columns)
-    if missing:
-        raise ValueError(f"input is missing required columns: {sorted(missing)}")
-
-    out = df.copy()
-    out["key"] = out["key"].astype(str).str.strip().str.title()
-    out["ts"] = pd.to_datetime(out["created_at"], utc=True, format="mixed")
-
-    is_view = out["key"].eq("View")
-
-    # --- the role fix -----------------------------------------------------
-    # View : screen comes from segment_name, there is no target
-    # Action: screen comes from screen_name, target is the action path
-    screen_raw = out["segmentation.screen_id"].where(~is_view, out["segmentation.name"])
-    target_raw = out["segmentation.name"].where(~is_view, other=np.nan)
-
-    out["screen_bare"] = [canonize_name(x, cfg=cfg) for x in screen_raw]
-    out["target"] = [canonize_name(x, cfg=cfg) for x in target_raw]
-
-    out["screen_class"] = [classify_screen(s) for s in out["screen_bare"]]
-
-    if cfg.namespace_by_os:
-        os_series = out["segmentation.segment"].fillna("unk").astype(str)
-        out["screen"] = os_series + "::" + out["screen_bare"]
-    else:
-        out["screen"] = out["screen_bare"]
-
-    out["is_back"] = [
-        (t != MISSING) and is_back_action(t) for t in out["target"]
-    ]
-
-    # duration is emitted on View rows only (Action duration is always 0) and
-    # carries multi-hour instrumentation artefacts; clip rather than drop.
-    out["duration_clip"] = (
-        pd.to_numeric(out["duration"], errors="coerce")
-        .fillna(0.0)
-        .clip(lower=0.0, upper=cfg.duration_clip_seconds)
-    )
-
-    out = out.sort_values(["session_id", "ts", "record_id"], kind="mergesort").reset_index(drop=True)
-    out["gap_prev_s"] = (
-        out.groupby("session_id", sort=False)["ts"].diff().dt.total_seconds().fillna(0.0)
-    )
-    return out
+    return canonicalize_frame(df, cfg=cfg)[0]
 
 
 def canonization_report(raw: pd.DataFrame, canon: pd.DataFrame) -> pd.DataFrame:
     """Before/after vocabulary counts — evidence that canonisation paid off."""
-    raw_triples = (
-        raw["key"].astype(str)
-        + "|"
-        + raw["segmentation.name"].astype(str)
-        + "|"
-        + raw["segmentation.screen_id"].astype(str)
-    )
-    canon_triples = canon["key"] + "|" + canon["screen"] + "|" + canon["target"]
+    raw_triples = raw["key"].astype(str) + "|" + raw["segmentation_name"].astype(str)
+    canon_triples = canon["event_token"]
 
     def _stats(series: pd.Series, label: str) -> dict[str, object]:
         vc = series.value_counts()
@@ -207,8 +147,8 @@ def canonization_report(raw: pd.DataFrame, canon: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(
         [
             _stats(raw_triples, "raw exact triple"),
-            _stats(canon_triples, "canonical (type, screen, target)"),
-            _stats(canon["screen"], "canonical screen axis only"),
+            _stats(canon_triples, "canonical event_type@segment_name"),
+            _stats(canon["segment_name"], "canonical segment_name"),
         ]
     )
 

@@ -58,7 +58,7 @@ def fit_hdbscan(matrix: np.ndarray, cfg: ClusterConfig) -> tuple[np.ndarray, HDB
         min_cluster_size=cfg.min_cluster_size,
         min_samples=cfg.min_samples,
         metric="euclidean",
-        cluster_selection_method="eom",
+        cluster_selection_method=cfg.cluster_selection_method,
         store_centers="medoid",
     )
     labels = model.fit_predict(matrix)

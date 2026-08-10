@@ -189,6 +189,7 @@ class ClusterConfig:
     method: str = "hdbscan"  # hdbscan | kmeans
     min_cluster_size: int = 100
     min_samples: int = 5
+    cluster_selection_method: str = "eom"  # eom | leaf
     kmeans_k_grid: tuple[int, ...] = (6, 8, 10, 12, 15, 20, 25, 30)
     random_state: int = 42
     # Markov companion model used for likelihood-based anomaly scoring.

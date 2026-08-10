@@ -68,8 +68,103 @@ def ngram_signal_text(ngrams: list[dict[str, str]]) -> str:
     Lower-ranked evidence is still retained in the source CSV, but must not
     create a specific public label that the top evidence does not support.
     """
-    ordered = sorted(ngrams, key=lambda row: as_int(row.get("rank", 0)))[:3]
+    ordered = top_ngram_rows(ngrams)
     return " ".join(str(row.get("ngram", "")) for row in ordered).lower()
+
+
+def top_ngram_rows(ngrams: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Return the same top-three evidence rows used for public labels."""
+
+    return sorted(ngrams, key=lambda row: as_int(row.get("rank", 0)))[:3]
+
+
+def medoid_tokens(path: str) -> list[str]:
+    return [token.strip().lower() for token in path.split("->") if token.strip()]
+
+
+def token_is_view(token: str) -> bool:
+    return token.startswith("view@")
+
+
+def home_view_count(tokens: list[str]) -> int:
+    generic_home_views = (
+        "view@home",
+        "view@android/home",
+        "view@homevc",
+        "view@maintabbarcontroller",
+        "view@mainappactivity",
+        "view@splashactivity",
+        "view@splash",
+    )
+    return sum(token in generic_home_views for token in tokens)
+
+
+def marker_token_counts(tokens: list[str], markers: tuple[str, ...]) -> tuple[int, int, int]:
+    """Count all, view, and action marker hits in the medoid.
+
+    A marker in one terminal action is weaker than a marker in a view or a
+    repeated marker. This prevents paths such as Home -> Home -> Pay from
+    being reported as payment journeys when the cluster is really a home
+    landing/browse pattern.
+    """
+
+    all_hits = [token for token in tokens if any(marker in token for marker in markers)]
+    view_hits = [token for token in all_hits if token_is_view(token)]
+    action_hits = [token for token in all_hits if token.startswith("action@")]
+    return len(all_hits), len(view_hits), len(action_hits)
+
+
+def marker_ngram_row_count(ngrams: list[dict[str, str]], markers: tuple[str, ...]) -> int:
+    return sum(
+        any(marker in str(row.get("ngram", "")).lower() for marker in markers)
+        for row in top_ngram_rows(ngrams)
+    )
+
+
+def dominant_signal_score(
+    tokens: list[str],
+    ngrams: list[dict[str, str]],
+    markers: tuple[str, ...],
+) -> float:
+    """Score whether a theme dominates both the medoid and ranked n-grams.
+
+    Views receive more weight than actions because they represent the surface
+    actually occupied by the journey. Each matching top-three n-gram adds a
+    rank-discounted vote, preventing an incidental early action from beating a
+    repeated journey theme.
+    """
+
+    all_count, view_count, action_count = marker_token_counts(tokens, markers)
+    score = (view_count * 2.0) + action_count + max(0, all_count - view_count - action_count)
+    for row in top_ngram_rows(ngrams):
+        row_text = str(row.get("ngram", "")).lower()
+        if any(marker in row_text for marker in markers):
+            rank = max(1, as_int(row.get("rank", 1)))
+            score += max(1.0, 4.0 - rank) * 2.0
+    return score
+
+
+def is_incidental_tail_signal(
+    tokens: list[str],
+    ngrams: list[dict[str, str]],
+    markers: tuple[str, ...],
+) -> bool:
+    """Identify a business marker that is only a weak terminal event.
+
+    The signal is suppressed only when the medoid is visibly home-dominant,
+    has no matching view, and has at most one matching action supported by at
+    most one of the displayed n-grams. A real payment journey with a payment
+    screen or repeated payment n-grams remains eligible for a payment label.
+    """
+
+    all_count, view_count, action_count = marker_token_counts(tokens, markers)
+    return (
+        home_view_count(tokens) >= 2
+        and all_count <= 1
+        and view_count == 0
+        and action_count <= 1
+        and marker_ngram_row_count(ngrams, markers) <= 1
+    )
 
 
 def weighted_signal_score(
@@ -85,7 +180,7 @@ def weighted_signal_score(
     """
     primary_hits = sum(primary_text.count(marker) for marker in markers)
     score = min(3.0, primary_hits * 0.75)
-    ordered = sorted(ngrams, key=lambda row: as_int(row.get("rank", 0)))[:3]
+    ordered = top_ngram_rows(ngrams)
     for row in ordered:
         text = str(row.get("ngram", "")).lower()
         if not any(marker in text for marker in markers):
@@ -129,11 +224,16 @@ def classify(record: dict[str, Any], ngrams: list[dict[str, str]]) -> tuple[str,
         ]
     )
     text = raw_primary.lower()
+    tokens = medoid_tokens(str(record.get("medoid_path", "")))
     ngram_text = ngram_signal_text(ngrams)
     payment_markers = ("payment", "payaction", "pay_action", "prepaid", "bill", "checkout", "vietqr")
     auth_markers = ("login", "oauth", "authorization", "authentication", "otp", "sfauthentication", "guest_login")
+    wifi_markers = ("wifi",)
+    notification_markers = ("notification", "noti", "view_os_noti")
     payment_score = weighted_signal_score(text, ngrams, payment_markers)
     auth_score = weighted_signal_score(text, ngrams, auth_markers)
+    wifi_dominance = dominant_signal_score(tokens, ngrams, wifi_markers)
+    notification_dominance = dominant_signal_score(tokens, ngrams, notification_markers)
 
     def in_ngrams(*terms: str) -> bool:
         return any(term in ngram_text for term in terms)
@@ -180,6 +280,23 @@ def classify(record: dict[str, Any], ngrams: list[dict[str, str]]) -> tuple[str,
     if any(term in text for term in ("fprotect", "f-safe", "fsafe", "connecteddevice", "connected_device", "device_control", "device_detail", "block_harmful", "access_block")):
         return "device_management", "Connected-device protection and controls", ["safe internet / connected devices"], "high"
 
+    # A few setup actions at the beginning of a medoid must not override the
+    # surface that occupies most of the journey. Require Notification to be
+    # present repeatedly in both the medoid and at least two top n-grams before
+    # it can outrank a Wi-Fi action seen earlier in the path.
+    notification_token_count, _, _ = marker_token_counts(tokens, notification_markers)
+    if (
+        notification_token_count >= 2
+        and marker_ngram_row_count(ngrams, notification_markers) >= 2
+        and notification_dominance > wifi_dominance
+    ):
+        return (
+            "engagement",
+            "Notifications and alerts",
+            ["notification dominates medoid and top n-grams"],
+            "high",
+        )
+
     if "wifi" in text:
         if "schedule" in text:
             name = "Wi-Fi scheduling"
@@ -198,7 +315,12 @@ def classify(record: dict[str, Any], ngrams: list[dict[str, str]]) -> tuple[str,
     # (medoid + entry/exit). Ranked n-grams may refine the subtype, but must
     # not relabel an account journey as payment merely because one n-gram
     # contains a payment reminder.
-    primary_payment = in_primary(*payment_markers)
+    # One terminal action such as Action@Pay must not override repeated Home
+    # views. The n-grams form a second gate, so genuine payment journeys with
+    # a payment screen or repeated payment evidence still receive a payment
+    # label.
+    payment_tail_only = is_incidental_tail_signal(tokens, ngrams, payment_markers)
+    primary_payment = in_primary(*payment_markers) and not payment_tail_only
     primary_auth = in_primary(*auth_markers)
     if primary_payment and payment_score >= auth_score:
         if in_ngrams("vietqr"):
@@ -261,7 +383,10 @@ def classify(record: dict[str, Any], ngrams: list[dict[str, str]]) -> tuple[str,
         return "engagement", "Popup / interruption handling", ["popup or invite"], "medium"
 
     if any(term in text for term in ("mainappactivity", "maintabbarcontroller", "splashactivity", "splashvc", "homevc", "view@home", "view@homevc")):
-        return "navigation", "App launch and home browsing", ["app launch / home"], "medium"
+        signals = ["app launch / home"]
+        if payment_tail_only:
+            signals.append("terminal payment-like action suppressed")
+        return "navigation", "App launch and home browsing", signals, "medium"
 
     return "other", "Other app journey", ["no dominant business signal"], "medium"
 
@@ -348,7 +473,7 @@ def readable_path(path: str) -> tuple[list[str], bool]:
 
 
 def evidence_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
-    ordered = sorted(rows, key=lambda row: as_int(row.get("rank", 0)))
+    ordered = top_ngram_rows(rows)
     result: list[dict[str, Any]] = []
     for row in ordered[:3]:
         result.append(
@@ -547,6 +672,7 @@ SIGNAL_VI = {
     "support journey": "hành trình hỗ trợ",
     "support": "hỗ trợ",
     "notifications": "thông báo",
+    "notification dominates medoid and top n-grams": "thông báo chi phối medoid và các n-gram hàng đầu",
     "authentication": "xác thực",
     "logout": "đăng xuất",
     "promotion / loyalty / ads": "khuyến mãi / khách hàng thân thiết / quảng cáo",
@@ -556,6 +682,7 @@ SIGNAL_VI = {
     "CSAT or survey": "CSAT hoặc khảo sát",
     "popup or invite": "popup hoặc lời mời",
     "app launch / home": "mở ứng dụng / trang chính",
+    "terminal payment-like action suppressed": "đã loại tín hiệu thanh toán chỉ xuất hiện ở action cuối",
     "no dominant business signal": "không có tín hiệu nghiệp vụ nổi trội",
 }
 
@@ -631,6 +758,48 @@ def vietnamese_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def mapping_rows(payload: dict[str, Any], vietnamese: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten the catalog into a platform-aware cluster-name lookup table."""
+
+    vi_by_platform = {item["platform"]: item for item in vietnamese["platforms"]}
+    rows: list[dict[str, Any]] = []
+    for platform in payload["platforms"]:
+        vi_clusters = {
+            int(item["cluster_id"]): item
+            for item in vi_by_platform[platform["platform"]]["clusters"]
+        }
+        for item in platform["clusters"]:
+            cluster_id = int(item["cluster_id"])
+            vi_item = vi_clusters[cluster_id]
+            rows.append(
+                {
+                    "platform": platform["platform"],
+                    "cluster_id": cluster_id,
+                    "cluster_name": item["cluster_name"],
+                    "cluster_name_vi": vi_item["cluster_name"],
+                    "business_family": item["business_family"],
+                    "business_family_vi": vi_item["business_family"],
+                    "naming_confidence": item["naming_confidence"],
+                    "journey_count": item["metadata"]["journey_count"],
+                    "journey_share": item["metadata"]["journey_share"],
+                    "medoid_journey_id": item["representative_journey"]["journey_id"],
+                    "medoid_length": item["representative_journey"]["event_count"],
+                    "top_entry_token": item["metadata"]["top_entry_token"],
+                    "top_exit_token": item["metadata"]["top_exit_token"],
+                    "ngrams": ", ".join(detail["ngram"] for detail in item["evidence"]["top_ngrams"]),
+                }
+            )
+    return sorted(rows, key=lambda row: (row["platform"], row["cluster_id"]))
+
+
+def write_mapping_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -661,13 +830,23 @@ def main() -> int:
     }
     OUTPUT_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     vietnamese_output = OUTPUT_PATH.with_name("shareholder_cluster_catalog_vi.json")
+    vietnamese = vietnamese_payload(payload)
     vietnamese_output.write_text(
-        json.dumps(vietnamese_payload(payload), ensure_ascii=False, indent=2) + "\n",
+        json.dumps(vietnamese, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    rows = mapping_rows(payload, vietnamese)
+    combined_mapping = CLUSTER_DIR / "cluster_name_mapping.csv"
+    write_mapping_csv(combined_mapping, rows)
+    for platform in ("android", "ios"):
+        write_mapping_csv(
+            CLUSTER_DIR / f"{platform}_cluster_name_mapping.csv",
+            [row for row in rows if row["platform"] == platform],
+        )
     total = sum(platform["summary"]["cluster_count"] for platform in payload["platforms"])
     print(f"wrote {total} cluster entries -> {OUTPUT_PATH}")
     print(f"wrote {total} Vietnamese cluster entries -> {vietnamese_output}")
+    print(f"wrote {len(rows)} cluster-name mappings -> {combined_mapping}")
     return 0
 
 

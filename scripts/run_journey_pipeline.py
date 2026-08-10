@@ -1,10 +1,12 @@
 """End-to-end journey pipeline: canonize -> tokenize -> segment -> cluster.
 
-    python scripts/run_journey_pipeline.py
-    python scripts/run_journey_pipeline.py --level L3 --idle-gap 120 --entropy
+    python scripts/run_journey_pipeline.py --preprocess
+    python scripts/run_journey_pipeline.py --min-cluster-size 50 --min-samples 3 \
+        --ngram-min 1 --ngram-max 4 --svd-dim 128
 
-Writes every intermediate artefact plus a markdown validation report to
-outputs/journey/.
+The output directory is generated from the complete experiment configuration.
+Canonical train/test data is cached separately and reused across clustering
+experiments that share the same preprocessing settings.
 """
 
 from __future__ import annotations
@@ -17,7 +19,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -30,22 +31,74 @@ from Rule_based import postprocess as P  # noqa: E402
 from Rule_based import segment as S  # noqa: E402
 from Rule_based import tokens as T  # noqa: E402
 from Rule_based.config import PipelineConfig  # noqa: E402
+from Rule_based.experiment import (  # noqa: E402
+    build_prepared_data_slug,
+    build_run_slug,
+    split_sessions_chronologically,
+)
 from Rule_based.score import JourneyScorer  # noqa: E402
 from Rule_based.production import read_production_folder  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--preprocess", action="store_true", help="canonicalize production CSV files first")
+    p.add_argument(
+        "--preprocess",
+        action="store_true",
+        help="force rebuilding the automatically cached canonical train/test split",
+    )
     p.add_argument("--input", default="data/train_data/raw_data_production/data_raw_sample")
-    p.add_argument("--output", default="output/clusters_with_screen")
+    p.add_argument(
+        "--output-root",
+        "--output",
+        dest="output_root",
+        default="output/journey_runs",
+        help="root directory; the run-specific subdirectory is generated from hyperparameters",
+    )
+    p.add_argument("--test-size", type=float, default=0.2, help="share of latest sessions held out")
     p.add_argument("--level", default="L2", choices=["L1", "L2", "L3"])
     p.add_argument("--idle-gap", type=float, default=90.0)
+    p.add_argument("--min-journey-length", type=int, default=4)
+    p.add_argument("--token-min-df", type=int, default=3)
+    p.add_argument("--ngram-min", type=int, default=1)
+    p.add_argument("--ngram-max", type=int, default=3)
+    p.add_argument("--feature-min-df", type=int, default=3)
+    p.add_argument("--max-features", type=int, default=20_000)
+    p.add_argument("--svd-dim", type=int, default=64)
+    p.add_argument("--numeric-weight", type=float, default=0.35)
     p.add_argument("--min-cluster-size", type=int, default=100)
+    p.add_argument("--min-samples", type=int, default=5)
+    p.add_argument(
+        "--cluster-selection-method", default="eom", choices=["eom", "leaf"]
+    )
     p.add_argument("--entropy", action="store_true", help="add branching-entropy boundaries")
     p.add_argument("--keep-chrome", action="store_true", help="do not drop OS chrome screens")
+    p.add_argument("--drop-boot", action="store_true", help="drop boot/splash screens")
     p.add_argument("--no-stability", action="store_true")
-    return p.parse_args()
+    args = p.parse_args()
+    if not 0.0 < args.test_size < 1.0:
+        p.error("--test-size must be strictly between 0 and 1")
+    positive = {
+        "--min-journey-length": args.min_journey_length,
+        "--token-min-df": args.token_min_df,
+        "--ngram-min": args.ngram_min,
+        "--ngram-max": args.ngram_max,
+        "--feature-min-df": args.feature_min_df,
+        "--max-features": args.max_features,
+        "--svd-dim": args.svd_dim,
+        "--min-cluster-size": args.min_cluster_size,
+        "--min-samples": args.min_samples,
+    }
+    for flag, value in positive.items():
+        if value < 1:
+            p.error(f"{flag} must be at least 1")
+    if args.ngram_min > args.ngram_max:
+        p.error("--ngram-min cannot be greater than --ngram-max")
+    if args.idle_gap <= 0:
+        p.error("--idle-gap must be positive")
+    if args.numeric_weight < 0:
+        p.error("--numeric-weight cannot be negative")
+    return args
 
 
 def banner(text: str) -> None:
@@ -58,6 +111,7 @@ def run_cluster_journey(
     cfg: PipelineConfig,
     out_dir: Path,
     *,
+    holdout_raw: pd.DataFrame | None = None,
     check_stability: bool = True,
 ) -> dict[str, object]:
     """Run the complete, platform-agnostic clustering pipeline."""
@@ -201,14 +255,12 @@ def run_cluster_journey(
     )
     scorer.save(out_dir / f"{prefix}journey_scorer.pkl")
 
-    # hold-out check: score the last calendar day as if it were unseen data
-    event_time = pd.to_datetime(raw["event_time"], utc=True, format="mixed")
-    last_day = event_time.max().normalize()
-    unseen = raw[event_time >= last_day]
-    if len(unseen) > 500:
-        scored = scorer.score(unseen)
+    # The holdout contains complete sessions excluded before fitting.
+    if holdout_raw is not None and len(holdout_raw) > 500:
+        scored = scorer.score(holdout_raw)
         print(
-            f"scored {len(scored):,} journeys from the final day ({len(unseen):,} events)\n"
+            f"scored {len(scored):,} journeys from the chronological holdout "
+            f"({len(holdout_raw):,} events)\n"
             f"  matched a known archetype : {int((scored.cluster != -1).sum()):,} "
             f"({(scored.cluster != -1).mean():.1%})\n"
             f"  geometric anomalies       : {int(scored.geometric_anomaly.sum()):,}\n"
@@ -269,48 +321,127 @@ def run_cluster_journey(
 
 def main() -> int:
     args = parse_args()
-    config = PipelineConfig(input_csv=Path(args.input), output_dir=Path(args.output))
+    config = PipelineConfig(input_csv=Path(args.input))
     config.tokens.level = args.level
+    config.tokens.min_journey_df = args.token_min_df
     config.segment.idle_gap_seconds = args.idle_gap
+    config.segment.min_journey_length = args.min_journey_length
     config.segment.use_entropy_boundaries = args.entropy
+    config.features.ngram_range = (args.ngram_min, args.ngram_max)
+    config.features.min_df = args.feature_min_df
+    config.features.max_features = args.max_features
+    config.features.svd_components = args.svd_dim
+    config.features.numeric_block_weight = args.numeric_weight
     config.cluster.min_cluster_size = args.min_cluster_size
+    config.cluster.min_samples = args.min_samples
+    config.cluster.cluster_selection_method = args.cluster_selection_method
     config.post.drop_chrome = not args.keep_chrome
+    config.post.drop_boot = args.drop_boot
 
-    out_dir = REPO_ROOT / config.output_dir
+    input_path = REPO_ROOT / config.input_csv
+    output_root = REPO_ROOT / Path(args.output_root)
+    out_dir = output_root / build_run_slug(config, test_size=args.test_size)
+    prepared_dir = output_root / "_prepared" / build_prepared_data_slug(
+        config, input_path=input_path, test_size=args.test_size
+    )
+    config.output_dir = (
+        out_dir.relative_to(REPO_ROOT) if out_dir.is_relative_to(REPO_ROOT) else out_dir
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
-    android_train_path = out_dir / "canonical_events_android.csv"
-    ios_train_path = out_dir / "canonical_events_ios.csv"
+    prepared_dir.mkdir(parents=True, exist_ok=True)
+    android_train_path = prepared_dir / "canonical_events_android.csv"
+    ios_train_path = prepared_dir / "canonical_events_ios.csv"
 
-    android_test_path = out_dir / "canonical_events_android_test.csv"
-    ios_test_path = out_dir / "canonical_events_ios_test.csv"
+    android_test_path = prepared_dir / "canonical_events_android_test.csv"
+    ios_test_path = prepared_dir / "canonical_events_ios_test.csv"
+    cache_complete_path = prepared_dir / "_SUCCESS.json"
+    prepared_paths = [
+        android_train_path,
+        ios_train_path,
+        android_test_path,
+        ios_test_path,
+        cache_complete_path,
+    ]
 
-    if args.preprocess:
+    if args.preprocess or not all(path.exists() for path in prepared_paths):
         banner("PREPROCESSING")
         combined, validation = read_production_folder(
-            REPO_ROOT / config.input_csv,
+            input_path,
             cfg=config.canonize,
             segment_cfg=config.segment,
         )
-        validation.to_csv(out_dir / "preprocessing_report.csv", index=False)
-        android_df = combined.loc[combined.platform.eq("android")].copy()
-        ios_df = combined.loc[combined.platform.eq("ios")].copy()
-        android_df_train, android_df_test = train_test_split(android_df, test_size=0.2, random_state=42)
-        ios_df_train, ios_df_test = train_test_split(ios_df, test_size=0.2, random_state=42)
-
-        android_df_train.to_csv(android_train_path, index=False)
-        ios_df_train.to_csv(ios_train_path, index=False)
-
-        android_df_test.to_csv(android_test_path, index=False) 
-        ios_df_test.to_csv(ios_test_path, index=False)
-
-    if not android_train_path.exists() or not ios_train_path.exists():
-        raise FileNotFoundError("canonical files are missing; run with --preprocess first")
-    for platform, path in (("android", android_train_path), ("ios", ios_train_path)):
-        platform_df = pd.read_csv(path, low_memory=False, parse_dates=["event_time"])
-        run_cluster_journey(
-            platform_df, platform, config, out_dir, check_stability=not args.no_stability
+        validation.to_csv(prepared_dir / "preprocessing_report.csv", index=False)
+        split_rows: list[dict[str, object]] = []
+        destinations = {
+            "android": (android_train_path, android_test_path),
+            "ios": (ios_train_path, ios_test_path),
+        }
+        for platform, (train_path, test_path) in destinations.items():
+            platform_df = combined.loc[combined.platform.eq(platform)].copy()
+            train_df, test_df, split_report = split_sessions_chronologically(
+                platform_df, test_size=args.test_size
+            )
+            train_df.to_csv(train_path, index=False)
+            test_df.to_csv(test_path, index=False)
+            split_rows.append({"platform": platform, **split_report})
+        pd.DataFrame(split_rows).to_csv(prepared_dir / "split_report.csv", index=False)
+        cache_complete_path.write_text(
+            json.dumps(
+                {
+                    "strategy": "chronological_complete_session",
+                    "test_size": args.test_size,
+                    "input": str(input_path),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
         )
-        del platform_df
+        del combined
+        gc.collect()
+    else:
+        print(f"reusing prepared train/test data: {prepared_dir}")
+
+    preprocessing_report = prepared_dir / "preprocessing_report.csv"
+    split_report = prepared_dir / "split_report.csv"
+    if preprocessing_report.exists():
+        pd.read_csv(preprocessing_report).to_csv(out_dir / "preprocessing_report.csv", index=False)
+    if split_report.exists():
+        pd.read_csv(split_report).to_csv(out_dir / "split_report.csv", index=False)
+
+    manifest = {
+        "run_slug": out_dir.name,
+        "output_dir": str(out_dir),
+        "prepared_data_dir": str(prepared_dir),
+        "input": str(input_path),
+        "test_size": args.test_size,
+        "config": config.to_dict(),
+    }
+    (out_dir / "experiment_config.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+    print(f"experiment output: {out_dir}")
+
+    platform_paths = (
+        ("android", android_train_path, android_test_path),
+        ("ios", ios_train_path, ios_test_path),
+    )
+    for platform, train_path, test_path in platform_paths:
+        platform_df = pd.read_csv(train_path, low_memory=False, parse_dates=["event_time"])
+        holdout_df = pd.read_csv(test_path, low_memory=False, parse_dates=["event_time"])
+        overlap = set(platform_df["session_id"]) & set(holdout_df["session_id"])
+        if overlap:
+            raise RuntimeError(
+                f"{platform}: prepared train/test data leaks {len(overlap)} sessions"
+            )
+        run_cluster_journey(
+            platform_df,
+            platform,
+            config,
+            out_dir,
+            holdout_raw=holdout_df,
+            check_stability=not args.no_stability,
+        )
+        del platform_df, holdout_df
         gc.collect()
     print(f"\nall artefacts written to {out_dir}")
     return 0

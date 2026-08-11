@@ -1,4 +1,4 @@
-"""Stage 4 - Post-tokenisation sequence cleanup.
+"""Stage 5 - Post-tokenisation sequence cleanup.
 
 Turns tokenised events into one clean clickstream sequence per journey, plus the
 small set of numeric features that clustering actually consumes. Nothing else.
@@ -18,18 +18,20 @@ moves from the sequence channel to the numeric channel.
 Implementation note
 -------------------
 Collapsing works on *row positions*, never on token strings. One journey yields
-one list of surviving row indices, and every token level (L1/L2/L3) is then read
-off those same indices. That is why L1 and L2 sequences stay position-aligned
-for free, and why this module no longer needs the run-mirroring helpers it used
-to carry.
+one list of surviving row indices, and every resolution (exact, L3, L2, L1, the
+operation channel) is then read off those same indices. That is why all the
+channels stay position-aligned for free, and why this module needs no
+run-mirroring helpers.
 """
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pandas as pd
 
-from .config import PostProcessConfig
+from .config import BACK_ACTION_MARKERS, PostProcessConfig
 
 
 # --------------------------------------------------------------------------
@@ -92,6 +94,19 @@ def clean_positions(
     return pos, n_dedup, n_loop
 
 
+def _abandon_mask(df: pd.DataFrame) -> np.ndarray:
+    """Events where the user backed out: `back`, `close`, `cancel`, `dismiss`.
+
+    Prefers the `operation_stage` produced by the semantic enrichment stage,
+    which derives the same set from normalised path components. Falls back to
+    the substring markers for frames that never went through enrichment.
+    """
+    if "operation_stage" in df.columns:
+        return df["operation_stage"].astype(str).eq("abort").to_numpy()
+    pattern = "|".join(re.escape(marker) for marker in BACK_ACTION_MARKERS)
+    return df["segment_name"].astype(str).str.lower().str.contains(pattern, regex=True).to_numpy()
+
+
 def _as_bool(series: pd.Series) -> np.ndarray:
     """CSV round-trips booleans as the strings 'True'/'False'; astype(bool) on
     those returns True for both."""
@@ -106,7 +121,7 @@ def _as_bool(series: pd.Series) -> np.ndarray:
 def build_journey_sequences(
     df: pd.DataFrame,
     cfg: PostProcessConfig,
-    token_col: str = "token_l2",
+    token_col: str = "exact_token",
     extra_token_cols: tuple[str, ...] = (),
 ) -> tuple[pd.DataFrame, list[list[str]], dict[str, list[list[str]]]]:
     """Collapse each journey into one clean token sequence + numeric features.
@@ -127,10 +142,7 @@ def build_journey_sequences(
     tok = df[token_col].to_numpy()
     extras = {c: df[c].to_numpy() for c in extra_token_cols}
     is_action = (df["event_type"].to_numpy() == "action")
-    names = df["segment_name"].astype(str)
-    is_back = names.str.lower().str.contains(
-        r"btn_back|backbutton|handleback|nav_back|/back|goback|close|dismiss|cancel", regex=True
-    ).to_numpy()
+    is_back = _abandon_mask(df)
     gap = df["gap_prev_seconds"].fillna(0.0).to_numpy(dtype=float)
     # read back from CSV `ts` is a string, and only some rows carry fractional
     # seconds - a single inferred format silently NaTs the rest
@@ -220,42 +232,3 @@ def postprocess_report(journeys: pd.DataFrame) -> pd.DataFrame:
             {"metric": "median_journey_length", "value": float(journeys["n_events_final"].median())},
         ]
     )
-
-
-# --------------------------------------------------------------------------
-if __name__ == "__main__":
-    import json
-    import os
-
-    from .config import PostProcessConfig, SegmentConfig
-
-    post_cfg = PostProcessConfig()
-    seg_cfg = SegmentConfig()
-    out_dir = "outputs/journeys"
-    os.makedirs(out_dir, exist_ok=True)
-
-    for platform in ("android", "ios"):
-        events = pd.read_csv(f"{out_dir}/{platform}_journeys.csv", low_memory=False)
-        journeys, sequences, _ = build_journey_sequences(events, post_cfg)
-
-        # journeys too short to carry order information are useless for
-        # clustering; drop them here so every downstream artefact is aligned
-        keep = journeys["n_events_final"] >= seg_cfg.min_journey_length
-        journeys = journeys.loc[keep].reset_index(drop=True)
-        sequences = [s for s, k in zip(sequences, keep) if k]
-
-        journeys["sequence"] = [" -> ".join(s) for s in sequences]
-        journeys.to_csv(f"{out_dir}/{platform}_journey_features.csv", index=False)
-        with open(f"{out_dir}/{platform}_journey_sequences.json", "w", encoding="utf-8") as fh:
-            json.dump(
-                [
-                    {"journey_id": jid, "tokens": seq}
-                    for jid, seq in zip(journeys["journey_id"], sequences)
-                ],
-                fh,
-                ensure_ascii=False,
-                indent=2,
-            )
-
-        print(f"\n=== {platform} ===")
-        print(postprocess_report(journeys).to_string(index=False))

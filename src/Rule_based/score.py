@@ -97,30 +97,75 @@ class JourneyScorer:
         return cls(cfg, vectorizer, centroids, markov, thresholds)
 
     # -------------------------------------------------------------- predict
-    def prepare(self, raw_events: pd.DataFrame) -> tuple[pd.DataFrame, list[list[str]]]:
-        """Run the identical canonize -> tokenize -> segment -> clean pipeline."""
+    def prepare(
+        self, raw_events: pd.DataFrame
+    ) -> tuple[pd.DataFrame, list[list[str]], dict[str, list[list[str]]]]:
+        """Run the identical canonize -> enrich -> tokenize -> segment -> clean path.
+
+        Returns the journey frame, the primary token sequences and the extra
+        semantic channel sequences the fitted vectorizer expects (empty when it
+        was fitted without channels).
+        """
         canon = C.canonize_events(raw_events, self.cfg.canonize)
         tok = T.build_tokens(canon, self.cfg.canonize)
         seg = S.assign_journeys(tok, self.cfg.segment)
         seg["boundary_reason"] = seg["boundary_reason"].fillna("")
-        col = {"L1": "token_l1", "L2": "token_l2", "L3": "token_l3"}[self.cfg.tokens.level]
-        journeys, sequences, _ = P.build_journey_sequences(seg, self.cfg.post, token_col=col)
+
+        channel_names = tuple(sorted(getattr(self.vectorizer, "channel_weights", {})))
+        primary = T.level_column(self.cfg.tokens.level)
+        extra_columns = tuple(
+            dict.fromkeys(T.channel_column(name) for name in channel_names if T.channel_column(name) != primary)
+        )
+        journeys, sequences, extras = P.build_journey_sequences(
+            seg, self.cfg.post, token_col=primary, extra_token_cols=extra_columns
+        )
         keep = [len(s) >= self.cfg.segment.min_journey_length for s in sequences]
+        channels = {
+            name: [s for s, k in zip(extras.get(T.channel_column(name), sequences), keep) if k]
+            for name in channel_names
+        }
         return (
             journeys.loc[keep].reset_index(drop=True),
             [s for s, k in zip(sequences, keep) if k],
+            channels,
         )
 
     def score(self, raw_events: pd.DataFrame) -> pd.DataFrame:
-        journeys, sequences = self.prepare(raw_events)
-        if journeys.empty:
-            return journeys
+        journeys, sequences, channels = self.prepare(raw_events)
+        return self.score_prepared(journeys, sequences, channels=channels)
 
-        matrix = self.vectorizer.transform(journeys, sequences)
+    def score_prepared(
+        self,
+        journeys: pd.DataFrame,
+        sequences: list[list[str]],
+        *,
+        channels: dict[str, list[list[str]]] | None = None,
+        distance_limits: dict[int, float] | None = None,
+    ) -> pd.DataFrame:
+        """Score already prepared journeys without repeating preprocessing.
+
+        This is also the shared entry point for hierarchical scorers, which
+        prepare a raw batch once and then evaluate C followed by B only for
+        C-noise journeys.
+        """
+
+        if len(journeys) != len(sequences):
+            raise ValueError("journeys and sequences must have the same length")
+        if journeys.empty:
+            return journeys.copy()
+
+        matrix = self.vectorizer.transform(journeys, sequences, channels)
         labels, distance = _assign(matrix, self.centroids)
+        nearest_labels = labels.copy()
 
         # a journey too far from every centroid is not a member of any archetype
-        far = distance > self.thresholds.distance_p95
+        if distance_limits is None:
+            limit = np.full(len(labels), self.thresholds.distance_p95, dtype=float)
+        else:
+            limit = np.array(
+                [distance_limits.get(int(label), -np.inf) for label in labels], dtype=float
+            )
+        far = distance > limit
         labels = np.where(far, -1, labels)
 
         logprob = np.array(
@@ -129,7 +174,9 @@ class JourneyScorer:
 
         out = journeys.copy()
         out["cluster"] = labels
+        out["nearest_cluster"] = nearest_labels
         out["distance_to_centroid"] = np.round(distance, 4)
+        out["distance_limit"] = np.round(limit, 4)
         out["markov_logprob"] = np.round(logprob, 4)
         out["geometric_anomaly"] = far
         out["generative_anomaly"] = logprob < self.thresholds.markov_p05
@@ -186,6 +233,11 @@ class JourneyScorer:
         with Path(path).open("rb") as fh:
             return pickle.load(fh)
 
+    @property
+    def channel_names(self) -> tuple[str, ...]:
+        """Semantic channels this scorer's vectorizer was fitted with."""
+        return tuple(sorted(getattr(self.vectorizer, "channel_weights", {})))
+
 
 def _assign(matrix: np.ndarray, centroids: dict[int, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
     if not centroids:
@@ -204,15 +256,3 @@ def _assign(matrix: np.ndarray, centroids: dict[int, np.ndarray]) -> tuple[np.nd
         labels[start:stop] = keys[best]
         minimum[start:stop] = distance[np.arange(stop - start), best]
     return labels, minimum
-
-
-if __name__ == "__main__":
-    import sys
-
-    from .config import PipelineConfig
-    from .features import JourneyVectorizer
-    from .train import fit_pipeline
-
-    cfg = PipelineConfig()
-    scorer = fit_pipeline(cfg)
-    scorer.save(Path(sys.argv[1]))

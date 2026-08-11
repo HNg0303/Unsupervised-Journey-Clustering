@@ -30,6 +30,27 @@ AUTH_ACTION_MARKERS: tuple[str, ...] = (
     "continue_login", "login_with", "click_login", "log_out", "logout", "sign_out", "signin_success",
 )
 
+PRODUCTION_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
+    "platform": ("segmentation.segment",),
+    "segmentation_name": ("segmentation.name",),
+    "client_time": ("timestamp",),
+    "screen_id": ("segmentation.screen_id",),
+    "_id": ("_id.$oid",),
+}
+
+
+def normalize_production_columns(raw: pd.DataFrame) -> pd.DataFrame:
+    """Accept both flattened exports and the canonical production headers."""
+
+    rename: dict[str, str] = {}
+    for target, aliases in PRODUCTION_COLUMN_ALIASES.items():
+        if target in raw.columns:
+            continue
+        source = next((alias for alias in aliases if alias in raw.columns), None)
+        if source is not None:
+            rename[source] = target
+    return raw.rename(columns=rename) if rename else raw
+
 
 def parse_client_time(values: pd.Series) -> pd.Series:
     """Parse ISO-8601 and epoch-millisecond values into UTC datetimes."""
@@ -84,6 +105,7 @@ def canonicalize_frame(
     """Map one production-shaped frame to the canonical event contract."""
     cfg = cfg or CanonizeConfig()
     segment_cfg = segment_cfg or SegmentConfig()
+    raw = normalize_production_columns(raw)
     required = {"session_id", "platform", "key", "segmentation_name", "client_time"}
     missing = required - set(raw.columns)
     if missing:

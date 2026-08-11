@@ -1,8 +1,8 @@
-"""Stage 5 - Journey representation.
+"""Stage 6 - Journey representation.
 
-Two channels, concatenated:
+Several channels, each vectorised on its own and then concatenated:
 
-  SEQUENCE CHANNEL   TF-IDF over 1..3-grams of the cleaned token sequence,
+  PRIMARY SEQUENCE   TF-IDF over 1..3-grams of the cleaned token sequence,
                      reduced with truncated SVD and L2-normalised. n-grams are
                      what make order matter: HOME->PAY->CONFIRM and
                      HOME->SUPPORT->CHAT share zero bigrams even when their
@@ -10,15 +10,33 @@ Two channels, concatenated:
                      injected so entry and exit points become first-class
                      features.
 
+  SEMANTIC CHANNELS  The same journey re-read at the resolutions the semantic
+                     enrichment stage produces - `coarse` (family/module),
+                     `intent` (family/module/object/operation) and `operation`
+                     (stage:operation). Each gets its own TF-IDF + SVD block.
+                     They are what let two journeys that never share an exact
+                     token still land near each other: an iOS modem restart and
+                     an Android modem restart differ in every exact token and
+                     agree in every coarse one.
+
   NUMERIC CHANNEL    Length, action ratio, back rate, loop count, revisit
                      ratio, dwell and gap statistics — the behaviour that the
                      cleanup stage moved out of the sequence.
 
-The numeric block is standardised and down-weighted (default 0.35) so a handful
-of scalars cannot outvote the sequence.
+Every block is L2-normalised *before* weighting, so a channel's influence is
+its weight and nothing else - not its vocabulary size, not its SVD rank. The
+numeric block is standardised and down-weighted (default 0.35) so a handful of
+scalars cannot outvote the sequence.
+
+Channels are optional. `FeatureConfig.channel_weights = {}` reproduces the
+single-channel representation exactly, and a vectorizer unpickled from a run
+that predates the channels keeps working: `transform` reads its extra encoders
+through `getattr`, and an old object simply has none.
 """
 
 from __future__ import annotations
+
+from collections.abc import Mapping
 
 import numpy as np
 import pandas as pd
@@ -62,7 +80,9 @@ def numeric_matrix(journeys: pd.DataFrame) -> tuple[np.ndarray, list[str]]:
     sequence itself is encoded.
     """
     cols = [c for c in NUMERIC_COLUMNS if c in journeys.columns]
-    raw = journeys[cols].to_numpy(dtype=float)
+    # `to_numpy` hands back a read-only view when the selection is already one
+    # homogeneous float block, and the log1p damping below writes in place.
+    raw = np.array(journeys[cols].to_numpy(dtype=float), dtype=float, copy=True)
     skewed = [
         cols.index(c)
         for c in (
@@ -81,16 +101,10 @@ def numeric_matrix(journeys: pd.DataFrame) -> tuple[np.ndarray, list[str]]:
     return raw, cols
 
 
-class JourneyVectorizer:
-    """Fit-once / transform-many representation, so new data can be scored.
-
-    This is what makes the pipeline usable for the stated end goal: the fitted
-    object can embed an unseen journey into the same space, assign it to a
-    cluster, and score it for anomaly.
-    """
+class _SequenceEncoder:
+    """One TF-IDF + SVD block. Fit once, transform many, L2-normalised out."""
 
     def __init__(self, cfg: FeatureConfig) -> None:
-        self.cfg = cfg
         self.tfidf = TfidfVectorizer(
             analyzer="word",
             token_pattern=_ANALYZER_SPLIT,
@@ -101,8 +115,85 @@ class JourneyVectorizer:
             lowercase=False,
         )
         self.svd: TruncatedSVD | None = None
+        self.svd_components = int(cfg.svd_components)
+
+    def fit_transform(self, sequences: list[list[str]]) -> np.ndarray:
+        counts = self.tfidf.fit_transform(sequences_to_documents(sequences))
+        n_components = int(min(self.svd_components, max(2, min(counts.shape) - 1)))
+        self.svd = TruncatedSVD(n_components=n_components, random_state=0)
+        return normalize(self.svd.fit_transform(counts))
+
+    def transform(self, sequences: list[list[str]]) -> np.ndarray:
+        if self.svd is None:
+            raise RuntimeError("call fit_transform before transform")
+        return normalize(self.svd.transform(self.tfidf.transform(sequences_to_documents(sequences))))
+
+    @property
+    def info(self) -> dict[str, object]:
+        assert self.svd is not None
+        return {
+            "vocabulary": int(len(self.tfidf.vocabulary_)),
+            "svd_components": int(self.svd.n_components),
+            "svd_explained_variance": round(float(self.svd.explained_variance_ratio_.sum()), 4),
+        }
+
+
+class JourneyVectorizer:
+    """Fit-once / transform-many representation, so new data can be scored.
+
+    This is what makes the pipeline usable for the stated end goal: the fitted
+    object can embed an unseen journey into the same space, assign it to a
+    cluster, and score it for anomaly.
+
+    `sequences` is always the primary channel. `channels` carries the extra
+    semantic resolutions of the *same* journeys, index-aligned; the channel
+    names must match `cfg.channel_weights`, and both `fit_transform` and
+    `transform` must be given the same set.
+    """
+
+    def __init__(
+        self, cfg: FeatureConfig, *, channel_weights: Mapping[str, float] | None = None
+    ) -> None:
+        self.cfg = cfg
+        weights = cfg.channel_weights if channel_weights is None else channel_weights
+        self.channel_weights: dict[str, float] = {
+            name: float(weight) for name, weight in sorted(weights.items()) if weight > 0
+        }
+        # `tfidf` / `svd` stay on the object under their historical names: the
+        # ONNX exporter and `top_ngrams_per_group` read them, and so do
+        # scorers pickled before this module grew channels.
+        self.primary = _SequenceEncoder(cfg)
+        self.channels: dict[str, _SequenceEncoder] = {
+            name: _SequenceEncoder(cfg) for name in self.channel_weights
+        }
         self.scaler = StandardScaler()
         self.numeric_columns: list[str] = []
+
+    # -- backward-compatible accessors ------------------------------------
+    @property
+    def tfidf(self) -> TfidfVectorizer:
+        return self.primary.tfidf
+
+    @property
+    def svd(self) -> TruncatedSVD | None:
+        return self.primary.svd
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        """Load pickles written before the primary encoder was factored out.
+
+        Those objects stored `tfidf` and `svd` directly on the instance, which
+        the properties above now shadow. Rebuilding a `_SequenceEncoder` around
+        them restores a working single-channel vectorizer.
+        """
+        if "primary" not in state:
+            encoder = _SequenceEncoder.__new__(_SequenceEncoder)
+            encoder.tfidf = state.pop("tfidf")  # type: ignore[assignment]
+            encoder.svd = state.pop("svd")  # type: ignore[assignment]
+            encoder.svd_components = int(getattr(encoder.svd, "n_components", 0))
+            state["primary"] = encoder
+            state.setdefault("channels", {})
+            state.setdefault("channel_weights", {})
+        self.__dict__.update(state)
 
     # -- helpers ----------------------------------------------------------
     def _numeric_matrix(self, journeys: pd.DataFrame) -> np.ndarray:
@@ -110,38 +201,77 @@ class JourneyVectorizer:
         self.numeric_columns = cols
         return raw
 
+    def _active_channels(self) -> dict[str, _SequenceEncoder]:
+        """Channels this instance actually has; empty for legacy pickles."""
+        return getattr(self, "channels", {})
+
+    def _check_channels(self, channels: Mapping[str, list[list[str]]] | None) -> None:
+        expected = set(self._active_channels())
+        given = set(channels or {})
+        if expected != given:
+            raise ValueError(
+                "channel mismatch: vectorizer was built for "
+                f"{sorted(expected)} but was given {sorted(given)}"
+            )
+
+    def _blocks(
+        self,
+        journeys: pd.DataFrame,
+        sequences: list[list[str]],
+        channels: Mapping[str, list[list[str]]] | None,
+        *,
+        fit: bool,
+    ) -> tuple[list[np.ndarray], dict[str, object]]:
+        self._check_channels(channels)
+        primary = self.primary
+        blocks = [primary.fit_transform(sequences) if fit else primary.transform(sequences)]
+        info: dict[str, object] = {"primary": primary.info} if fit else {}
+
+        for name, encoder in sorted(self._active_channels().items()):
+            assert channels is not None  # guaranteed by _check_channels
+            channel_sequences = channels[name]
+            if len(channel_sequences) != len(sequences):
+                raise ValueError(f"channel {name!r} has {len(channel_sequences)} rows, expected {len(sequences)}")
+            block = encoder.fit_transform(channel_sequences) if fit else encoder.transform(channel_sequences)
+            blocks.append(block * self.channel_weights[name])
+            if fit:
+                info[name] = {**encoder.info, "weight": self.channel_weights[name]}
+
+        numeric = self._numeric_matrix(journeys)
+        scaled = self.scaler.fit_transform(numeric) if fit else self.scaler.transform(numeric)
+        blocks.append(normalize(scaled) * self.cfg.numeric_block_weight)
+        return blocks, info
+
     # -- api --------------------------------------------------------------
     def fit_transform(
-        self, journeys: pd.DataFrame, sequences: list[list[str]]
+        self,
+        journeys: pd.DataFrame,
+        sequences: list[list[str]],
+        channels: Mapping[str, list[list[str]]] | None = None,
     ) -> tuple[np.ndarray, dict[str, object]]:
-        docs = sequences_to_documents(sequences)
-        tfidf_matrix = self.tfidf.fit_transform(docs)
-
-        n_components = int(
-            min(self.cfg.svd_components, max(2, min(tfidf_matrix.shape) - 1))
-        )
-        self.svd = TruncatedSVD(n_components=n_components, random_state=0)
-        seq_block = normalize(self.svd.fit_transform(tfidf_matrix))
-
-        num_block = normalize(self.scaler.fit_transform(self._numeric_matrix(journeys)))
-        matrix = np.hstack([seq_block, num_block * self.cfg.numeric_block_weight])
-
+        blocks, channel_info = self._blocks(journeys, sequences, channels, fit=True)
+        matrix = np.hstack(blocks)
         info = {
             "n_journeys": int(matrix.shape[0]),
             "tfidf_vocabulary": int(len(self.tfidf.vocabulary_)),
-            "svd_components": n_components,
-            "svd_explained_variance": round(float(self.svd.explained_variance_ratio_.sum()), 4),
+            "svd_components": int(channel_info["primary"]["svd_components"]),  # type: ignore[index]
+            "svd_explained_variance": channel_info["primary"]["svd_explained_variance"],  # type: ignore[index]
+            "channels": channel_info,
             "numeric_features": len(self.numeric_columns),
             "final_dimension": int(matrix.shape[1]),
         }
         return matrix, info
 
-    def transform(self, journeys: pd.DataFrame, sequences: list[list[str]]) -> np.ndarray:
+    def transform(
+        self,
+        journeys: pd.DataFrame,
+        sequences: list[list[str]],
+        channels: Mapping[str, list[list[str]]] | None = None,
+    ) -> np.ndarray:
         if self.svd is None:
             raise RuntimeError("call fit_transform before transform")
-        seq_block = normalize(self.svd.transform(self.tfidf.transform(sequences_to_documents(sequences))))
-        num_block = normalize(self.scaler.transform(self._numeric_matrix(journeys)))
-        return np.hstack([seq_block, num_block * self.cfg.numeric_block_weight])
+        blocks, _ = self._blocks(journeys, sequences, channels, fit=False)
+        return np.hstack(blocks)
 
 
 class PatternVectorizer:

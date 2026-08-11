@@ -1,4 +1,4 @@
-"""Stage 3 - Journey segmentation (session -> journey).
+"""Stage 4 - Journey segmentation (session -> journey).
 
 Why this stage is mandatory here, not optional:
 
@@ -175,7 +175,7 @@ def assign_journeys(tokens: pd.DataFrame, cfg: SegmentConfig) -> pd.DataFrame:
 
 
 def refine_with_entropy(
-    df: pd.DataFrame, cfg: SegmentConfig, token_col: str = "token_l2"
+    df: pd.DataFrame, cfg: SegmentConfig, token_col: str = "exact_token"
 ) -> pd.DataFrame:
     """Add entropy-driven cuts on top of the rule-based assignment."""
     sequences = [g[token_col].tolist() for _, g in df.groupby("journey_id", sort=False)]
@@ -262,18 +262,3 @@ def sweep_idle_gap(
             }
         )
     return pd.DataFrame(rows)
-
-
-if __name__ == "__main__":
-    import os
-    segment_config = SegmentConfig() #use default.
-    tokenized_android_path = "outputs/journeys/tokenized_events_android.csv"
-    tokenized_ios_path = "outputs/journeys/tokenized_events_ios.csv"
-    tokenized_android_df = pd.read_csv(tokenized_android_path)
-    tokenized_ios_df = pd.read_csv(tokenized_ios_path)
-    android_journeys_df = assign_journeys(tokenized_android_df, segment_config)
-    ios_journeys_df = assign_journeys(tokenized_ios_df, segment_config)
-    output_path = "outputs/journeys"
-    os.makedirs(output_path, exist_ok=True)
-    android_journeys_df.to_csv(os.path.join(output_path, "android_journeys.csv"), index=False)
-    ios_journeys_df.to_csv(os.path.join(output_path, "ios_journeys.csv"), index=False)

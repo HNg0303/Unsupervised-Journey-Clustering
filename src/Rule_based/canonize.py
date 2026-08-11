@@ -151,15 +151,3 @@ def canonization_report(raw: pd.DataFrame, canon: pd.DataFrame) -> pd.DataFrame:
             _stats(canon["segment_name"], "canonical segment_name"),
         ]
     )
-
-if __name__ == "__main__":
-    import os
-    canon_config = CanonizeConfig() #use default.
-    raw_android_path = "data/clean_july_events_android.csv"
-    raw_ios_path = "data/clean_july_events_ios.csv"
-    canon_android_df = canonize_events(pd.read_csv(raw_android_path), canon_config)
-    canon_ios_df = canonize_events(pd.read_csv(raw_ios_path), canon_config)
-    output_path = "outputs/journeys"
-    os.makedirs(output_path, exist_ok=True)
-    canon_android_df.to_csv(os.path.join(output_path, "canonized_events_android.csv"), index=False)
-    canon_ios_df.to_csv(os.path.join(output_path, "canonized_events_ios.csv"), index=False)

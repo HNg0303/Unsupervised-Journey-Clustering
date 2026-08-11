@@ -29,9 +29,16 @@ def build_run_slug(cfg: PipelineConfig, *, test_size: float) -> str:
     s = cfg.segment
     t = cfg.tokens
     p = cfg.post
+    # Compact on purpose: the slug is a directory name and Windows still caps
+    # a path at 260 characters. `coarse=0.45, intent=0.30` -> `c45i30`.
+    channels = "".join(
+        f"{name[0]}{round(weight * 100):02.0f}"
+        for name, weight in sorted(f.channel_weights.items())
+    )
     return "_".join(
         [
             t.level,
+            f"ch-{channels or 'none'}",
             f"ng{f.ngram_range[0]}-{f.ngram_range[1]}",
             f"svd{f.svd_components}",
             f"fdf{f.min_df}",

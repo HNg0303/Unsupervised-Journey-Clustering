@@ -102,9 +102,16 @@ class CanonizeConfig:
 class TokenConfig:
     """Vocabulary construction."""
 
-    # Token resolution used to build feature vectors.
-    #   L1 = screen only, L2 = screen + shallow action path, L3 = exact triple
-    level: str = "L2"
+    # Primary modelling token; see `tokens.LEVEL_COLUMNS`.
+    #   EXACT = event_token, L3 = family/module/object/operation,
+    #   L2    = family/module, L1 = family
+    # EXACT is the default because it is the only resolution that survives a
+    # round-trip through the mobile bundle and the shareholder catalogs; the
+    # semantic levels enter the model as extra feature channels instead.
+    level: str = "EXACT"
+    # Resolution the rare-token backoff degrades to. One step coarser than the
+    # primary level, or the primary level itself to disable backoff.
+    backoff_level: str = "L2"
     # Tokens observed in fewer than this many *journeys* fall back to their
     # coarser form, then to <RARE>. Guards against the 28% singleton tail.
     min_journey_df: int = 3
@@ -180,6 +187,30 @@ class FeatureConfig:
     svd_components: int = 64
     # Relative weight of the numeric/behavioural block vs the sequence block.
     numeric_block_weight: float = 0.35
+    # Extra semantic channels vectorised alongside the primary token sequence,
+    # each with its own TF-IDF + SVD block, L2-normalised and then scaled by
+    # this weight before concatenation. The primary block always carries 1.0.
+    #
+    # The weights encode the trade-off the exact token cannot make on its own:
+    # `coarse` lets two journeys through different screens of the same module
+    # look alike, `intent` keeps the verb/noun distinction the module drops, and
+    # `operation` captures the browse-configure-commit shape independently of
+    # *where* it happened. An empty mapping reproduces the single-channel
+    # behaviour exactly.
+    channel_weights: dict[str, float] = field(
+        default_factory=lambda: {"coarse": 0.45, "intent": 0.30, "operation": 0.20}
+    )
+
+    def __getattr__(self, name: str) -> Any:
+        """Read a channel-less config out of a pickle written before channels.
+
+        `__getattr__` only fires for attributes the instance does not have, so
+        this costs nothing on current objects and lets `asdict`/`to_dict` walk
+        an unpickled legacy `FeatureConfig` as the single-channel run it was.
+        """
+        if name == "channel_weights":
+            return {}
+        raise AttributeError(name)
 
 
 @dataclass
@@ -187,8 +218,8 @@ class ClusterConfig:
     """Clustering + model selection."""
 
     method: str = "hdbscan"  # hdbscan | kmeans
-    min_cluster_size: int = 100
-    min_samples: int = 5
+    min_cluster_size: int = 100 # Number of journeys in a cluster. Smaller clusters are considered noise.
+    min_samples: int = 5 # Number of journeys in a cluster that are considered core points. Smaller clusters are considered noise.
     cluster_selection_method: str = "eom"  # eom | leaf
     kmeans_k_grid: tuple[int, ...] = (6, 8, 10, 12, 15, 20, 25, 30)
     random_state: int = 42

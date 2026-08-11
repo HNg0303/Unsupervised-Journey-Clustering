@@ -96,6 +96,17 @@ def export_preprocessing(scorer: JourneyScorer, destination: Path, platform: str
     vectorizer = scorer.vectorizer
     if vectorizer.svd is None:
         raise ValueError("scorer vectorizer has no fitted SVD")
+    # The mobile bundle reproduces one TF-IDF + SVD block plus the numeric
+    # block. A vectorizer with semantic channels produces a wider feature
+    # vector that the on-device preprocessing cannot rebuild, and exporting it
+    # anyway would ship a bundle whose features silently disagree with the
+    # centroids. Refit with `--numeric-weight ... --channel-weights ""`.
+    channels = sorted(getattr(vectorizer, "channels", {}))
+    if channels:
+        raise ValueError(
+            f"cannot export a multi-channel vectorizer to ONNX: channels={channels}. "
+            "Refit the run with semantic channels disabled for the mobile bundle."
+        )
     vocabulary = sorted(vectorizer.tfidf.vocabulary_.items(), key=lambda item: item[1])
     payload = {
         "schema_version": "2.0",
@@ -166,8 +177,10 @@ def export_centroid_onnx(scorer: JourneyScorer, destination: Path, opset: int) -
         [helper.make_tensor_value_info("features", TensorProto.FLOAT, [None, feature_dim])],
         [
             helper.make_tensor_value_info("cluster", TensorProto.INT64, [None]),
+            helper.make_tensor_value_info("nearest_cluster", TensorProto.INT64, [None]),
             helper.make_tensor_value_info("distance", TensorProto.FLOAT, [None]),
             helper.make_tensor_value_info("geometric_anomaly", TensorProto.BOOL, [None]),
+            helper.make_tensor_value_info("distances", TensorProto.FLOAT, [None, len(cluster_ids)]),
         ],
         initializer=initializers,
     )

@@ -22,7 +22,7 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CLUSTER_DIR = REPO_ROOT / "output" / "clusters_with_screen"
+CLUSTER_DIR = REPO_ROOT / "output" / "journey_runs" / "EXACT_ch-c45i30o20_ng1-3_svd64_fdf3_mf20000_nw0p35_mcs100_ms5_sel-eom_gap90_jmin4_tdf3_ent0_chr1_boot0_test0p2"
 OUTPUT_PATH = CLUSTER_DIR / "shareholder_cluster_catalog.json"
 
 
@@ -160,10 +160,47 @@ def is_incidental_tail_signal(
     all_count, view_count, action_count = marker_token_counts(tokens, markers)
     return (
         home_view_count(tokens) >= 2
-        and all_count <= 1
+        and all_count == 1
         and view_count == 0
         and action_count <= 1
         and marker_ngram_row_count(ngrams, markers) <= 1
+    )
+
+
+def is_single_action_only_signal(
+    tokens: list[str],
+    ngrams: list[dict[str, str]],
+    markers: tuple[str, ...],
+) -> bool:
+    """Return whether a business intent is supported by one action only.
+
+    A single navigation action can describe where the user tapped without
+    proving that the journey reached or completed that destination.  Do not
+    name a whole cluster after that action unless a matching destination view
+    is present either in the medoid or in the displayed top n-grams.
+    """
+
+    unique_actions = {token for token in tokens if token.startswith("action@")}
+    matching_actions = {
+        token for token in unique_actions if any(marker in token for marker in markers)
+    }
+    matching_views = {
+        token
+        for token in tokens
+        if token_is_view(token) and any(marker in token for marker in markers)
+    }
+    ngram_has_matching_view = any(
+        any(
+            token.startswith("view@") and any(marker in token for marker in markers)
+            for token in str(row.get("ngram", "")).lower().split()
+        )
+        for row in top_ngram_rows(ngrams)
+    )
+    return (
+        len(unique_actions) == 1
+        and len(matching_actions) == 1
+        and not matching_views
+        and not ngram_has_matching_view
     )
 
 
@@ -234,6 +271,13 @@ def classify(record: dict[str, Any], ngrams: list[dict[str, str]]) -> tuple[str,
     auth_score = weighted_signal_score(text, ngrams, auth_markers)
     wifi_dominance = dominant_signal_score(tokens, ngrams, wifi_markers)
     notification_dominance = dominant_signal_score(tokens, ngrams, notification_markers)
+    suppressed_single_actions: list[str] = []
+
+    def allow_action_signal(markers: tuple[str, ...], label: str) -> bool:
+        if is_single_action_only_signal(tokens, ngrams, markers):
+            suppressed_single_actions.append(label)
+            return False
+        return True
 
     def in_ngrams(*terms: str) -> bool:
         return any(term in ngram_text for term in terms)
@@ -245,13 +289,19 @@ def classify(record: dict[str, Any], ngrams: list[dict[str, str]]) -> tuple[str,
         return any(term in text or term in ngram_text for term in terms)
 
     # Rules are ordered from specific feature journeys to broader surfaces.
-    if "modem_reset" in text or "mode_reset" in text:
+    if ("modem_reset" in text or "mode_reset" in text) and allow_action_signal(
+        ("modem_reset", "mode_reset"), "modem reset"
+    ):
         return "device_management", "Router reset / modem reboot", ["modem reset"], "high"
 
-    if in_primary("scanqr", "scan_qr", "scan qr"):
+    if in_primary("scanqr", "scan_qr", "scan qr") and allow_action_signal(
+        ("scanqr", "scan_qr", "scan qr"), "QR scan"
+    ):
         return "utility", "QR scanning", ["QR scan"], "high"
 
-    if any(term in text for term in ("csat", "rating", "survey")):
+    if any(term in text for term in ("csat", "rating", "survey")) and allow_action_signal(
+        ("csat", "rating", "survey"), "CSAT or survey"
+    ):
         return "feedback", "Customer feedback / survey", ["CSAT or survey"], "high"
 
     has_econtract = has_econtract_marker(raw_primary)
@@ -265,7 +315,10 @@ def classify(record: dict[str, Any], ngrams: list[dict[str, str]]) -> tuple[str,
             name = "E-contract review"
         return "contracts", name, ["e-contract"], "high"
 
-    if any(term in text for term in ("support", "chatbot", "supportcreator", "support_request")):
+    support_markers = ("support", "chatbot", "supportcreator", "support_request")
+    if any(term in text for term in support_markers) and allow_action_signal(
+        support_markers, "support"
+    ):
         if any(term in text for term in ("send", "confirm", "submit")):
             name = "Support request submission"
         elif "chat" in text or "chatbot" in text:
@@ -297,7 +350,7 @@ def classify(record: dict[str, Any], ngrams: list[dict[str, str]]) -> tuple[str,
             "high",
         )
 
-    if "wifi" in text:
+    if "wifi" in text and allow_action_signal(("wifi",), "Wi-Fi"):
         if "schedule" in text:
             name = "Wi-Fi scheduling"
         elif "guest" in text:
@@ -308,7 +361,9 @@ def classify(record: dict[str, Any], ngrams: list[dict[str, str]]) -> tuple[str,
             name = f"Wi-Fi control — {band + ' ' if band else ''}{state}".strip()
         return "device_management", name, ["Wi-Fi controls"], "high"
 
-    if "modem" in text or "managemodem" in text:
+    if ("modem" in text or "managemodem" in text) and allow_action_signal(
+        ("modem", "managemodem"), "modem"
+    ):
         return "device_management", "Modem management", ["modem controls"], "high"
 
     # The business family must be visible in the representative evidence
@@ -320,8 +375,14 @@ def classify(record: dict[str, Any], ngrams: list[dict[str, str]]) -> tuple[str,
     # a payment screen or repeated payment evidence still receive a payment
     # label.
     payment_tail_only = is_incidental_tail_signal(tokens, ngrams, payment_markers)
-    primary_payment = in_primary(*payment_markers) and not payment_tail_only
-    primary_auth = in_primary(*auth_markers)
+    primary_payment = (
+        in_primary(*payment_markers)
+        and not payment_tail_only
+        and allow_action_signal(payment_markers, "payment")
+    )
+    primary_auth = in_primary(*auth_markers) and allow_action_signal(
+        auth_markers, "authentication"
+    )
     if primary_payment and payment_score >= auth_score:
         if in_ngrams("vietqr"):
             name = "VietQR payment"
@@ -333,7 +394,9 @@ def classify(record: dict[str, Any], ngrams: list[dict[str, str]]) -> tuple[str,
             name = "Payments and billing"
         return "payments", name, ["payment or billing"], "high"
 
-    if any(term in text for term in ("logout", "log_out")):
+    if any(term in text for term in ("logout", "log_out")) and allow_action_signal(
+        ("logout", "log_out"), "logout"
+    ):
         return "authentication", "Sign-out / login reset", ["logout"], "high"
 
     if primary_auth and auth_score > 0.0:
@@ -347,20 +410,31 @@ def classify(record: dict[str, Any], ngrams: list[dict[str, str]]) -> tuple[str,
             name = "Login and authentication"
         return "authentication", name, ["authentication"], "high"
 
-    if any(term in text for term in ("shop", "product", "order", "ecommerce", "e-commerce", "product-detail")):
+    commerce_markers = ("shop", "product", "order", "ecommerce", "e-commerce", "product-detail")
+    if any(term in text for term in commerce_markers) and allow_action_signal(
+        commerce_markers, "shop / product / order"
+    ):
         if "order" in text or "checkout" in text:
             name = "Shop and order journey"
         else:
             name = "Shop browsing"
         return "commerce", name, ["shop / product / order"], "high"
 
-    if any(term in text for term in ("loyalty", "promotion", "adsview", "ads_view", "game-checkin")):
+    engagement_markers = ("loyalty", "promotion", "adsview", "ads_view", "game-checkin")
+    if any(term in text for term in engagement_markers) and allow_action_signal(
+        engagement_markers, "promotion / loyalty / ads"
+    ):
         return "engagement", "Promotions, loyalty and ad exposure", ["promotion / loyalty / ads"], "high"
 
-    if any(term in text for term in ("notification", "noti", "view_os_noti")):
+    if any(term in text for term in notification_markers) and allow_action_signal(
+        notification_markers, "notification"
+    ):
         return "engagement", "Notifications and alerts", ["notifications"], "high"
 
-    if any(term in text for term in ("contract", "choosecontract", "choose_contract", "managercontract", "change_contract")):
+    contract_markers = ("contract", "choosecontract", "choose_contract", "managercontract", "change_contract")
+    if any(term in text for term in contract_markers) and allow_action_signal(
+        contract_markers, "contract"
+    ):
         if "share" in text or "permission" in text:
             name = "Contract sharing and permissions"
         elif "choose" in text or "change_contract" in text or "contract_list" in text:
@@ -369,26 +443,46 @@ def classify(record: dict[str, Any], ngrams: list[dict[str, str]]) -> tuple[str,
             name = "Contract management"
         return "contracts", name, ["contract management"], "high"
 
-    if any(term in text for term in ("profile", "account", "personal", "nav_profile")):
+    account_markers = ("profile", "account", "personal", "nav_profile")
+    if any(term in text for term in account_markers) and allow_action_signal(
+        account_markers, "profile / account"
+    ):
         return "account", "Profile and account journey", ["profile / account"], "high"
 
-    if any(term in text for term in ("update-package", "update_package", "package", "service_manage", "servicemanage", "other_manage_internet", "internet_service_management")):
+    service_markers = ("update-package", "update_package", "package", "service_manage", "servicemanage", "other_manage_internet", "internet_service_management")
+    if any(term in text for term in service_markers) and allow_action_signal(
+        service_markers, "service management"
+    ):
         if "package" in text or "update-package" in text:
             name = "Service package browsing and upgrade"
         else:
             name = "Internet service management"
         return "service_management", name, ["internet service management"], "high"
 
-    if any(term in text for term in ("popup", "remind", "invite")):
+    popup_markers = ("popup", "remind", "invite")
+    if any(term in text for term in popup_markers) and allow_action_signal(
+        popup_markers, "popup / interruption"
+    ):
         return "engagement", "Popup / interruption handling", ["popup or invite"], "medium"
 
     if any(term in text for term in ("mainappactivity", "maintabbarcontroller", "splashactivity", "splashvc", "homevc", "view@home", "view@homevc")):
         signals = ["app launch / home"]
         if payment_tail_only:
             signals.append("terminal payment-like action suppressed")
+        if suppressed_single_actions:
+            signals.append(
+                "single unique action signal suppressed: "
+                + ", ".join(dict.fromkeys(suppressed_single_actions))
+            )
         return "navigation", "App launch and home browsing", signals, "medium"
 
-    return "other", "Other app journey", ["no dominant business signal"], "medium"
+    signals = ["no dominant business signal"]
+    if suppressed_single_actions:
+        signals.append(
+            "single unique action signal suppressed: "
+            + ", ".join(dict.fromkeys(suppressed_single_actions))
+        )
+    return "other", "Other app journey", signals, "medium"
 
 
 def readable_token(token: str) -> str:
@@ -608,6 +702,7 @@ CLUSTER_NAME_VI = {
     "Internet service management": "Quản lý dịch vụ Internet",
     "QR scanning": "Quét mã QR",
     "Shop browsing": "Duyệt cửa hàng",
+    "Shop and order journey": "Duyệt cửa hàng và đơn hàng",
     "Popup / interruption handling": "Xử lý popup / gián đoạn",
     "Network performance and access-point management": "Hiệu năng mạng và quản lý điểm truy cập",
     "Modem management": "Quản lý modem",
@@ -617,6 +712,7 @@ CLUSTER_NAME_VI = {
     "External / OAuth login": "Đăng nhập ngoài ứng dụng / OAuth",
     "Login and authentication": "Đăng nhập và xác thực",
     "Support chat and request": "Chat và yêu cầu hỗ trợ",
+    "Customer support journey": "Hành trình hỗ trợ khách hàng",
     "Profile and account journey": "Hành trình hồ sơ và tài khoản",
     "Service package browsing and upgrade": "Duyệt và nâng cấp gói dịch vụ",
     "E-contract signing / confirmation": "Ký / xác nhận hợp đồng điện tử",
@@ -625,6 +721,7 @@ CLUSTER_NAME_VI = {
     "Contract management": "Quản lý hợp đồng",
     "Sign-out / login reset": "Đăng xuất / đặt lại đăng nhập",
     "Other app journey": "Hành trình ứng dụng khác",
+    "Guest Wi-Fi settings": "Cài đặt Wi-Fi khách",
 }
 
 
@@ -713,7 +810,10 @@ def translate_cluster_name(name: str) -> str:
         return CLUSTER_NAME_VI[name]
     if name.startswith("Wi-Fi control"):
         suffix = name.split("—", 1)[-1].strip()
-        suffix = suffix.replace("on/off", "bật/tắt").replace("settings", "cài đặt").replace("on", "bật")
+        suffix = re.sub(r"\bon/off\b", "bật/tắt", suffix)
+        suffix = re.sub(r"\bsettings\b", "cài đặt", suffix)
+        suffix = re.sub(r"\bon\b", "bật", suffix)
+        suffix = re.sub(r"\boff\b", "tắt", suffix)
         return f"Điều khiển Wi-Fi — {suffix}"
     return name
 
@@ -804,7 +904,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--cluster-dir",
-        default="output/clusters_with_screen",
+        default="output/journey_runs/EXACT_ch-c45i30o20_ng1-3_svd64_fdf3_mf20000_nw0p35_mcs100_ms5_sel-eom_gap90_jmin4_tdf3_ent0_chr1_boot0_test0p2",
         help="directory containing <platform>_cluster_catalog.json and ngrams",
     )
     args = parser.parse_args()

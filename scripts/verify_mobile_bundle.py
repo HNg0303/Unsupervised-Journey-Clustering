@@ -37,10 +37,10 @@ def main() -> int:
     source = pd.read_csv(REPO_ROOT / args.input, nrows=args.rows, low_memory=False)
     canonical, _ = canonicalize_frame(source, source_file=Path(args.input).name, cfg=scorer.cfg.canonize)
     canonical = canonical.loc[canonical.platform.eq(args.platform)]
-    journeys, sequences = scorer.prepare(canonical)
+    journeys, sequences, channels = scorer.prepare(canonical)
     if journeys.empty:
         raise ValueError("fixture produced no scoreable journey")
-    features = scorer.vectorizer.transform(journeys, sequences).astype(np.float32)
+    features = scorer.vectorizer.transform(journeys, sequences, channels).astype(np.float32)
     expected, distance = _assign(features, scorer.centroids)
     expected = np.where(distance > scorer.thresholds.distance_p95, -1, expected)
     session = ort.InferenceSession(str(bundle_dir / "journey_classifier.onnx"), providers=["CPUExecutionProvider"])

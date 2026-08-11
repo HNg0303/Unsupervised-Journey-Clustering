@@ -1,4 +1,4 @@
-"""End-to-end journey pipeline: canonize -> tokenize -> segment -> cluster.
+"""End-to-end journey pipeline: canonize -> enrich -> tokenize -> segment -> cluster.
 
     python scripts/run_journey_pipeline.py --preprocess
     python scripts/run_journey_pipeline.py --min-cluster-size 50 --min-samples 3 \
@@ -29,6 +29,7 @@ from Rule_based import cluster as CL  # noqa: E402
 from Rule_based import features as F  # noqa: E402
 from Rule_based import postprocess as P  # noqa: E402
 from Rule_based import segment as S  # noqa: E402
+from Rule_based import semantics as SEM  # noqa: E402
 from Rule_based import tokens as T  # noqa: E402
 from Rule_based.config import PipelineConfig  # noqa: E402
 from Rule_based.experiment import (  # noqa: E402
@@ -56,7 +57,25 @@ def parse_args() -> argparse.Namespace:
         help="root directory; the run-specific subdirectory is generated from hyperparameters",
     )
     p.add_argument("--test-size", type=float, default=0.2, help="share of latest sessions held out")
-    p.add_argument("--level", default="L2", choices=["L1", "L2", "L3"])
+    p.add_argument(
+        "--level",
+        default="EXACT",
+        choices=["EXACT", "L3", "L2", "L1"],
+        help="primary modelling token: EXACT=event_token, L3=family/module/object/operation, "
+        "L2=family/module, L1=family",
+    )
+    p.add_argument(
+        "--backoff-level",
+        default="L2",
+        choices=["EXACT", "L3", "L2", "L1"],
+        help="resolution the rare-token backoff degrades to",
+    )
+    p.add_argument(
+        "--channel-weights",
+        default="coarse=0.45,intent=0.30,operation=0.20",
+        help="semantic feature channels as name=weight pairs; pass an empty string to "
+        "fit the single-channel representation (required for the ONNX/mobile bundle)",
+    )
     p.add_argument("--idle-gap", type=float, default=90.0)
     p.add_argument("--min-journey-length", type=int, default=4)
     p.add_argument("--token-min-df", type=int, default=3)
@@ -98,7 +117,31 @@ def parse_args() -> argparse.Namespace:
         p.error("--idle-gap must be positive")
     if args.numeric_weight < 0:
         p.error("--numeric-weight cannot be negative")
+    try:
+        args.channel_weights = parse_channel_weights(args.channel_weights)
+    except ValueError as error:
+        p.error(f"--channel-weights: {error}")
     return args
+
+
+def parse_channel_weights(spec: str) -> dict[str, float]:
+    """Parse `name=weight,name=weight` into a validated channel mapping."""
+    weights: dict[str, float] = {}
+    for item in (part.strip() for part in spec.split(",")):
+        if not item:
+            continue
+        name, separator, raw = item.partition("=")
+        if not separator:
+            raise ValueError(f"expected name=weight, got {item!r}")
+        name = name.strip().lower()
+        if name not in T.CHANNEL_COLUMNS:
+            raise ValueError(f"unknown channel {name!r}; expected one of {sorted(T.CHANNEL_COLUMNS)}")
+        weight = float(raw)
+        if weight < 0:
+            raise ValueError(f"channel {name!r} weight cannot be negative")
+        if weight > 0:
+            weights[name] = weight
+    return weights
 
 
 def banner(text: str) -> None:
@@ -133,22 +176,25 @@ def run_cluster_journey(
     }])
     print(reports["canonization"].to_string(index=False))
 
-    banner(f"{platform.upper()} - STAGE 2 - tokenize")
-    tok = T.build_tokens(canon, cfg.canonize)
-    for level in ("L1", "L2", "L3"):
-        col = {"L1": "token_l1", "L2": "token_l2", "L3": "token_l3"}[level]
-        vc = tok[col].value_counts()
-        coverage = vc.head(100).sum() / len(tok) if len(tok) else 0.0
-        print(
-            f"{level}: vocab={len(vc):>5}  singletons={(vc == 1).sum():>4} "
-            f"({(vc == 1).mean():.1%})  top100_coverage={coverage:.1%}"
-        )
+    banner(f"{platform.upper()} - STAGE 2 - semantic enrichment")
+    enriched = SEM.annotate_semantics(canon)
+    reports["semantics"] = SEM.semantic_report(enriched)
+    print(reports["semantics"].to_string(index=False))
+    reports["semantic_unknowns"] = SEM.unknown_examples(enriched)
+    if not reports["semantic_unknowns"].empty:
+        print("\nhighest-traffic unlabelled events (manual review queue):")
+        print(reports["semantic_unknowns"].head(10).to_string(index=False))
+
+    banner(f"{platform.upper()} - STAGE 3 - tokenize")
+    tok = T.build_tokens(enriched, cfg.canonize)
+    reports["vocabulary"] = T.vocabulary_report(tok)
+    print(reports["vocabulary"].to_string(index=False))
     T.token_dictionary(tok, cfg.tokens.level).to_csv(
         out_dir / f"{prefix}token_dictionary.csv", index=False
     )
 
     # ------------------------------------------------------------- segment
-    banner(f"{platform.upper()} - STAGE 3 - segment sessions into journeys")
+    banner(f"{platform.upper()} - STAGE 4 - segment sessions into journeys")
     sweep_events = tok if len(tok) <= 200_000 else tok.iloc[:200_000].copy()
     reports["idle_gap_sweep"] = S.sweep_idle_gap(sweep_events, cfg.segment)
     print("idle-gap sensitivity:")
@@ -161,15 +207,31 @@ def run_cluster_journey(
     print(reports["segmentation"].to_string(index=False))
 
     # ---------------------------------------------------------- postprocess
-    banner("STAGE 4 - post-tokenization cleanup")
-    token_col = {"L1": "token_l1", "L2": "token_l2", "L3": "token_l3"}[cfg.tokens.level]
+    banner("STAGE 5 - post-tokenization cleanup")
+    token_col = T.level_column(cfg.tokens.level)
+    channel_names = tuple(sorted(cfg.features.channel_weights))
+    backoff_col = T.level_column(cfg.tokens.backoff_level)
+    # One collapse decides the surviving row positions; every resolution is
+    # then read off those same positions, so all channels stay index-aligned.
+    extra_cols = tuple(
+        column
+        for column in dict.fromkeys(
+            (*(T.channel_column(name) for name in channel_names), backoff_col)
+        )
+        if column != token_col
+    )
     journeys, sequences, extras = P.build_journey_sequences(
-        seg, cfg.post, token_col=token_col, extra_token_cols=("token_l1",)
+        seg, cfg.post, token_col=token_col, extra_token_cols=extra_cols
     )
     reports["postprocess"] = P.postprocess_report(journeys)
     print(reports["postprocess"].to_string(index=False))
 
-    sequences, fold_stats = T.fold_rare_tokens(sequences, extras["token_l1"], cfg.tokens)
+    all_channels = {
+        name: extras.get(T.channel_column(name), sequences) for name in channel_names
+    }
+    sequences, fold_stats = T.fold_rare_tokens(
+        sequences, extras.get(backoff_col, sequences), cfg.tokens
+    )
     reports["rare_folding"] = fold_stats
     print("\nrare-token folding:")
     print(fold_stats.to_string(index=False))
@@ -183,17 +245,20 @@ def run_cluster_journey(
     journeys_all = journeys.copy()
     journeys = journeys.loc[keep].reset_index(drop=True)
     sequences = [s for s, k in zip(sequences, keep) if k]
+    channels = {
+        name: [s for s, k in zip(rows, keep) if k] for name, rows in all_channels.items()
+    }
     if journeys.empty:
         raise ValueError(f"{platform}: no journeys meet the minimum length")
 
     # -------------------------------------------------------------- features
-    banner("STAGE 5 - journey representation")
+    banner("STAGE 6 - journey representation")
     vectorizer = F.JourneyVectorizer(cfg.features)
-    matrix, info = vectorizer.fit_transform(journeys, sequences)
+    matrix, info = vectorizer.fit_transform(journeys, sequences, channels)
     print(json.dumps(info, indent=2))
 
     # -------------------------------------------------------------- cluster
-    banner("STAGE 6 - clustering")
+    banner("STAGE 7 - clustering")
     labels, model, hstats = CL.fit_hdbscan(matrix, cfg.cluster)
     print("HDBSCAN:", json.dumps(hstats, indent=2))
 
@@ -225,7 +290,7 @@ def run_cluster_journey(
     reports["cluster_ngrams"] = ngrams
 
     # ------------------------------------------------------------- anomaly
-    banner("STAGE 7 - Markov likelihood (anomaly companion)")
+    banner("STAGE 8 - Markov likelihood (anomaly companion)")
     journeys["cluster"] = labels
     bank = CL.MarkovBank(cfg.cluster.markov_smoothing).fit(sequences, labels)
     if cfg.cluster.fit_markov:
@@ -249,7 +314,7 @@ def run_cluster_journey(
         )
 
     # -------------------------------------------------- fitted scorer (new data)
-    banner("STAGE 8 - fit scorer and verify the new-data path")
+    banner("STAGE 9 - fit scorer and verify the new-data path")
     scorer = JourneyScorer.from_training_run(
         cfg, vectorizer, matrix, labels, journeys, sequences, bank
     )
@@ -277,7 +342,7 @@ def run_cluster_journey(
         scored.to_csv(out_dir / f"{prefix}scored_holdout.csv", index=False)
 
     # ---------------------------------------------------------------- save
-    banner("STAGE 9 - write artefacts")
+    banner("STAGE 10 - write artefacts")
     journeys["sequence"] = [" -> ".join(s) for s in sequences]
     journeys.to_csv(out_dir / f"{prefix}journeys.csv", index=False)
     journeys_all.to_csv(out_dir / f"{prefix}journeys_all_including_short.csv", index=False)
@@ -286,14 +351,20 @@ def run_cluster_journey(
     seg[
         [
             "record_id", "session_id", "journey_id", "journey_pos", "boundary_reason",
-            "event_time", "event_type", "segment_name", "event_token", "platform",
-            "token_l1", "gap_prev_seconds", "gap_next_seconds",
+            "event_time", "event_type", "segment_name", "screen_context", "platform",
+            *SEM.SEMANTIC_COLUMNS,
+            *T.TOKEN_COLUMNS,
+            "gap_prev_seconds", "gap_next_seconds",
         ]
     ].to_csv(out_dir / f"{prefix}events_canonical.csv", index=False)
 
+    # Every resolution of the same journey, side by side and index-aligned, so
+    # a reader can inspect the coarse story without re-running the pipeline.
     with (out_dir / f"{prefix}sequences.jsonl").open("w", encoding="utf-8") as fh:
-        for jid, seq in zip(journeys["journey_id"], sequences):
-            fh.write(json.dumps({"journey_id": jid, "tokens": seq}) + "\n")
+        for position, (jid, seq) in enumerate(zip(journeys["journey_id"], sequences)):
+            record = {"journey_id": jid, "tokens": seq}
+            record.update({name: rows[position] for name, rows in channels.items()})
+            fh.write(json.dumps(record) + "\n")
 
     for name, frame in reports.items():
         frame.to_csv(out_dir / f"{prefix}report_{name}.csv", index=False)
@@ -323,6 +394,7 @@ def main() -> int:
     args = parse_args()
     config = PipelineConfig(input_csv=Path(args.input))
     config.tokens.level = args.level
+    config.tokens.backoff_level = args.backoff_level
     config.tokens.min_journey_df = args.token_min_df
     config.segment.idle_gap_seconds = args.idle_gap
     config.segment.min_journey_length = args.min_journey_length
@@ -332,6 +404,7 @@ def main() -> int:
     config.features.max_features = args.max_features
     config.features.svd_components = args.svd_dim
     config.features.numeric_block_weight = args.numeric_weight
+    config.features.channel_weights = args.channel_weights
     config.cluster.min_cluster_size = args.min_cluster_size
     config.cluster.min_samples = args.min_samples
     config.cluster.cluster_selection_method = args.cluster_selection_method

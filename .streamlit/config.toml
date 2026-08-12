@@ -1,0 +1,68 @@
+# Theme for the journey-clustering dashboard (dashboard/app.py).
+# Streamlit reads this when the app is launched from the repo root.
+#
+# A single [theme] section locks the app to this one (light) look. To let viewers
+# switch light/dark from the app's settings menu instead, rename this section to
+# [theme.light], rename [theme.sidebar] to [theme.light.sidebar], and add matching
+# [theme.dark] / [theme.dark.sidebar] sections.
+
+[theme]
+base = "light"
+
+# --- surfaces -------------------------------------------------------------------
+backgroundColor = "#FFFFFF"          # main canvas
+secondaryBackgroundColor = "#F4F6FA" # widgets, code blocks, metric cards
+borderColor = "#DFE4EC"
+dataframeBorderColor = "#DFE4EC"
+dataframeHeaderBackgroundColor = "#F4F6FA"
+
+# --- ink ------------------------------------------------------------------------
+textColor = "#1F2933"
+primaryColor = "#2C6BB3"             # matches the first chart colour; dark enough for white button text
+linkColor = "#2C6BB3"
+linkUnderline = false
+codeTextColor = "#324A5F"
+codeBackgroundColor = "#F4F6FA"
+
+# --- shape ----------------------------------------------------------------------
+baseRadius = "8px"
+buttonRadius = "8px"
+showWidgetBorder = true
+showSidebarBorder = true
+
+# --- type -----------------------------------------------------------------------
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+baseFontSize = 15
+baseFontWeight = 400
+headingFontSizes = ["30px", "23px", "19px", "16px", "14px", "13px"]
+headingFontWeights = [700, 600, 600, 600, 500, 500]
+codeFontSize = "0.85rem"
+
+# --- charts ---------------------------------------------------------------------
+# Mirrors dashboard/lib.py PALETTE so charts that do not pass an explicit colour
+# sequence still match the ones that do.
+chartCategoricalColors = [
+  "#4C78A8", "#F58518", "#54A24B", "#E45756",
+  "#72B7B2", "#B279A2", "#EECA3B", "#9D755D",
+]
+chartSequentialColors = [
+  "#F2F6FB", "#DDE7F3", "#C5D7EB", "#A9C4E1", "#8BB0D7",
+  "#6C9BCB", "#4C78A8", "#3A6191", "#2A4A75", "#1B3358",
+]
+
+# --- semantic colours (badges, :red[...] markdown, status text) -----------------
+redColor = "#C0392F"
+orangeColor = "#B3620E"
+yellowColor = "#B08900"
+greenColor = "#2E7D46"
+blueColor = "#2C6BB3"
+violetColor = "#7B5EA7"
+grayColor = "#5B6875"
+
+[theme.sidebar]
+backgroundColor = "#F4F6FA"
+secondaryBackgroundColor = "#E8EDF5"
+codeBackgroundColor = "#E8EDF5"
+textColor = "#1F2933"
+borderColor = "#DFE4EC"
+primaryColor = "#2C6BB3"

@@ -1,7 +1,6 @@
 """Attach names from the shareholder cluster catalog to scored journeys.
 
-    python scripts/apply_cluster_name_mapping.py --platform android \
-        --input output/android_scored.csv
+    python scripts/apply_cluster_name_mapping.py --platform android --input output\test\test_data_android_android_scored.csv --catalog output\journey_runs\EXACT_ch-c45i30o20_ng1-3_svd64_fdf3_mf20000_nw0p35_mcs100_ms5_sel-eom_gap90_jmin4_tdf3_ent0_chr1_boot0_test0p2\shareholder_cluster_catalog_vi.json
 """
 
 from __future__ import annotations

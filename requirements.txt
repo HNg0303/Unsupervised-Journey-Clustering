@@ -6,6 +6,7 @@ matplotlib
 seaborn
 ipykernel
 tabulate
+streamlit
 
 # optional - visualisation. Everything runs without these; scripts/visualize_clusters.py
 # falls back to sklearn t-SNE and emits dependency-free HTML.

@@ -19,3 +19,6 @@ __pycache__/
 *.pptx
 *.pptx.*
 _ppt_build/
+
+mobile/
+.gradle-codex/

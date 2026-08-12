@@ -1,5 +1,14 @@
 # Cluster Names — Every Cluster, Both Platforms, Both Routes
 
+> **Superseded — kept as a record of the `outputs/clusters/` run.**
+> `src/Rule_based/cluster_names.py` and `scripts/apply_cluster_names.py` were
+> removed: the ids below belong to a run that no longer exists, and the routes
+> `a_tfidf` / `b_prefixspan` are no longer produced. Cluster naming now lives in
+> [7_Cluster_Noise_Postprocessing.md](7_Cluster_Noise_Postprocessing.md) and
+> `scripts/name_hierarchical_clusters.py`. The family taxonomy below is still
+> the right level to report on; it is now derived per event by
+> [9_Semantic_Enrichment.md](9_Semantic_Enrichment.md).
+
 Names for all 169 clusters (29 + 34 Android, 50 + 56 iOS, plus one noise group
 per run), so the output can be discussed in words instead of integers.
 

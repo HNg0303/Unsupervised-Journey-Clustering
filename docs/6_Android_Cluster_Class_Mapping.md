@@ -39,6 +39,17 @@ scored = apply_cluster_mapping(scored, "output/android_cluster_class_mapping.jso
 Kết quả có thêm sáu cột: `class_group_code`, `class_group`, `class_code`,
 `class_name`, `class_description`, `naming_confidence`.
 
+Nếu cần dùng tên diễn giải trong catalog dành cho cổ đông/lãnh đạo, dùng
+catalog `output/clusters/shareholder_cluster_catalog_vi.json`:
+
+```powershell
+python scripts/apply_cluster_name_mapping.py --platform android --input output/android_scored.csv
+python scripts/apply_cluster_name_mapping.py --platform ios --input output/ios_scored.csv
+```
+
+Kết quả thêm `business_family`, `cluster_name` và `naming_confidence`. Catalog
+chứa cả Android và iOS nên `--platform` là bắt buộc.
+
 ## Artifact
 
 - `output/android_cluster_class_mapping.json`: nguồn mapping có version và metadata.

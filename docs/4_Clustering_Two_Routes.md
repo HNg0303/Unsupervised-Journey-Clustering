@@ -1,5 +1,12 @@
 # Journey Clustering — Two Representation Routes
 
+> **Partly superseded — kept for the route A/B comparison and the cluster
+> analysis.** `scripts/run_clustering.py` and `scripts/visualize_clusters.py`
+> were removed along with the `outputs/clusters/` layout they read; the single
+> entry point is now `scripts/run_journey_pipeline.py`. Tokenisation is also no
+> longer "L1/L2/L3 aliases of the exact token" — see
+> [9_Semantic_Enrichment.md](9_Semantic_Enrichment.md).
+
 How a cleaned clickstream sequence becomes a cluster label, by two independent
 paths; what those clusters actually look like on HiFPT Android and iOS data; how
 to score new events; and how to look at the result.

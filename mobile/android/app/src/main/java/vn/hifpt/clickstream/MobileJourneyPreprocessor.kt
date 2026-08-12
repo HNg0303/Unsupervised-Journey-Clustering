@@ -1,5 +1,6 @@
 package vn.hifpt.clickstream
 
+import org.json.JSONObject
 import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
@@ -29,259 +30,231 @@ data class PreparedJourney(
 data class CanonicalClick(
     val raw: ClickstreamEvent,
     val eventType: String,
-    val screenBare: String,
-    val screen: String,
-    val target: String,
-    val screenClass: String,
-    val isBack: Boolean,
-    val durationClip: Double,
+    val segmentName: String,
+    val screenContext: String,
+    val eventToken: String,
     val eventTimeMillis: Long,
-    val gapSeconds: Double,
-    val tokenL2: String
+    val gapPrevSeconds: Double?,
+    val gapNextSeconds: Double?
 )
 
-/** Kotlin implementation of canonize -> segment -> postprocess used by the fitted scorer. */
+/** Production preprocessing contract mirrored from Rule_based.production. */
 object MobileJourneyPreprocessor {
-    private const val MISSING = "<none>"
-    private const val MID_PATH_DEPTH = 3
-    private const val IDLE_GAP_SECONDS = 90.0
-    private const val ROOT_RETURN_MIN_EVENTS = 6
-    private const val MAX_JOURNEY_LENGTH = 80
-
-    private val chromeScreens = setOf(
-        "MainTabBarController", "BaseNavigation", "UINavigationController", "UIViewController",
-        "UITrackingElementWindowController", "_UISceneHostingViewController",
-        "UIHostingController<PopupView>", "SFBrowserRemoteViewController",
-        "SFAuthenticationViewController", "SFSafariViewController", "WebkitEcommerceController",
-        "HiWebViewActivity", "WebViewActivity"
-    )
-    private val bootScreens = setOf("SplashVC", "SplashActivity", "Splash", "MainAppActivity", "LaunchScreen")
-    private val rootScreens = setOf("HomeVC", "HomeGuestVC", "HOME", "android/Home", "guest/HOME")
+    private const val MISSING = "<missing>"
     private val semanticQueryKeys = setOf("tab", "cat_id", "categoryid", "ordertype", "type", "step", "mode", "view", "status")
-    private val backMarkers = listOf("btn_back", "backbutton", "handleback", "/back", "goback", "close", "dismiss", "cancel")
+    private val backMarkers = listOf("btn_back", "backbutton", "handleback", "nav_back", "/back", "goback", "close", "dismiss", "cancel")
     private val authMarkers = listOf("continue_login", "login_with", "click_login", "log_out", "logout", "sign_out", "signin_success")
+    private val rootNames = setOf("HomeVC", "HomeGuestVC", "HOME", "android/Home", "guest/HOME")
     private val uuidRegex = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", RegexOption.IGNORE_CASE)
     private val hexRegex = Regex("^[0-9a-f]{16,}$", RegexOption.IGNORE_CASE)
     private val digitRegex = Regex("^\\d+$")
     private val codeRegex = Regex("^(?=.*\\d)[A-Z0-9]{6,}$")
 
+    @Volatile var idleGapSeconds = 90.0
+        private set
+    @Volatile private var rootReturnMinEvents = 6
+    @Volatile private var maxJourneyLength = 80
+
+    fun configure(preprocessingJson: String) {
+        val root = JSONObject(preprocessingJson)
+        val segment = root.optJSONObject("journey_contract")?.optJSONObject("segment") ?: root
+        idleGapSeconds = segment.optDouble("idle_gap_seconds", idleGapSeconds)
+        rootReturnMinEvents = segment.optInt("root_return_min_events", rootReturnMinEvents)
+        maxJourneyLength = segment.optInt("max_journey_length", maxJourneyLength)
+    }
+
+    fun eventTimeMillis(event: ClickstreamEvent): Long =
+        event.timestamp.takeIf { it > 0L }
+            ?: event.createdAt?.takeIf { it.isNotBlank() }?.let { value ->
+                value.toLongOrNull() ?: runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
+            }
+            ?: 0L
+
+    fun canonicalize(events: List<ClickstreamEvent>): List<CanonicalClick> {
+        val ordered = events.sortedWith(
+            compareBy<ClickstreamEvent> { it.segment.lowercase(Locale.US) }
+                .thenBy { it.sessionId }
+                .thenBy { eventTimeMillis(it) }
+                .thenBy { it.sourceIndex }
+        )
+        val result = mutableListOf<CanonicalClick>()
+        var previous: CanonicalClick? = null
+        var previousStream: String? = null
+        var screenContext = MISSING
+        var sinceCut = 0
+
+        for (raw in ordered) {
+            val time = eventTimeMillis(raw)
+            val stream = streamKey(raw)
+            val sameStream = previous != null && previousStream == stream
+            val eventType = normalizeEventType(raw.key)
+            val segmentName = canonizeName(raw.name)
+            val next = ordered.getOrNull(result.size + 1)
+            val sameNext = next != null && streamKey(next) == stream
+            val gapPrev = if (sameStream) (time - previous!!.eventTimeMillis) / 1000.0 else null
+            val provisional = makeCanonicalClick(
+                raw, eventType, segmentName, screenContext, time, gapPrev,
+                if (sameNext) (eventTimeMillis(next!!) - time) / 1000.0 else null
+            )
+
+            if (!sameStream) {
+                screenContext = MISSING
+                sinceCut = 0
+            } else if (boundaryBeforeCanonical(previous!!, provisional, sinceCut) != null) {
+                screenContext = MISSING
+                sinceCut = 0
+            }
+
+            val canonical = makeCanonicalClick(
+                raw, eventType, segmentName, screenContext, time, gapPrev,
+                if (sameNext) (eventTimeMillis(next!!) - time) / 1000.0 else null
+            )
+            result += canonical
+            if (eventType == "view") screenContext = canonical.screenContext
+            previous = canonical
+            previousStream = stream
+            sinceCut++
+        }
+        return result
+    }
+
+    private fun streamKey(event: ClickstreamEvent): String =
+        "${event.segment.trim().lowercase(Locale.US)}\u001f${event.sessionId}"
+
+    private fun makeCanonicalClick(
+        raw: ClickstreamEvent,
+        eventType: String,
+        segmentName: String,
+        previousScreenContext: String,
+        time: Long,
+        gapPrevSeconds: Double?,
+        gapNextSeconds: Double?
+    ): CanonicalClick {
+        val explicitScreen = raw.screenId.trim()
+            .takeIf { it.isNotEmpty() }
+            ?.let { canonizeName(it) }
+        val screenContext = explicitScreen
+            ?: if (eventType == "view") segmentName else previousScreenContext
+        val eventToken = when (eventType) {
+            "view" -> "$eventType@$screenContext"
+            else -> "$eventType@$screenContext#$segmentName"
+        }
+        return CanonicalClick(
+            raw = raw,
+            eventType = eventType,
+            segmentName = segmentName,
+            screenContext = screenContext,
+            eventToken = eventToken,
+            eventTimeMillis = time,
+            gapPrevSeconds = gapPrevSeconds,
+            gapNextSeconds = gapNextSeconds
+        )
+    }
+
     fun prepareAll(events: List<ClickstreamEvent>): List<PreparedJourney> {
         val canonical = canonicalize(events)
         if (canonical.isEmpty()) return emptyList()
-        val slices = mutableListOf<JourneySlice>()
+        val output = mutableListOf<PreparedJourney>()
         var start = 0
-        var reason = "session_start"
-
+        var startReason = "session_start"
         for (index in 1 until canonical.size) {
-            val previous = canonical[index - 1]
-            val current = canonical[index]
-            val sinceCut = index - start
-            val boundary = when {
-                current.raw.sessionId != previous.raw.sessionId -> "session_start"
-                current.gapSeconds > IDLE_GAP_SECONDS -> "idle_gap"
-                sinceCut >= MAX_JOURNEY_LENGTH -> "length_cap"
-                current.screenBare in rootScreens && previous.screenBare !in rootScreens &&
-                    sinceCut >= ROOT_RETURN_MIN_EVENTS -> "root_return"
-                isAuthAction(current) && !isAuthAction(previous) -> "auth_change"
-                else -> null
-            }
+            val boundary = boundaryBeforeCanonical(canonical[index - 1], canonical[index], index - start)
             if (boundary != null) {
-                slices += JourneySlice(start, index, reason)
+                output += buildJourney("J${(output.size + 1).toString().padStart(6, '0')}", canonical.subList(start, index), startReason)
                 start = index
-                reason = boundary
+                startReason = boundary
             }
         }
-        slices += JourneySlice(start, canonical.size, reason)
-
-        return slices.mapIndexed { index, slice ->
-            buildJourney(
-                journeyId = "J${(index + 1).toString().padStart(6, '0')}",
-                canonical = canonical.subList(slice.start, slice.end),
-                boundaryReason = slice.reason
-            )
-        }
+        output += buildJourney("J${(output.size + 1).toString().padStart(6, '0')}", canonical.subList(start, canonical.size), startReason)
+        return output
     }
 
-    fun prepareSingle(
-        journeyId: String,
-        events: List<ClickstreamEvent>,
-        boundaryReason: String = ""
-    ): PreparedJourney? {
+    fun prepareSingle(journeyId: String, events: List<ClickstreamEvent>, boundaryReason: String = ""): PreparedJourney? {
         val canonical = canonicalize(events)
-        if (canonical.isEmpty()) return null
-        return buildJourney(journeyId, canonical, boundaryReason)
+        return if (canonical.isEmpty()) null else buildJourney(journeyId, canonical, boundaryReason)
     }
 
-    /** Return the boundary reason that should be applied before appending nextEvent. */
     fun boundaryBefore(currentEvents: List<ClickstreamEvent>, nextEvent: ClickstreamEvent): String? {
         if (currentEvents.isEmpty()) return null
-        if (nextEvent.sessionId != currentEvents.last().sessionId) return "session_start"
-        val ordered = canonicalize(listOf(currentEvents.last(), nextEvent))
-        if (ordered.size < 2) return null
-        val previous = ordered[ordered.lastIndex - 1]
-        val current = ordered.last()
-        val sinceCut = currentEvents.size
-        return when {
-            current.raw.sessionId != previous.raw.sessionId -> "session_start"
-            current.gapSeconds > IDLE_GAP_SECONDS -> "idle_gap"
-            sinceCut >= MAX_JOURNEY_LENGTH -> "length_cap"
-            current.screenBare in rootScreens && previous.screenBare !in rootScreens &&
-                sinceCut >= ROOT_RETURN_MIN_EVENTS -> "root_return"
-            isAuthAction(current) && !isAuthAction(previous) -> "auth_change"
-            else -> null
-        }
+        val previousRaw = currentEvents.last()
+        if (previousRaw.sessionId != nextEvent.sessionId ||
+            !previousRaw.segment.equals(nextEvent.segment, true)
+        ) return "session_start"
+        val pair = canonicalize(listOf(currentEvents.last(), nextEvent))
+        if (pair.size != 2 || pair.last().raw !== nextEvent) return null
+        return boundaryBeforeCanonical(pair[0], pair[1], currentEvents.size)
     }
 
-    private fun canonicalize(events: List<ClickstreamEvent>): List<CanonicalClick> {
-        val ordered = events.sortedWith(
-            compareBy<ClickstreamEvent> { it.sessionId }
-                .thenBy { eventTime(it) }
-                .thenBy { it.sourceIndex }
-        )
-        var previousSession = ""
-        var previousTime = 0L
-        return ordered.map { raw ->
-            val eventTime = eventTime(raw)
-            val eventType = when {
-                raw.key.equals("[CLY]_view", ignoreCase = true) -> "View"
-                raw.key.equals("action", ignoreCase = true) -> "Action"
-                else -> raw.key.trim().replaceFirstChar { it.titlecase(Locale.US) }
-            }
-            val screenRaw = if (eventType == "View") raw.name else raw.screenId
-            val targetRaw = if (eventType == "View") MISSING else raw.name
-            val screenBare = canonizeName(screenRaw)
-            val target = canonizeName(targetRaw)
-            val platform = raw.segment.ifBlank { "unk" }
-            val screen = "$platform::$screenBare"
-            val tokenL1 = "$eventType@$screen"
-            val tokenL2 = if (target == MISSING) tokenL1 else "$tokenL1#${shallowPath(target)}"
-            val gap = if (raw.sessionId == previousSession && previousTime > 0L) {
-                max(0.0, (eventTime - previousTime) / 1000.0)
-            } else {
-                0.0
-            }
-            previousSession = raw.sessionId
-            previousTime = eventTime
-            CanonicalClick(
-                raw = raw,
-                eventType = eventType,
-                screenBare = screenBare,
-                screen = screen,
-                target = target,
-                screenClass = when {
-                    screenBare in bootScreens -> "boot"
-                    screenBare in chromeScreens -> "chrome"
-                    else -> "ux"
-                },
-                isBack = backMarkers.any { target.lowercase(Locale.US).contains(it) },
-                durationClip = raw.durationSeconds.toDouble().coerceIn(0.0, 1800.0),
-                eventTimeMillis = eventTime,
-                gapSeconds = gap,
-                tokenL2 = tokenL2
-            )
-        }
+    private fun boundaryBeforeCanonical(previous: CanonicalClick, current: CanonicalClick, sinceCut: Int): String? = when {
+        current.raw.sessionId != previous.raw.sessionId ||
+            !current.raw.segment.equals(previous.raw.segment, true) -> "session_start"
+        (current.gapPrevSeconds ?: 0.0) > idleGapSeconds -> "idle_gap"
+        sinceCut >= maxJourneyLength -> "length_cap"
+        current.eventType == "view" && current.segmentName in rootNames && previous.segmentName !in rootNames && sinceCut >= rootReturnMinEvents -> "root_return"
+        isAuthAction(current) && !isAuthAction(previous) -> "auth_change"
+        else -> null
     }
 
-    private fun buildJourney(
-        journeyId: String,
-        canonical: List<CanonicalClick>,
-        boundaryReason: String
-    ): PreparedJourney {
-        val filtered = canonical.filter { it.screenClass != "chrome" && it.screenClass != "boot" }
-        val runKept = keepAfterRuns(filtered)
-        val cycleKept = keepAfterCycles(runKept)
-        val cleaned = cycleKept
-        val tokens = cleaned.map { it.tokenL2 }
+    private fun buildJourney(journeyId: String, canonical: List<CanonicalClick>, boundaryReason: String): PreparedJourney {
+        val runKept = keepAfterRuns(canonical)
+        val cleaned = keepAfterCycles(runKept)
+        val tokens = cleaned.map { it.eventToken }
         val n = tokens.size
-        val actions = cleaned.count { it.eventType == "Action" }
+        val gaps = cleaned.drop(1).mapNotNull { it.gapPrevSeconds }.filter { it >= 0.0 }
+        val span = if (canonical.size > 1) max(0.0, (canonical.last().eventTimeMillis - canonical.first().eventTimeMillis) / 1000.0) else 0.0
         val unique = tokens.toSet().size
-        val gaps = cleaned.drop(1).map { it.gapSeconds }
-        val dwell = cleaned.filter { it.eventType != "Action" }.sumOf { it.durationClip }
-        val span = if (canonical.size > 1) {
-            max(0.0, (canonical.last().eventTimeMillis - canonical.first().eventTimeMillis) / 1000.0)
-        } else {
-            0.0
-        }
-        val medianGap = median(gaps)
-        val backRate = if (n == 0) 0.0 else cleaned.count { it.isBack }.toDouble() / n
+        val backRate = if (n == 0) 0.0 else cleaned.count { click -> backMarkers.any { click.segmentName.lowercase(Locale.US).contains(it) } }.toDouble() / n
         val revisit = if (n == 0) 0.0 else 1.0 - unique.toDouble() / n
-
         return PreparedJourney(
-            journeyId = journeyId,
-            sessionId = canonical.first().raw.sessionId,
-            deviceId = canonical.first().raw.deviceId,
-            customerId = canonical.first().raw.customerId,
-            platform = canonical.first().raw.segment,
-            boundaryReason = boundaryReason,
-            rawEvents = canonical.map { it.raw },
-            cleanedEvents = cleaned,
-            tokens = tokens,
-            numeric = mapOf(
+            journeyId, canonical.first().raw.sessionId, canonical.first().raw.deviceId,
+            canonical.first().raw.customerId, canonical.first().raw.segment.lowercase(Locale.US),
+            boundaryReason, canonical.map { it.raw }, cleaned, tokens,
+            mapOf(
                 "n_events_final" to n.toDouble(),
                 "n_unique_tokens" to unique.toDouble(),
-                "action_ratio" to if (n == 0) 0.0 else actions.toDouble() / n,
+                "action_ratio" to if (n == 0) 0.0 else cleaned.count { it.eventType == "action" }.toDouble() / n,
                 "back_rate" to backRate,
                 "revisit_ratio" to revisit,
-                "n_loop_removed" to (runKept.size - cycleKept.size).toDouble(),
-                "n_dedup_removed" to (filtered.size - runKept.size).toDouble(),
+                "n_loop_removed" to (runKept.size - cleaned.size).toDouble(),
+                "n_dedup_removed" to (canonical.size - runKept.size).toDouble(),
                 "span_seconds" to span,
-                "total_dwell_s" to dwell,
-                "median_gap_s" to medianGap
-            ),
-            nEventsFinal = n,
-            nLoopRemoved = runKept.size - cycleKept.size,
-            nDedupRemoved = filtered.size - runKept.size,
-            backRate = backRate,
-            revisitRatio = revisit,
-            spanSeconds = span
+                "median_gap_s" to quantile(gaps, 0.5),
+                "p90_gap_s" to quantile(gaps, 0.9),
+                "max_gap_s" to (gaps.maxOrNull() ?: 0.0)
+            ), n, runKept.size - cleaned.size, canonical.size - runKept.size, backRate, revisit, span
         )
     }
 
-    private fun keepAfterRuns(events: List<CanonicalClick>): List<CanonicalClick> {
-        if (events.isEmpty()) return emptyList()
-        return events.filterIndexed { index, event -> index == 0 || event.tokenL2 != events[index - 1].tokenL2 }
-    }
+    private fun keepAfterRuns(events: List<CanonicalClick>) = events.filterIndexed { i, e -> i == 0 || e.eventToken != events[i - 1].eventToken }
 
     private fun keepAfterCycles(events: List<CanonicalClick>): List<CanonicalClick> {
         val kept = mutableListOf<CanonicalClick>()
-        var index = 0
-        while (index < events.size) {
+        var i = 0
+        while (i < events.size) {
             var matched = false
             for (period in 2..4) {
-                if (index + period * 2 > events.size) continue
-                val block = events.subList(index, index + period).map { it.tokenL2 }
+                if (i + period * 2 > events.size) continue
+                val block = events.subList(i, i + period).map { it.eventToken }
                 var repeats = 1
-                var cursor = index + period
-                while (cursor + period <= events.size &&
-                    events.subList(cursor, cursor + period).map { it.tokenL2 } == block
-                ) {
-                    repeats += 1
-                    cursor += period
+                var cursor = i + period
+                while (cursor + period <= events.size && events.subList(cursor, cursor + period).map { it.eventToken } == block) {
+                    repeats++; cursor += period
                 }
-                if (repeats >= 2) {
-                    kept += events.subList(index, index + period)
-                    index = cursor
-                    matched = true
-                    break
-                }
+                if (repeats >= 2) { kept += events.subList(i, i + period); i = cursor; matched = true; break }
             }
-            if (!matched) {
-                kept += events[index]
-                index += 1
-            }
+            if (!matched) kept += events[i++]
         }
         return kept
     }
 
-    private fun isAuthAction(event: CanonicalClick): Boolean =
-        event.eventType == "Action" && authMarkers.any { event.target.lowercase(Locale.US).contains(it) }
-
-    private fun shallowPath(target: String): String {
-        if (target == MISSING) return MISSING
-        val parts = target.split('/').filter { it.isNotEmpty() }
-        return if (parts.size <= MID_PATH_DEPTH) parts.joinToString("/")
-        else parts.take(MID_PATH_DEPTH).joinToString("/") + "/*"
+    private fun normalizeEventType(value: String): String = when (value.trim().lowercase(Locale.US)) {
+        "[cly]_view" -> "view"
+        "[cly]_action" -> "action"
+        "" -> "unknown"
+        else -> value.trim().lowercase(Locale.US)
     }
+
+    private fun isAuthAction(event: CanonicalClick) = event.eventType == "action" && authMarkers.any { event.segmentName.lowercase(Locale.US).contains(it) }
 
     private fun canonizeName(value: String): String {
         val text = value.trim()
@@ -291,46 +264,29 @@ object MobileJourneyPreprocessor {
     }
 
     private fun canonizeUrl(value: String): String {
-        val uri = runCatching { URI(value) }.getOrNull() ?: return canonizeNameWithoutUrl(value)
+        val uri = runCatching { URI(value) }.getOrNull() ?: return value
         val host = uri.host ?: ""
-        val path = (uri.path ?: "/").split('/').joinToString("/") { maskSegment(it) }
-            .trimEnd('/').ifEmpty { "/" }
-        val query = uri.rawQuery.orEmpty().split('&')
-            .mapNotNull { part ->
-                val bits = part.split('=', limit = 2)
-                if (bits.size != 2) return@mapNotNull null
-                val key = URLDecoder.decode(bits[0], StandardCharsets.UTF_8.name()).lowercase(Locale.US)
-                if (key !in semanticQueryKeys) return@mapNotNull null
-                val queryValue = URLDecoder.decode(bits[1], StandardCharsets.UTF_8.name())
-                if (queryValue.isBlank()) null else key to queryValue
-            }
-            .sortedBy { it.first }
-            .joinToString("&") { "${it.first}=${it.second}" }
-        return host + path + if (query.isBlank()) "" else "?$query"
+        val path = (uri.path ?: "/").split('/').joinToString("/") { maskSegment(it) }.trimEnd('/').ifEmpty { "/" }
+        val query = uri.rawQuery.orEmpty().split('&').mapNotNull { part ->
+            val bits = part.split('=', limit = 2); if (bits.size != 2) return@mapNotNull null
+            val key = URLDecoder.decode(bits[0], StandardCharsets.UTF_8.name()).lowercase(Locale.US)
+            val decoded = URLDecoder.decode(bits[1], StandardCharsets.UTF_8.name())
+            if (key in semanticQueryKeys && decoded.isNotBlank()) key to decoded else null
+        }.sortedBy { it.first }.joinToString("&") { "${it.first}=${it.second}" }
+        return host + path + if (query.isEmpty()) "" else "?$query"
     }
 
-    private fun canonizeNameWithoutUrl(value: String): String =
-        if ('/' in value) value.split('/').joinToString("/") { maskSegment(it) } else value
-
-    private fun maskSegment(value: String): String = when {
-        value.isEmpty() -> value
+    private fun maskSegment(value: String) = when {
         digitRegex.matches(value) -> "{id}"
-        uuidRegex.matches(value) -> "{uuid}"
-        hexRegex.matches(value) -> "{uuid}"
+        uuidRegex.matches(value) || hexRegex.matches(value) -> "{uuid}"
         codeRegex.matches(value) -> "{code}"
         else -> value
     }
 
-    private fun eventTime(event: ClickstreamEvent): Long =
-        event.createdAt?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
-            ?: event.timestamp
-
-    private fun median(values: List<Double>): Double {
+    private fun quantile(values: List<Double>, q: Double): Double {
         if (values.isEmpty()) return 0.0
-        val sorted = values.sorted()
-        val middle = sorted.size / 2
-        return if (sorted.size % 2 == 0) (sorted[middle - 1] + sorted[middle]) / 2.0 else sorted[middle]
+        val sorted = values.sorted(); val position = (sorted.size - 1) * q
+        val low = position.toInt(); val high = kotlin.math.ceil(position).toInt()
+        return if (low == high) sorted[low] else sorted[low] + (sorted[high] - sorted[low]) * (position - low)
     }
-
-    private data class JourneySlice(val start: Int, val end: Int, val reason: String)
 }

@@ -1,6 +1,7 @@
 package vn.hifpt.clickstream
 
 import android.content.Context
+import android.content.res.AssetManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.InputStream
@@ -11,13 +12,27 @@ data class MobilePrediction(
     val state: String,
     val boundaryReason: String,
     val eventsSeen: Int,
+    val eventSequence: List<String>,
     val cluster: Long?,
+    val clusterNamespace: String?,
+    val effectiveClusterKey: String?,
+    val assignmentType: String?,
     val classGroupCode: String?,
     val classGroup: String?,
     val classCode: String?,
     val className: String?,
+    val clusterName: String?,
+    val clusterNameEn: String?,
     val distanceToCentroid: Double?,
     val markovLogprob: Double?,
+    val primaryCluster: Long?,
+    val primaryDistance: Double?,
+    val primaryDistanceLimit: Double?,
+    val secondaryCluster: Long?,
+    val secondaryDistance: Double?,
+    val secondaryDistanceLimit: Double?,
+    val secondaryDistanceMargin: Double?,
+    val secondaryMarkovLimit: Double?,
     val geometricAnomaly: Boolean,
     val generativeAnomaly: Boolean,
     val severeAnomaly: Boolean,
@@ -31,13 +46,28 @@ data class MobilePrediction(
         put("state", state)
         put("boundary_reason", boundaryReason)
         put("events_seen", eventsSeen)
+        put("sequence", eventSequence.joinToString(" -> "))
+        put("event_sequence", JSONArray().apply { eventSequence.forEach { put(it) } })
         putNullable("cluster", cluster)
+        putNullable("cluster_namespace", clusterNamespace)
+        putNullable("effective_cluster_key", effectiveClusterKey)
+        putNullable("assignment_type", assignmentType)
         putNullable("class_group_code", classGroupCode)
         putNullable("class_group", classGroup)
         putNullable("class_code", classCode)
         putNullable("class_name", className)
+        putNullable("cluster_name", clusterName)
+        putNullable("cluster_name_en", clusterNameEn)
         putNullable("distance_to_centroid", distanceToCentroid)
         putNullable("markov_logprob", markovLogprob)
+        putNullable("primary_cluster", primaryCluster)
+        putNullable("primary_distance", primaryDistance)
+        putNullable("primary_distance_limit", primaryDistanceLimit)
+        putNullable("secondary_cluster", secondaryCluster)
+        putNullable("secondary_distance", secondaryDistance)
+        putNullable("secondary_distance_limit", secondaryDistanceLimit)
+        putNullable("secondary_distance_margin", secondaryDistanceMargin)
+        putNullable("secondary_markov_limit", secondaryMarkovLimit)
         put("geometric_anomaly", geometricAnomaly)
         put("generative_anomaly", generativeAnomaly)
         put("severe_anomaly", severeAnomaly)
@@ -49,7 +79,7 @@ data class MobilePrediction(
 
 data class MobileAnalysisResult(val predictions: List<MobilePrediction>) {
     fun toJson(): JSONObject = JSONObject().apply {
-        put("schema_version", "1.0")
+        put("schema_version", "3.0")
         put("predictions", JSONArray().apply { predictions.forEach { put(it.toJson()) } })
     }
 }
@@ -72,7 +102,7 @@ data class MobileAnalysisWindow(
 
 data class WindowedAnalysisResult(val windows: List<MobileAnalysisWindow>) {
     fun toJson(): JSONObject = JSONObject().apply {
-        put("schema_version", "1.0")
+        put("schema_version", "3.0")
         put("window_seconds", 30)
         put("windows", JSONArray().apply { windows.forEach { put(it.toJson()) } })
     }
@@ -81,19 +111,22 @@ data class WindowedAnalysisResult(val windows: List<MobileAnalysisWindow>) {
 /** Complete on-device scorer: raw event JSON -> journey predictions. */
 class MobileJourneyModel(context: Context) : AutoCloseable {
     private val applicationContext = context.applicationContext
-    private val classifier: JourneyOnnxClassifier
-    private val markov: MobileMarkovBank
+    private val primaryClassifier: JourneyOnnxClassifier
+    private val assets: AssetManager = context.assets
+    @Volatile private var secondaryClassifier: JourneyOnnxClassifier? = null
+    private val primaryMarkov: MobileMarkovBank
+    @Volatile private var secondaryMarkov: MobileMarkovBank? = null
+    private val hierarchy: HierarchicalConfig
     private val config: MobileFrictionConfig
 
     init {
-        val assets = context.assets
-        val modelBytes = assets.open("journey_classifier.onnx").use { it.readBytes() }
-        val preprocessing = assets.open("preprocessing.json").bufferedReader().use { it.readText() }
-        val mapping = assets.open("class_mapping.json").bufferedReader().use { it.readText() }
-        val markovJson = assets.open("markov.json").bufferedReader().use { it.readText() }
-        val frictionJson = assets.open("friction_config.json").bufferedReader().use { it.readText() }
-        classifier = JourneyOnnxClassifier(modelBytes, preprocessing, mapping)
-        markov = MobileMarkovBank(markovJson)
+        val frictionJson = assets.readText("friction_config.json")
+        // The segmentation contract is tiny in friction_config. Avoid parsing the
+        // 33 MB preprocessing JSON a second time merely to read three settings.
+        MobileJourneyPreprocessor.configure(frictionJson)
+        primaryClassifier = createClassifier("c")
+        primaryMarkov = MobileMarkovBank(assets.readText("c_markov.json"))
+        hierarchy = HierarchicalConfig(assets.readText("hierarchical_config.json"))
         config = MobileFrictionConfig(frictionJson)
     }
 
@@ -103,9 +136,14 @@ class MobileJourneyModel(context: Context) : AutoCloseable {
     fun analyzeStream(input: InputStream): MobileAnalysisResult =
         input.bufferedReader().use { analyzeJson(it.readText()) }
 
-    fun analyzeAsset(assetName: String = "test_data_july.json"): MobileAnalysisResult {
-        val json = applicationContext.assets.open(assetName).bufferedReader().use { it.readText() }
-        return analyzeJson(json)
+    fun analyzeAsset(assetName: String = "test_data_android.csv"): MobileAnalysisResult {
+        val source = applicationContext.assets.open(assetName).bufferedReader().use { it.readText() }
+        val events = if (assetName.lowercase(java.util.Locale.US).endsWith(".csv")) {
+            ClickstreamRepository(applicationContext).parseCsvEvents(source)
+        } else {
+            parseClickstreamJson(source)
+        }
+        return analyzeEvents(events)
     }
 
     fun analyzeEvents(events: List<ClickstreamEvent>): MobileAnalysisResult {
@@ -179,13 +217,27 @@ class MobileJourneyModel(context: Context) : AutoCloseable {
                 state = state,
                 boundaryReason = prepared.boundaryReason,
                 eventsSeen = prepared.rawEvents.size,
+                eventSequence = prepared.tokens,
                 cluster = null,
+                clusterNamespace = null,
+                effectiveClusterKey = null,
+                assignmentType = null,
                 classGroupCode = null,
                 classGroup = null,
                 classCode = null,
                 className = null,
+                clusterName = null,
+                clusterNameEn = null,
                 distanceToCentroid = null,
                 markovLogprob = null,
+                primaryCluster = null,
+                primaryDistance = null,
+                primaryDistanceLimit = null,
+                secondaryCluster = null,
+                secondaryDistance = null,
+                secondaryDistanceLimit = null,
+                secondaryDistanceMargin = null,
+                secondaryMarkovLimit = null,
                 geometricAnomaly = false,
                 generativeAnomaly = false,
                 severeAnomaly = false,
@@ -195,19 +247,51 @@ class MobileJourneyModel(context: Context) : AutoCloseable {
             )
         }
 
-        val onnx = classifier.predict(JourneyFeatures(prepared.tokens, prepared.numeric))
-        val logprob = markov.score(prepared.tokens, onnx.cluster)
+        val features = JourneyFeatures(prepared.tokens, prepared.numeric)
+        val primary = primaryClassifier.predict(features)
+        val primaryLimit = hierarchy.cDistanceLimits[primary.cluster]
+        val primaryAccepted = primaryLimit != null && primary.distance <= primaryLimit
+        val secondaryRuntime = if (primaryAccepted) null else getSecondaryRuntime()
+        val secondary = secondaryRuntime?.classifier?.predict(features)
+        val secondaryLimit = secondary?.cluster?.let { hierarchy.bDistanceLimits[it] }
+        val secondaryMarkovLimit = secondary?.cluster?.let { hierarchy.bMarkovLimits[it] }
+        val secondaryLogprob = secondary?.let { secondaryRuntime!!.markov.score(prepared.tokens, it.cluster) }
+        val secondaryMargin = secondary?.secondDistance?.let {
+            (it - secondary.distance) / secondary.distance.coerceAtLeast(1e-12f)
+        }
+        val secondaryAccepted = secondary != null && secondaryLimit != null &&
+            secondary.distance <= secondaryLimit && secondaryMarkovLimit != null &&
+            secondaryLogprob != null && secondaryLogprob >= secondaryMarkovLimit &&
+            secondaryMargin != null && secondaryMargin >= hierarchy.minDistanceMargin
+        val chosen = if (primaryAccepted) primary else if (secondaryAccepted) secondary else null
+        val namespace = if (primaryAccepted) "C" else if (secondaryAccepted) "B" else null
+        val effectiveKey = chosen?.let { "$namespace:${it.cluster}" } ?: "UNKNOWN"
+        val assignmentType = when {
+            primaryAccepted -> "C_primary"
+            secondaryAccepted -> "B_noise_fallback"
+            else -> "unresolved_noise"
+        }
+        val logprob = when (namespace) {
+            "C" -> primaryMarkov.score(prepared.tokens, primary.cluster)
+            "B" -> secondaryLogprob
+            else -> null
+        }
+        val geometricAnomaly = chosen == null
         val generativeAnomaly = logprob != null && logprob < config.markovP05
-        val severeAnomaly = onnx.geometricAnomaly && logprob != null && logprob < config.markovP01
+        val severeAnomaly = geometricAnomaly && logprob != null && logprob < config.markovP01
         val flags = buildList {
             if (prepared.backRate > config.backRateP90) add("excessive_back")
             if (prepared.nLoopRemoved > config.loopsP90) add("navigation_loop")
             if (prepared.revisitRatio > config.revisitP90) add("screen_thrash")
             if (prepared.spanSeconds > config.spanP95) add("slow_journey")
-            if (onnx.geometricAnomaly) add("unknown_archetype")
+            if (geometricAnomaly) add("unknown_archetype")
             if (generativeAnomaly) add("improbable_transitions")
         }.joinToString("|")
-        val next = markov.predictNext(prepared.tokens, onnx.cluster)
+        val next = when (namespace) {
+            "C" -> primaryMarkov.predictNext(prepared.tokens, primary.cluster)
+            "B" -> secondaryRuntime!!.markov.predictNext(prepared.tokens, secondary!!.cluster)
+            else -> null
+        }
 
         return MobilePrediction(
             journeyId = prepared.journeyId,
@@ -215,14 +299,28 @@ class MobileJourneyModel(context: Context) : AutoCloseable {
             state = state,
             boundaryReason = prepared.boundaryReason,
             eventsSeen = prepared.rawEvents.size,
-            cluster = onnx.cluster,
-            classGroupCode = onnx.classGroupCode,
-            classGroup = onnx.classGroup,
-            classCode = onnx.classCode,
-            className = onnx.className,
-            distanceToCentroid = onnx.distance.toDouble(),
+            eventSequence = prepared.tokens,
+            cluster = chosen?.cluster,
+            clusterNamespace = namespace,
+            effectiveClusterKey = effectiveKey,
+            assignmentType = assignmentType,
+            classGroupCode = chosen?.classGroupCode ?: "unknown",
+            classGroup = chosen?.classGroup ?: "chưa phân loại",
+            classCode = chosen?.classCode ?: "unknown_journey",
+            className = chosen?.className ?: "Hành trình chưa phân loại / hỗn hợp",
+            clusterName = chosen?.clusterName ?: "Hành trình chưa phân loại / hỗn hợp",
+            clusterNameEn = chosen?.clusterNameEn ?: "Unclassified / mixed journeys",
+            distanceToCentroid = chosen?.distance?.toDouble(),
             markovLogprob = logprob,
-            geometricAnomaly = onnx.geometricAnomaly,
+            primaryCluster = primary.cluster,
+            primaryDistance = primary.distance.toDouble(),
+            primaryDistanceLimit = primaryLimit,
+            secondaryCluster = secondary?.cluster,
+            secondaryDistance = secondary?.distance?.toDouble(),
+            secondaryDistanceLimit = secondaryLimit,
+            secondaryDistanceMargin = secondaryMargin?.toDouble(),
+            secondaryMarkovLimit = secondaryMarkovLimit,
+            geometricAnomaly = geometricAnomaly,
             generativeAnomaly = generativeAnomaly,
             severeAnomaly = severeAnomaly,
             frictionFlags = flags,
@@ -231,7 +329,45 @@ class MobileJourneyModel(context: Context) : AutoCloseable {
         )
     }
 
-    override fun close() = classifier.close()
+    override fun close() {
+        primaryClassifier.close()
+        secondaryClassifier?.close()
+    }
+
+    @Synchronized
+    private fun getSecondaryRuntime(): SecondaryRuntime {
+        val existingClassifier = secondaryClassifier
+        val existingMarkov = secondaryMarkov
+        if (existingClassifier != null && existingMarkov != null) {
+            return SecondaryRuntime(existingClassifier, existingMarkov)
+        }
+        val classifier = createClassifier("b")
+        val markov = MobileMarkovBank(assets.readText("b_markov.json"))
+        secondaryClassifier = classifier
+        secondaryMarkov = markov
+        return SecondaryRuntime(classifier, markov)
+    }
+
+    private data class SecondaryRuntime(
+        val classifier: JourneyOnnxClassifier,
+        val markov: MobileMarkovBank
+    )
+
+    private fun createClassifier(prefix: String): JourneyOnnxClassifier {
+        val preprocessing = assets.readText("${prefix}_preprocessing.json")
+        return JourneyOnnxClassifier(
+            assets.readBytes("${prefix}_journey_classifier.onnx"), preprocessing,
+            assets.readText("${prefix}_class_mapping.json")
+        )
+    }
+
+    private class HierarchicalConfig(json: String) {
+        private val value = JSONObject(json)
+        val minDistanceMargin = value.getDouble("min_distance_margin")
+        val cDistanceLimits = value.getJSONObject("c_distance_limits").toLongDoubleMap()
+        val bDistanceLimits = value.getJSONObject("b_distance_limits").toLongDoubleMap()
+        val bMarkovLimits = value.getJSONObject("b_markov_limits").toLongDoubleMap()
+    }
 
     private class MobileFrictionConfig(json: String) {
         private val value = JSONObject(json)
@@ -248,3 +384,12 @@ class MobileJourneyModel(context: Context) : AutoCloseable {
 private fun JSONObject.putNullable(key: String, value: Any?) {
     put(key, value ?: JSONObject.NULL)
 }
+
+private fun android.content.res.AssetManager.readText(name: String): String =
+    open(name).bufferedReader().use { it.readText() }
+
+private fun android.content.res.AssetManager.readBytes(name: String): ByteArray =
+    open(name).use { it.readBytes() }
+
+private fun JSONObject.toLongDoubleMap(): Map<Long, Double> =
+    keys().asSequence().associate { it.toLong() to getDouble(it) }

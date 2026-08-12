@@ -1,37 +1,896 @@
 {
-  "schema_version": "1.0",
-  "platform": "android",
-  "source_catalog": "android_cluster_catalog.json",
-  "source_evidence": "android_cluster_ngrams.csv",
-  "model_scope": "HDBSCAN run in output/android_run_config.json",
-  "unknown_policy": "Cluster -1 and any unmapped cluster id are labelled unknown; never force them into a business class.",
+  "schema_version": "2.0",
   "classes": [
-    {"cluster": -1, "class_group_code": "unknown", "class_group": "Chưa xác định", "class_code": "unknown_journey", "class_name": "Hành trình chưa xác định", "class_description": "Noise hoặc hành trình không đủ gần một archetype đã biết.", "naming_confidence": "high"},
-    {"cluster": 0, "class_group_code": "notification", "class_group": "Thông báo", "class_code": "notification_detail", "class_name": "Xem chi tiết thông báo", "class_description": "Mở danh sách/chi tiết thông báo và tương tác với nút trong thông báo.", "naming_confidence": "high"},
-    {"cluster": 1, "class_group_code": "utility", "class_group": "Tiện ích", "class_code": "scan_qr", "class_name": "Quét mã QR", "class_description": "Từ trang chủ mở màn hình quét QR.", "naming_confidence": "high"},
-    {"cluster": 2, "class_group_code": "promotion", "class_group": "Khuyến mãi", "class_code": "promotion_browse", "class_name": "Xem khuyến mãi", "class_description": "Mở mục khuyến mãi và trang loyalty trong webview.", "naming_confidence": "high"},
-    {"cluster": 3, "class_group_code": "authentication", "class_group": "Xác thực", "class_code": "guest_external_login", "class_name": "Đăng nhập khách qua OAuth", "class_description": "Đăng nhập từ luồng khách qua Authorization Management và Redirect URI.", "naming_confidence": "high"},
-    {"cluster": 4, "class_group_code": "authentication", "class_group": "Xác thực", "class_code": "fid_login", "class_name": "Đăng nhập bằng FID", "class_description": "Chọn login_with_fid rồi chuyển qua Authorization Management.", "naming_confidence": "high"},
-    {"cluster": 5, "class_group_code": "support", "class_group": "Hỗ trợ", "class_code": "support_reopen", "class_name": "Mở lại màn hình hỗ trợ", "class_description": "Đi qua lại giữa trang chủ và màn hình tạo yêu cầu hỗ trợ.", "naming_confidence": "medium"},
-    {"cluster": 6, "class_group_code": "support", "class_group": "Hỗ trợ", "class_code": "support_quick_request", "class_name": "Tạo yêu cầu hỗ trợ nhanh", "class_description": "Mở hỗ trợ, xác nhận/đóng form và chọn quick billing hoặc mô tả lại.", "naming_confidence": "high"},
-    {"cluster": 7, "class_group_code": "support", "class_group": "Hỗ trợ", "class_code": "support_open_then_close", "class_name": "Mở rồi đóng yêu cầu hỗ trợ", "class_description": "Vào màn hình hỗ trợ rồi xác nhận đóng mà không hoàn tất yêu cầu.", "naming_confidence": "high"},
-    {"cluster": 8, "class_group_code": "authentication", "class_group": "Xác thực", "class_code": "guest_login_mixed", "class_name": "Đăng nhập khách đa phương thức", "class_description": "Khởi đầu từ home_guest rồi đi tới OTP hoặc luồng Authorization bên ngoài.", "naming_confidence": "medium"},
-    {"cluster": 9, "class_group_code": "contract", "class_group": "Hợp đồng", "class_code": "contract_switch", "class_name": "Chuyển đổi hợp đồng", "class_description": "Mở danh sách hợp đồng, chọn hợp đồng và có thể quay lại/tải lại danh sách.", "naming_confidence": "high"},
-    {"cluster": 10, "class_group_code": "authentication", "class_group": "Xác thực", "class_code": "guest_otp_login", "class_name": "Đăng nhập OTP từ luồng khách", "class_description": "Từ màn hình đăng nhập khách chuyển tới màn hình OTP.", "naming_confidence": "high"},
-    {"cluster": 11, "class_group_code": "authentication", "class_group": "Xác thực", "class_code": "member_otp_login", "class_name": "Đăng nhập bằng OTP", "class_description": "Chọn continue_login và login_with_otp rồi tới màn hình OTP.", "naming_confidence": "high"},
-    {"cluster": 12, "class_group_code": "service", "class_group": "Quản lý dịch vụ", "class_code": "modem_schedule", "class_name": "Quản lý lịch modem", "class_description": "Vào quản lý Internet, modem control và xem/cập nhật lịch modem.", "naming_confidence": "high"},
-    {"cluster": 13, "class_group_code": "payment", "class_group": "Thanh toán", "class_code": "prepaid_utilities", "class_name": "Thanh toán trả trước và tiện ích", "class_description": "Duyệt các lựa chọn trả trước, tiện ích hoặc thanh toán hộ rồi quay lại.", "naming_confidence": "high"},
-    {"cluster": 14, "class_group_code": "authentication", "class_group": "Xác thực", "class_code": "logout", "class_name": "Đăng xuất tài khoản", "class_description": "Từ Account chọn Log out, xác nhận popup và trở về đăng nhập/home khách.", "naming_confidence": "high"},
-    {"cluster": 15, "class_group_code": "account", "class_group": "Tài khoản", "class_code": "account_contract_explore", "class_name": "Khám phá tài khoản và hợp đồng", "class_description": "Luồng hỗn hợp trong Account/Contract Management, gồm đổi vị trí hoặc giới thiệu bạn bè.", "naming_confidence": "low"},
-    {"cluster": 16, "class_group_code": "payment", "class_group": "Thanh toán", "class_code": "guest_payment_login_wall", "class_name": "Thanh toán khách bị yêu cầu đăng nhập", "class_description": "Khách mở billing/payment nhưng dừng ở LoginForGuestDialog.", "naming_confidence": "high"},
-    {"cluster": 17, "class_group_code": "contract", "class_group": "Hợp đồng", "class_code": "change_service_address", "class_name": "Thay đổi địa chỉ dịch vụ", "class_description": "Từ quản lý hợp đồng vào eCounter Change Address và nhập địa chỉ mới.", "naming_confidence": "high"},
-    {"cluster": 18, "class_group_code": "payment", "class_group": "Thanh toán", "class_code": "guest_bill_payment", "class_name": "Thanh toán hóa đơn khách", "class_description": "Khách tra cứu hợp đồng/hóa đơn, chọn checkbox, nhập thông tin và sang Payment Info.", "naming_confidence": "high"},
-    {"cluster": 19, "class_group_code": "payment", "class_group": "Thanh toán", "class_code": "member_bill_payment", "class_name": "Thanh toán hóa đơn thuê bao", "class_description": "Chọn hóa đơn, nhấn thanh toán và đi tới Payment Info/Napas.", "naming_confidence": "high"},
-    {"cluster": 20, "class_group_code": "authentication", "class_group": "Xác thực", "class_code": "guest_login_minimal", "class_name": "Mở đăng nhập từ trang khách", "class_description": "Luồng ngắn từ home_guest tới màn hình đăng nhập.", "naming_confidence": "high"},
-    {"cluster": 21, "class_group_code": "authentication", "class_group": "Xác thực", "class_code": "guest_login_after_invite", "class_name": "Đăng nhập sau popup mời", "class_description": "Đóng/hủy popup mời trên home_guest rồi mở đăng nhập.", "naming_confidence": "high"},
-    {"cluster": 22, "class_group_code": "contract", "class_group": "Hợp đồng", "class_code": "contract_sharing_permissions", "class_name": "Chia sẻ hợp đồng và phân quyền", "class_description": "Quản lý số điện thoại liên kết, quyền truy cập và thao tác chia sẻ hợp đồng.", "naming_confidence": "high"},
-    {"cluster": 23, "class_group_code": "contract", "class_group": "Hợp đồng", "class_code": "change_service_location", "class_name": "Thay đổi vị trí dịch vụ", "class_description": "Từ Contract Management vào eCounter Change Location, xác minh và có thể chọn lại hợp đồng.", "naming_confidence": "high"},
-    {"cluster": 24, "class_group_code": "econtract", "class_group": "Hợp đồng điện tử", "class_code": "econtract_vneid_signing", "class_name": "Xác nhận hợp đồng điện tử bằng VNeID", "class_description": "Mở hợp đồng chưa xác nhận, xem chi tiết, xác nhận CCCD/VNeID và luồng OTP ký hợp đồng.", "naming_confidence": "high"},
-    {"cluster": 25, "class_group_code": "service", "class_group": "Quản lý dịch vụ", "class_code": "package_upgrade", "class_name": "Nâng cấp gói dịch vụ", "class_description": "Vào quản lý dịch vụ/FPT Play và duyệt quy trình đổi hoặc nâng cấp gói trên webview.", "naming_confidence": "high"}
-  ]
+    {
+      "cluster": -1,
+      "class_group_code": "unknown",
+      "class_group": "chưa phân loại",
+      "class_code": "unknown_journey",
+      "class_name": "Hành trình chưa phân loại / hỗn hợp",
+      "cluster_name": "Hành trình chưa phân loại / hỗn hợp",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "not_applicable"
+    },
+    {
+      "cluster": 0,
+      "class_group_code": "navigation",
+      "class_group": "điều hướng",
+      "class_code": "cluster_0",
+      "class_name": "Mở ứng dụng và duyệt trang chính",
+      "cluster_name": "Mở ứng dụng và duyệt trang chính",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 1,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_1",
+      "class_name": "Xử lý popup / gián đoạn",
+      "cluster_name": "Xử lý popup / gián đoạn",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 2,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_2",
+      "class_name": "Xử lý popup / gián đoạn",
+      "cluster_name": "Xử lý popup / gián đoạn",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 3,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_3",
+      "class_name": "Xử lý popup / gián đoạn",
+      "cluster_name": "Xử lý popup / gián đoạn",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 4,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_4",
+      "class_name": "Xử lý popup / gián đoạn",
+      "cluster_name": "Xử lý popup / gián đoạn",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 5,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_5",
+      "class_name": "Xử lý popup / gián đoạn",
+      "cluster_name": "Xử lý popup / gián đoạn",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 6,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_6",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 7,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_7",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 8,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_8",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 9,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_9",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 10,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_10",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 11,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_11",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 12,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_12",
+      "class_name": "Đặt lại bộ định tuyến / khởi động lại modem",
+      "cluster_name": "Đặt lại bộ định tuyến / khởi động lại modem",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 13,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_13",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 14,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_14",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 15,
+      "class_group_code": "navigation",
+      "class_group": "điều hướng",
+      "class_code": "cluster_15",
+      "class_name": "Mở ứng dụng và duyệt trang chính",
+      "cluster_name": "Mở ứng dụng và duyệt trang chính",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 16,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_16",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 17,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_17",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 18,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_18",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 19,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_19",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 20,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_20",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 21,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_21",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 22,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_22",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 23,
+      "class_group_code": "navigation",
+      "class_group": "điều hướng",
+      "class_code": "cluster_23",
+      "class_name": "Mở ứng dụng và duyệt trang chính",
+      "cluster_name": "Mở ứng dụng và duyệt trang chính",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 24,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_24",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 25,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_25",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 26,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_26",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 27,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_27",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 28,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_28",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 29,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_29",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 30,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_30",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 31,
+      "class_group_code": "navigation",
+      "class_group": "điều hướng",
+      "class_code": "cluster_31",
+      "class_name": "Mở ứng dụng và duyệt trang chính",
+      "cluster_name": "Mở ứng dụng và duyệt trang chính",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 32,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_32",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 33,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_33",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 34,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_34",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 35,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_35",
+      "class_name": "Điều khiển Wi-Fi — 5 GHz bật/tắt",
+      "cluster_name": "Điều khiển Wi-Fi — 5 GHz bật/tắt",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 36,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_36",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 37,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_37",
+      "class_name": "Xử lý popup / gián đoạn",
+      "cluster_name": "Xử lý popup / gián đoạn",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 38,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_38",
+      "class_name": "Xử lý popup / gián đoạn",
+      "cluster_name": "Xử lý popup / gián đoạn",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 39,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_39",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 40,
+      "class_group_code": "navigation",
+      "class_group": "điều hướng",
+      "class_code": "cluster_40",
+      "class_name": "Mở ứng dụng và duyệt trang chính",
+      "cluster_name": "Mở ứng dụng và duyệt trang chính",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 41,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_41",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 42,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_42",
+      "class_name": "Xử lý popup / gián đoạn",
+      "cluster_name": "Xử lý popup / gián đoạn",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 43,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_43",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 44,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_44",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 45,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_45",
+      "class_name": "Điều khiển Wi-Fi — 5 GHz cài đặt",
+      "cluster_name": "Điều khiển Wi-Fi — 5 GHz cài đặt",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 46,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_46",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 47,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_47",
+      "class_name": "Điều khiển Wi-Fi — 2 GHz bật/tắt",
+      "cluster_name": "Điều khiển Wi-Fi — 2 GHz bật/tắt",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 48,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_48",
+      "class_name": "Điều khiển Wi-Fi — 2 GHz bật",
+      "cluster_name": "Điều khiển Wi-Fi — 2 GHz bật",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 49,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_49",
+      "class_name": "Xử lý popup / gián đoạn",
+      "cluster_name": "Xử lý popup / gián đoạn",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 50,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_50",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 51,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_51",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 52,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_52",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 53,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_53",
+      "class_name": "Điều khiển Wi-Fi — 5 GHz bật",
+      "cluster_name": "Điều khiển Wi-Fi — 5 GHz bật",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 54,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_54",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 55,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_55",
+      "class_name": "Điều khiển Wi-Fi — 5 GHz bật/tắt",
+      "cluster_name": "Điều khiển Wi-Fi — 5 GHz bật/tắt",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 56,
+      "class_group_code": "navigation",
+      "class_group": "điều hướng",
+      "class_code": "cluster_56",
+      "class_name": "Mở ứng dụng và duyệt trang chính",
+      "cluster_name": "Mở ứng dụng và duyệt trang chính",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 57,
+      "class_group_code": "payments",
+      "class_group": "thanh toán",
+      "class_code": "cluster_57",
+      "class_name": "Thanh toán và hóa đơn",
+      "cluster_name": "Thanh toán và hóa đơn",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 58,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_58",
+      "class_name": "Thông báo và cảnh báo",
+      "cluster_name": "Thông báo và cảnh báo",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 59,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_59",
+      "class_name": "Thông báo và cảnh báo",
+      "cluster_name": "Thông báo và cảnh báo",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 60,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_60",
+      "class_name": "Thông báo và cảnh báo",
+      "cluster_name": "Thông báo và cảnh báo",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 61,
+      "class_group_code": "navigation",
+      "class_group": "điều hướng",
+      "class_code": "cluster_61",
+      "class_name": "Mở ứng dụng và duyệt trang chính",
+      "cluster_name": "Mở ứng dụng và duyệt trang chính",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 62,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_62",
+      "class_name": "Khuyến mãi, khách hàng thân thiết và quảng cáo",
+      "cluster_name": "Khuyến mãi, khách hàng thân thiết và quảng cáo",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 63,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_63",
+      "class_name": "Thông báo và cảnh báo",
+      "cluster_name": "Thông báo và cảnh báo",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 64,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_64",
+      "class_name": "Thông báo và cảnh báo",
+      "cluster_name": "Thông báo và cảnh báo",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 65,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_65",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 66,
+      "class_group_code": "navigation",
+      "class_group": "điều hướng",
+      "class_code": "cluster_66",
+      "class_name": "Mở ứng dụng và duyệt trang chính",
+      "cluster_name": "Mở ứng dụng và duyệt trang chính",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    },
+    {
+      "cluster": 67,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_67",
+      "class_name": "Thông báo và cảnh báo",
+      "cluster_name": "Thông báo và cảnh báo",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 68,
+      "class_group_code": "feedback",
+      "class_group": "phản hồi",
+      "class_code": "cluster_68",
+      "class_name": "Phản hồi khách hàng / khảo sát",
+      "cluster_name": "Phản hồi khách hàng / khảo sát",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 69,
+      "class_group_code": "authentication",
+      "class_group": "xác thực",
+      "class_code": "cluster_69",
+      "class_name": "Đăng nhập khách",
+      "cluster_name": "Đăng nhập khách",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 70,
+      "class_group_code": "contracts",
+      "class_group": "hợp đồng",
+      "class_code": "cluster_70",
+      "class_name": "Chọn và chuyển đổi hợp đồng",
+      "cluster_name": "Chọn và chuyển đổi hợp đồng",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 71,
+      "class_group_code": "authentication",
+      "class_group": "xác thực",
+      "class_code": "cluster_71",
+      "class_name": "Đăng nhập ngoài ứng dụng / OAuth",
+      "cluster_name": "Đăng nhập ngoài ứng dụng / OAuth",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 72,
+      "class_group_code": "support",
+      "class_group": "hỗ trợ",
+      "class_code": "cluster_72",
+      "class_name": "Chat và yêu cầu hỗ trợ",
+      "cluster_name": "Chat và yêu cầu hỗ trợ",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 73,
+      "class_group_code": "commerce",
+      "class_group": "thương mại",
+      "class_code": "cluster_73",
+      "class_name": "Duyệt cửa hàng",
+      "cluster_name": "Duyệt cửa hàng",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 74,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_74",
+      "class_name": "Điều khiển Wi-Fi — cài đặt",
+      "cluster_name": "Điều khiển Wi-Fi — cài đặt",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 75,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_75",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 76,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_76",
+      "class_name": "Đặt lại bộ định tuyến / khởi động lại modem",
+      "cluster_name": "Đặt lại bộ định tuyến / khởi động lại modem",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 77,
+      "class_group_code": "support",
+      "class_group": "hỗ trợ",
+      "class_code": "cluster_77",
+      "class_name": "Customer support journey",
+      "cluster_name": "Customer support journey",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 78,
+      "class_group_code": "account",
+      "class_group": "tài khoản",
+      "class_code": "cluster_78",
+      "class_name": "Hành trình hồ sơ và tài khoản",
+      "cluster_name": "Hành trình hồ sơ và tài khoản",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 79,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_79",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 80,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_80",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 81,
+      "class_group_code": "device_management",
+      "class_group": "quản lý thiết bị",
+      "class_code": "cluster_81",
+      "class_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "cluster_name": "Bảo vệ và quản lý thiết bị kết nối",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 82,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_82",
+      "class_name": "Khuyến mãi, khách hàng thân thiết và quảng cáo",
+      "cluster_name": "Khuyến mãi, khách hàng thân thiết và quảng cáo",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 83,
+      "class_group_code": "payments",
+      "class_group": "thanh toán",
+      "class_code": "cluster_83",
+      "class_name": "Thanh toán VietQR",
+      "cluster_name": "Thanh toán VietQR",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 84,
+      "class_group_code": "payments",
+      "class_group": "thanh toán",
+      "class_code": "cluster_84",
+      "class_name": "Thanh toán trả trước",
+      "cluster_name": "Thanh toán trả trước",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 85,
+      "class_group_code": "payments",
+      "class_group": "thanh toán",
+      "class_code": "cluster_85",
+      "class_name": "Thanh toán và hóa đơn",
+      "cluster_name": "Thanh toán và hóa đơn",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 86,
+      "class_group_code": "contracts",
+      "class_group": "hợp đồng",
+      "class_code": "cluster_86",
+      "class_name": "Chọn và chuyển đổi hợp đồng",
+      "cluster_name": "Chọn và chuyển đổi hợp đồng",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "high"
+    },
+    {
+      "cluster": 87,
+      "class_group_code": "engagement",
+      "class_group": "tương tác",
+      "class_code": "cluster_87",
+      "class_name": "Xử lý popup / gián đoạn",
+      "cluster_name": "Xử lý popup / gián đoạn",
+      "class_description": "Evidence-backed name from the current shareholder cluster catalog.",
+      "naming_confidence": "medium"
+    }
+  ],
+  "cluster_name_source": "output/clusters_with_screen/shareholder_cluster_catalog_vi.json"
 }

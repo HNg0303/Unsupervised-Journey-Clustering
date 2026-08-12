@@ -16,14 +16,29 @@ data class JourneyFeatures(
 
 data class OnnxPrediction(
     val cluster: Long,
+    val secondCluster: Long?,
     val classGroupCode: String,
     val classGroup: String,
     val classCode: String,
     val className: String,
+    val clusterName: String,
+    val clusterNameEn: String,
     val classDescription: String,
     val namingConfidence: String,
     val distance: Float,
+    val secondDistance: Float?,
     val geometricAnomaly: Boolean
+)
+
+private data class ClusterLabel(
+    val classGroupCode: String,
+    val classGroup: String,
+    val classCode: String,
+    val className: String,
+    val clusterName: String,
+    val clusterNameEn: String,
+    val classDescription: String,
+    val namingConfidence: String
 )
 
 /** Portable sequence + numeric vectorizer and nearest-archetype ONNX scorer. */
@@ -34,7 +49,6 @@ class JourneyOnnxClassifier(
 ) : AutoCloseable {
     private val environment = OrtEnvironment.getEnvironment()
     private val session: OrtSession = environment.createSession(modelBytes)
-    private val preprocessing = JSONObject(preprocessingJson)
     private val vocabulary: List<String>
     private val vocabIndex: Map<String, Int>
     private val idf: DoubleArray
@@ -44,9 +58,11 @@ class JourneyOnnxClassifier(
     private val numericScale: DoubleArray
     private val logColumns: Set<String>
     private val numericWeight: Double
-    private val classes: Map<Long, JSONObject>
+    private val classes: Map<Long, ClusterLabel>
+    private val orderedClusterIds: LongArray
 
     init {
+        val preprocessing = JSONObject(preprocessingJson)
         vocabulary = preprocessing.getJSONArray("vocabulary").toStringList()
         vocabIndex = vocabulary.withIndex().associate { it.value to it.index }
         idf = preprocessing.getJSONArray("idf").toDoubleArray()
@@ -59,8 +75,20 @@ class JourneyOnnxClassifier(
         val rows = JSONObject(classMappingJson).getJSONArray("classes")
         classes = (0 until rows.length()).associate { index ->
             val row = rows.getJSONObject(index)
-            row.getLong("cluster") to row
+            val className = row.optString("class_name", "Hành trình chưa xác định")
+            val clusterName = row.optString("cluster_name", className)
+            row.getLong("cluster") to ClusterLabel(
+                classGroupCode = row.optString("class_group_code", "unknown"),
+                classGroup = row.optString("class_group", "Chưa xác định"),
+                classCode = row.optString("class_code", "unknown_journey"),
+                className = className,
+                clusterName = clusterName,
+                clusterNameEn = row.optString("cluster_name_en", clusterName),
+                classDescription = row.optString("class_description", ""),
+                namingConfidence = row.optString("naming_confidence", "unknown")
+            )
         }
+        orderedClusterIds = classes.keys.filter { it >= 0L }.sorted().toLongArray()
     }
 
     fun predict(input: JourneyFeatures): OnnxPrediction {
@@ -72,19 +100,28 @@ class JourneyOnnxClassifier(
         )
         tensor.use {
             session.run(mapOf("features" to tensor)).use { result ->
-                val cluster = (result.get("cluster").get().value as LongArray)[0]
+                // Hierarchical inference applies per-cluster thresholds itself, so use the
+                // nearest raw centroid rather than the legacy globally rejected output.
+                val cluster = (result.get("nearest_cluster").get().value as LongArray)[0]
                 val distance = (result.get("distance").get().value as FloatArray)[0]
                 val anomaly = (result.get("geometric_anomaly").get().value as BooleanArray)[0]
+                @Suppress("UNCHECKED_CAST")
+                val allDistances = (result.get("distances").get().value as Array<FloatArray>)[0]
+                val secondIndex = allDistances.indices.sortedBy { allDistances[it] }.getOrNull(1)
                 val label = classes[cluster] ?: classes.getValue(-1L)
                 return OnnxPrediction(
                     cluster = cluster,
-                    classGroupCode = label.optString("class_group_code", "unknown"),
-                    classGroup = label.optString("class_group", "Chưa xác định"),
-                    classCode = label.optString("class_code", "unknown_journey"),
-                    className = label.optString("class_name", "Hành trình chưa xác định"),
-                    classDescription = label.optString("class_description", ""),
-                    namingConfidence = label.optString("naming_confidence", "unknown"),
+                    secondCluster = secondIndex?.let { orderedClusterIds[it] },
+                    classGroupCode = label.classGroupCode,
+                    classGroup = label.classGroup,
+                    classCode = label.classCode,
+                    className = label.className,
+                    clusterName = label.clusterName,
+                    clusterNameEn = label.clusterNameEn,
+                    classDescription = label.classDescription,
+                    namingConfidence = label.namingConfidence,
                     distance = distance,
+                    secondDistance = secondIndex?.let { allDistances[it] },
                     geometricAnomaly = anomaly
                 )
             }

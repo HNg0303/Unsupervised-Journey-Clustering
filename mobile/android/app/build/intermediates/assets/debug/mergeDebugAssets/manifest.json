@@ -1,17 +1,33 @@
 {
+  "schema_version": "3.0",
   "platform": "android",
-  "model": "journey_classifier.onnx",
-  "preprocessing": "preprocessing.json",
-  "taxonomy": "class_mapping.json",
-  "markov": "markov.json",
-  "friction_config": "friction_config.json",
-  "outputs": [
-    "cluster",
-    "distance",
-    "geometric_anomaly",
-    "markov_logprob",
-    "friction_flags",
-    "next_action"
+  "strategy": "C_primary_then_B_noise_fallback",
+  "primary_namespace": "C",
+  "fallback_namespace": "B",
+  "files": [
+    "c_journey_classifier.onnx",
+    "c_preprocessing.json",
+    "c_markov.json",
+    "c_class_mapping.json",
+    "b_journey_classifier.onnx",
+    "b_preprocessing.json",
+    "b_markov.json",
+    "b_class_mapping.json",
+    "friction_config.json",
+    "hierarchical_cluster_names.json",
+    "hierarchical_config.json"
   ],
-  "note": "Markov transitions and friction thresholds are exported as compact JSON for Android."
+  "sha256": {
+    "c_journey_classifier.onnx": "fc5e8674d12e56b090165e17f8792371e8a6eae6c650073b5d60011823ccf8a4",
+    "c_preprocessing.json": "a36372b7b9cbad00b953f5cdc9928fa739ebc3369689b2efdb8561186972a7da",
+    "c_markov.json": "00f82b7df021a92f18ccb070e82054e4201f91aef42520ae7d65544a89041c57",
+    "c_class_mapping.json": "688a80be2320900d67218ad03cde1113681a1a5c8b6d3419b33c28db26d83034",
+    "b_journey_classifier.onnx": "deb549d31537cbcc4f7e5c78290068d288133e55133fc4534abbdd8baf6d5acd",
+    "b_preprocessing.json": "0b648397f0259b0c01e62fbf00219f087d4bad699f81968fcd611f6016c0a949",
+    "b_markov.json": "cd0bf3b4912c47b189c63d8b13a057609d0049b2b8f67e917094653043ea39b2",
+    "b_class_mapping.json": "fe70061f1506f698ea7b1dcf05bfe6ab8476ef16b25bcb96612d2fcc5ab2fdc3",
+    "friction_config.json": "ce3df9eb3e33f31128a9a1379edbf7f6160d87ffd24607634067eb2a9f464bf3",
+    "hierarchical_cluster_names.json": "38a7e8757a0fdcdcd80234b606f39a5b7c71596d9cb75875bb463cc468e63f3e",
+    "hierarchical_config.json": "068312413eec5fd22b06a1df64f185bac250876cd35d892ca8d523b53fa271cb"
+  }
 }

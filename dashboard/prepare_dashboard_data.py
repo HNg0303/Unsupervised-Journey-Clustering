@@ -22,12 +22,11 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-RAW_DIR = ROOT / "data" / "train_data" / "raw_data_production" / "data_raw_sample"
+RAW_DIR = ROOT / "data" / "train_data"
 RUN_DIR = (
     ROOT
     / "output"
-    / "journey_runs"
-    / "EXACT_ch-c45i30o20_ng1-3_svd64_fdf3_mf20000_nw0p35_mcs100_ms5_sel-eom_gap90_jmin4_tdf3_ent0_chr1_boot0_test0p2"
+    / "EXACT_ch-c45i30o20_ng1-3_svd64_fdf3_mf20000_nw0p35_mcs100_ms5_sel-eom_gap90_jmin4_tdf3_ent0_chr1_boot0"
 )
 CACHE_DIR = ROOT / "output" / "dashboard_cache"
 

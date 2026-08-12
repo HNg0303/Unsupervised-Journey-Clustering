@@ -44,14 +44,41 @@ TF-IDF, …) is deliberately kept in English in the Vietnamese copy.
 Adding a string: wrap it in `lib.t(en, vi)`. Page keys are language-stable, so switching
 language keeps the current page and all filter selections.
 
-## Pages
+## Structure
+
+The sidebar has two top-level sections.
+
+### Overview — for stakeholders
+
+One page ([views/page_overview.py](views/page_overview.py)) that answers "what is this and why is
+it hard", with no prior context assumed:
+
+- **Input → output**, side by side on *one real production session* carried end to end
+  (`showcase.json`): the raw event rows on the left, the named/measured/scored journeys on the right.
+- **Why the textbook recipe does not transfer** — this dataset against the clickstream corpora
+  papers benchmark on (MSNBC, YOOCHOOSE, RetailRocket, Taobao UserBehavior). Baseline figures are
+  the datasets' own published headline numbers, rounded, and are there to contrast *structure*:
+  they all ship curated labels and clean ids; production telemetry ships neither.
+- **The five steps** — canonize → tokenize → build journeys → represent → cluster + anomaly
+  detection, each in business language with the number it produced on this run.
+- **What the business gets** — the four usable outputs.
+
+### Details — the evidence
 
 | Page | Question it answers | Reads |
 | --- | --- | --- |
 | 1 · Raw data (EDA) | What does production clickstream look like, and why does it need a taxonomy? | `output/dashboard_cache/eda.json` |
 | 2 · Training outputs | What did the run write, and what does each artefact say about the model? | `output/dashboard_cache/train_run.json` + the run's `*_report_*.csv` |
 | 3 · Learned journey types | What behaviours did the model discover, and what is the evidence for each name? | `*_report_cluster_catalog.csv`, `cluster_name_mapping.csv`, `*_cluster_ngrams.csv`, `shareholder_cluster_catalog.json` |
-| 4 · Production results | What did users actually do on the held-out T5 extract — as business outcomes? | `output/dashboard_cache/inference_{platform}.parquet` |
+| 4 · Production results | What did users actually do on the held-out T5 extract — as business outcomes, including how the top journeys trend over time? | `output/dashboard_cache/inference_{platform}.parquet` |
+
+### A note on the T5 time axis
+
+The scored extract runs 2026-03-02 → 2026-06-04, but ~98% of its journeys fall in
+2026-04-30 → 2026-05-31; the rest are stray early timestamps. Time-series charts and the
+risers/fallers comparison are therefore drawn over that dense window, and the first-vs-second-half
+split uses the **median journey** rather than the calendar midpoint (a calendar split puts 7
+journeys on one side and 85,906 on the other). Every aggregate elsewhere still uses all journeys.
 
 ## Why a precompute step
 
@@ -66,6 +93,10 @@ to a ~11 MB cache in `output/dashboard_cache/`:
   streaming `*_journeys.csv`, and holdout scoring summaries.
 - `inference_{platform}.parquet` — the scored T5 journeys, slimmed to the columns the
   business page uses.
+- `showcase.json` — one real session chosen deterministically (two journeys, two different
+  journey types from two different business families, one flagged, one with a predicted next
+  action), holding its raw event rows plus the journeys the model produced from them. This is
+  what makes the overview page's input→output panel traceable rather than illustrative.
 
 Rebuild the cache after every new training run.
 

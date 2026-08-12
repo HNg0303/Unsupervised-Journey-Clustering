@@ -13,7 +13,9 @@ from lib import (
     explode_flags,
     fmt_int,
     fmt_pct,
-    friction_explain,
+    friction_meaning,
+    friction_rule,
+    friction_title,
     is_vi,
     kpi_row,
     load_inference,
@@ -228,57 +230,250 @@ def render() -> None:
 
     st.divider()
 
+    # ------------------------------------------------------------------ trend
+    st.header(t("How the top journeys move over time", "Các journey top thay đổi thế nào theo thời gian"))
+    st.caption(
+        t(
+            "Volume and mix of the leading journey types across the scored window. Volume answers "
+            "\"how much\"; share answers \"what changed\" — a type can grow in share while total traffic falls.",
+            "Số lượng và cơ cấu của các journey type dẫn đầu trong khoảng thời gian được score. Số lượng trả lời "
+            "\"nhiều hay ít\"; tỷ lệ trả lời \"cái gì đã thay đổi\" — một type có thể tăng tỷ lệ ngay cả khi tổng traffic giảm.",
+        )
+    )
+
+    tc1, tc2, tc3 = st.columns([2, 2, 3])
+    trend_n = tc1.slider(t("Journey types to track", "Số journey type theo dõi"), 3, 12, 6, key="trend_n")
+    freq_labels = {"D": t("daily", "theo ngày"), "W": t("weekly", "theo tuần")}
+    freq = tc2.segmented_control(
+        t("Granularity", "Độ mịn"), list(freq_labels), default="D",
+        format_func=lambda k: freq_labels[k], key="trend_freq",
+    ) or "D"
+    measure_labels = {
+        "volume": t("journeys per period", "số journey mỗi kỳ"),
+        "share": t("share of journeys", "tỷ lệ trên tổng journey"),
+        "struggle": t("struggle rate", "tỷ lệ chật vật"),
+    }
+    measure = tc3.segmented_control(
+        t("Measure", "Chỉ số"), list(measure_labels), default="volume",
+        format_func=lambda k: measure_labels[k], key="trend_measure",
+    ) or "volume"
+
+    # The extract carries a handful of stray timestamps months before the bulk of traffic,
+    # so the trend is drawn over the dense window (central 98% of journeys) instead of the
+    # full calendar range. Aggregates elsewhere on the page still use every journey.
+    dense_lo, dense_hi = df["start_ts"].quantile([0.01, 0.99])
+    dense = df[(df["start_ts"] >= dense_lo) & (df["start_ts"] <= dense_hi)]
+
+    top_types = by_type.head(trend_n)["journey_type"].tolist()
+    tdf = dense[dense["journey_type"].isin(top_types)].copy()
+    period = pd.to_datetime(tdf["start_ts"]).dt.tz_convert(None).dt.to_period(freq).dt.start_time
+    tdf = tdf.assign(period=period)
+    all_period = pd.to_datetime(dense["start_ts"]).dt.tz_convert(None).dt.to_period(freq).dt.start_time
+
+    PERIOD = t("period", "kỳ")
+    series = (
+        tdf.groupby(["period", "journey_type"], as_index=False)
+        .agg(**{JC: ("journey_id", "count"), RATE: ("has_struggle", "mean")})
+        .rename(columns={"period": PERIOD})
+    )
+    totals = dense.assign(period=all_period).groupby("period", as_index=False).size().rename(
+        columns={"size": "total", "period": PERIOD}
+    )
+    series = series.merge(totals, on=PERIOD, how="left")
+    series[SHARE] = series[JC] / series["total"]
+
+    ycol = {"volume": JC, "share": SHARE, "struggle": RATE}[measure]
+    fig = px.line(
+        series.sort_values(PERIOD), x=PERIOD, y=ycol, color="journey_type",
+        markers=True, color_discrete_sequence=PALETTE,
+    )
+    fig.update_layout(height=430, margin=dict(t=10, b=10), xaxis_title=None, legend_title=None)
+    if measure in {"share", "struggle"}:
+        fig.update_layout(yaxis_tickformat=".0%")
+    if measure == "struggle":
+        fig.add_hline(y=struggle, line_dash="dash", line_color="#888",
+                      annotation_text=t("overall average", "trung bình chung"))
+    st.plotly_chart(fig, width="stretch")
+    st.caption(
+        t(
+            f"Drawn over {dense_lo.date()} → {dense_hi.date()}, the window holding 98% of scored "
+            f"journeys. A few stray timestamps months earlier are excluded from this chart only.",
+            f"Vẽ trên khoảng {dense_lo.date()} → {dense_hi.date()}, tức khoảng chứa 98% số journey đã score. "
+            f"Một vài timestamp lẻ tẻ từ nhiều tháng trước chỉ bị loại khỏi riêng biểu đồ này.",
+        )
+    )
+
+    # Movers: split at the median timestamp so both halves hold the same number of journeys.
+    # A calendar midpoint would be useless here — the extract is heavily back-loaded.
+    mid_ts = dense["start_ts"].median()
+    first = dense[dense["start_ts"] < mid_ts]
+    second = dense[dense["start_ts"] >= mid_ts]
+    if len(first) and len(second):
+        f_share = first["journey_type"].value_counts(normalize=True)
+        s_share = second["journey_type"].value_counts(normalize=True)
+        vol = df["journey_type"].value_counts()
+        movers = (
+            pd.DataFrame({"first": f_share, "second": s_share})
+            .fillna(0.0)
+            .assign(journeys=vol)
+            .query("journeys >= 200")
+        )
+        movers["delta"] = movers["second"] - movers["first"]
+        movers = movers.sort_values("delta")
+    else:
+        movers = pd.DataFrame()
+    if not movers.empty:
+        pick = pd.concat([movers.head(5), movers.tail(5)]).drop_duplicates()
+        m1, m2 = st.columns([3, 2])
+        fig = go.Figure()
+        fig.add_bar(
+            x=pick["delta"], y=pick.index, orientation="h",
+            marker_color=[PALETTE[3] if v < 0 else PALETTE[2] for v in pick["delta"]],
+            text=[f"{v:+.1%}" for v in pick["delta"]],
+        )
+        fig.update_layout(
+            height=380, margin=dict(t=30, b=10), xaxis_tickformat="+.1%",
+            xaxis_title=t("change in share of journeys", "thay đổi tỷ lệ journey"),
+            title=t("Risers and fallers, first half vs second half", "Tăng và giảm, nửa đầu so với nửa sau"),
+        )
+        m1.plotly_chart(fig, width="stretch")
+        up = movers.iloc[-1]
+        down = movers.iloc[0]
+        m2.markdown(
+            t(
+                f"""
+The window is split at its **median journey**, on {mid_ts.date()}, so both halves hold the same
+number of journeys ({len(first):,} vs {len(second):,}) — {first['start_ts'].min().date()}–{first['start_ts'].max().date()}
+against {second['start_ts'].min().date()}–{second['start_ts'].max().date()}.
+
+- **Rising fastest:** *{movers.index[-1]}* — {up['first']:.1%} → {up['second']:.1%}
+  of all journeys ({up['delta']:+.1%}).
+- **Falling fastest:** *{movers.index[0]}* — {down['first']:.1%} → {down['second']:.1%}
+  ({down['delta']:+.1%}).
+
+Only journey types with at least 200 journeys are ranked, so a mover is a real shift in what
+customers do rather than small-sample noise. A riser with a high struggle rate is the most
+urgent thing on this page: more customers are walking into a flow that already hurts.
+                """,
+                f"""
+Khoảng thời gian được chia tại **journey trung vị**, ngày {mid_ts.date()}, nên hai nửa có cùng số journey
+({len(first):,} so với {len(second):,}) — {first['start_ts'].min().date()}–{first['start_ts'].max().date()}
+so với {second['start_ts'].min().date()}–{second['start_ts'].max().date()}.
+
+- **Tăng nhanh nhất:** *{movers.index[-1]}* — {up['first']:.1%} → {up['second']:.1%}
+  trên tổng journey ({up['delta']:+.1%}).
+- **Giảm nhanh nhất:** *{movers.index[0]}* — {down['first']:.1%} → {down['second']:.1%}
+  ({down['delta']:+.1%}).
+
+Chỉ xếp hạng các journey type có ít nhất 200 journey, nên một biến động ở đây là thay đổi thật trong
+hành vi khách hàng chứ không phải nhiễu do mẫu nhỏ. Một journey type vừa tăng vừa có tỷ lệ chật vật cao
+là thứ cấp bách nhất trên trang này: ngày càng nhiều khách hàng đi vào một flow vốn đã gây khó.
+                """,
+            )
+        )
+
+    st.divider()
+
     # ------------------------------------------------------------------ friction
-    st.header(t("Where users struggle", "User gặp khó ở đâu"))
+    st.header(t("Where customers get stuck", "Khách hàng bị mắc kẹt ở đâu"))
+    st.markdown(
+        t(
+            "Nobody tells us when an app frustrates them — they just struggle quietly and leave. "
+            "These six signals are the fingerprints that struggle leaves in the data. Each one has a "
+            "**plain meaning** and a **rule**: a journey is flagged only when it is more extreme than "
+            "the vast majority of journeys the model saw while learning, so a flag always means "
+            "*unusual for us*, not merely *long* or *complicated*.",
+            "Không ai báo cho ta biết khi họ thấy app khó dùng — họ chỉ lặng lẽ vật lộn rồi rời đi. "
+            "Sáu tín hiệu dưới đây là dấu vết mà sự vật lộn đó để lại trong dữ liệu. Mỗi tín hiệu có "
+            "**ý nghĩa dễ hiểu** và một **quy tắc**: một journey chỉ bị gắn cờ khi nó cực đoan hơn đại đa số "
+            "journey mà model đã thấy khi học. Nhờ vậy, gắn cờ luôn có nghĩa là *bất thường so với chính ta*, "
+            "chứ không đơn thuần là *dài* hay *phức tạp*.",
+        )
+    )
+
     flags = explode_flags(df["behavioral_friction_flags"])
     model_flags = explode_flags(df["friction_flags"])
     all_flags = model_flags.add(flags, fill_value=0).sort_values(ascending=False)
 
     excess = _excess_time(df)
     n_struggle = int(df["has_struggle"].sum())
-    SIG = t("signal", "tín hiệu")
-    MEAN = t("meaning", "nghĩa là gì")
-    a, b = st.columns([3, 2])
-    fd = pd.DataFrame({SIG: all_flags.index, JC: all_flags.to_numpy()})
-    fd[MEAN] = fd[SIG].map(lambda s: friction_explain().get(s, ""))
-    fig = px.bar(fd.sort_values(JC), x=JC, y=SIG, orientation="h", color_discrete_sequence=[PALETTE[3]], hover_data=[MEAN])
-    fig.update_layout(height=340, margin=dict(t=10, b=10), yaxis_title=None)
-    a.plotly_chart(fig, width="stretch")
-    b.markdown(
-        t(
-            f"""
-**{fmt_pct(struggle)}** of journeys carry at least one behavioural struggle signal, and
-**{fmt_pct(df['has_any_flag'].mean())}** carry a signal once model-based checks are included.
 
-Estimated **extra time users spent because of struggle: {excess / 3600:,.0f} hours**
-across {fmt_int(n_struggle)} journeys — measured as time above the clean
-median for the *same* journey type, so it is not just "long journeys are long".
-
-Per struggling journey that is about **{excess / max(n_struggle, 1):.0f} extra seconds**
-of avoidable effort.
-            """,
-            f"""
-**{fmt_pct(struggle)}** số journey mang ít nhất một tín hiệu chật vật về hành vi, và
-**{fmt_pct(df['has_any_flag'].mean())}** có tín hiệu nếu tính cả các kiểm tra dựa trên model.
-
-Ước tính **thời gian phát sinh thêm do chật vật: {excess / 3600:,.0f} giờ**
-trên {fmt_int(n_struggle)} journey — đo bằng phần vượt trên mức trung vị của journey "sạch"
-thuộc *cùng* journey type, nên không phải chỉ là "journey dài thì lâu".
-
-Trung bình mỗi journey chật vật tốn thêm khoảng **{excess / max(n_struggle, 1):.0f} giây**
-công sức lẽ ra tránh được.
-            """,
-        )
+    kpi_row(
+        [
+            (
+                t("Journeys with a struggle sign", "Journey có dấu hiệu vật lộn"),
+                fmt_pct(struggle),
+                t("At least one of the four behavioural signals", "Có ít nhất một trong bốn tín hiệu hành vi"),
+            ),
+            (
+                t("Including model-based checks", "Tính cả kiểm tra dựa trên model"),
+                fmt_pct(df["has_any_flag"].mean()),
+                t("Adds unusual paths and unknown behaviour", "Cộng thêm đường đi bất thường và hành vi chưa từng thấy"),
+            ),
+            (
+                t("Customer time lost", "Thời gian khách hàng mất thêm"),
+                t(f"{excess / 3600:,.0f} hours", f"{excess / 3600:,.0f} giờ"),
+                t(
+                    "Time above the clean median of the same journey type — not just 'long journeys are long'",
+                    "Phần vượt trên mức trung vị của journey sạch cùng loại — không phải chỉ là 'journey dài thì lâu'",
+                ),
+            ),
+            (
+                t("Per struggling journey", "Mỗi journey vật lộn"),
+                t(f"+{excess / max(n_struggle, 1):.0f} seconds", f"+{excess / max(n_struggle, 1):.0f} giây"),
+                t("Avoidable effort, on average", "Công sức lẽ ra tránh được, tính trung bình"),
+            ),
+        ]
     )
-    st.dataframe(fd[[SIG, JC, MEAN]], hide_index=True, width="stretch")
 
-    st.subheader(t("Which journeys hurt the most", "Journey nào gây khó chịu nhất"))
+    SIG = t("signal", "tín hiệu")
+    MEAN = t("what it means", "nghĩa là gì")
+    RULE = t("when we flag it", "khi nào bị gắn cờ")
+    PCT = t("% of journeys", "% trên tổng journey")
+
+    fd = pd.DataFrame({"flag": all_flags.index, JC: all_flags.to_numpy()})
+    fd[SIG] = fd["flag"].map(friction_title)
+    fd[MEAN] = fd["flag"].map(friction_meaning)
+    fd[RULE] = fd["flag"].map(lambda f: friction_rule(f, platforms))
+    fd[PCT] = fd[JC] / n_j
+
+    fig = px.bar(
+        fd.sort_values(JC), x=JC, y=SIG, orientation="h",
+        color_discrete_sequence=[PALETTE[3]], hover_data=[MEAN],
+    )
+    fig.update_layout(height=340, margin=dict(t=10, b=10), yaxis_title=None)
+    st.plotly_chart(fig, width="stretch")
+
+    st.dataframe(
+        fd[[SIG, MEAN, RULE, JC, PCT]],
+        hide_index=True, width="stretch",
+        column_config={
+            SIG: st.column_config.TextColumn(SIG, width="small"),
+            MEAN: st.column_config.TextColumn(MEAN, width="large"),
+            RULE: st.column_config.TextColumn(RULE, width="large"),
+            PCT: st.column_config.ProgressColumn(PCT, format="%.1f%%", min_value=0.0, max_value=float(fd[PCT].max())),
+        },
+    )
     st.caption(
         t(
-            "Ranked by struggle rate among journey types with enough volume to act on. "
-            "These are the concrete fix candidates.",
-            "Xếp hạng theo tỷ lệ chật vật, chỉ xét các journey type đủ lớn để hành động. "
-            "Đây là danh sách ứng viên cần sửa cụ thể.",
+            "The cut-offs are learned from the training data, not set by hand, and they are fitted "
+            "separately for each platform — so \"unusual\" always means unusual for this app, on this "
+            "platform. One journey can raise several signals at once; the counts above therefore add "
+            "up to more than the number of flagged journeys.",
+            "Các ngưỡng được học từ dữ liệu train chứ không do người đặt tay, và được fit riêng cho từng "
+            "platform — nên \"bất thường\" luôn có nghĩa là bất thường với chính app này, trên chính platform đó. "
+            "Một journey có thể bật nhiều tín hiệu cùng lúc, nên tổng các con số ở trên lớn hơn số journey "
+            "thực sự bị gắn cờ.",
+        )
+    )
+
+    st.subheader(t("Which tasks frustrate customers most", "Task nào khiến khách hàng bực nhất"))
+    st.caption(
+        t(
+            "For each task, the share of attempts that carried a struggle sign. Only tasks with enough "
+            "volume to be worth a sprint are ranked — this is the fix list, in priority order.",
+            "Với mỗi task, đây là tỷ lệ lượt thực hiện có dấu hiệu vật lộn. Chỉ xếp hạng những task đủ nhiều "
+            "để đáng bỏ một sprint ra sửa — đây chính là danh sách cần sửa, theo thứ tự ưu tiên.",
         )
     )
     min_vol = st.slider(t("Minimum journeys for a type to qualify", "Số journey tối thiểu để một type được xét"), 50, 2000, 300, step=50)
@@ -314,30 +509,51 @@ công sức lẽ ra tránh được.
             )
         )
 
-        detail = st.selectbox(t("Break down a journey type", "Phân tích sâu một journey type"), worst["journey_type"].tolist())
+        detail = st.selectbox(t("Look inside one task", "Xem sâu vào một task"), worst["journey_type"].tolist())
         sub = df[df["journey_type"] == detail]
         sf = explode_flags(sub["behavioral_friction_flags"]).add(explode_flags(sub["friction_flags"]), fill_value=0).sort_values(ascending=False)
         d1, d2 = st.columns([2, 3])
-        d1.dataframe(pd.DataFrame({SIG: sf.index, JC: sf.to_numpy().astype(int)}), hide_index=True, width="stretch")
+        d1.markdown(t("**How customers struggle here**", "**Khách hàng vật lộn kiểu gì ở đây**"))
+        d1.dataframe(
+            pd.DataFrame(
+                {
+                    SIG: [friction_title(f) for f in sf.index],
+                    JC: sf.to_numpy().astype(int),
+                    PCT: sf.to_numpy() / max(len(sub), 1),
+                }
+            ),
+            hide_index=True, width="stretch",
+            column_config={PCT: st.column_config.ProgressColumn(PCT, format="%.0f%%", min_value=0.0, max_value=1.0)},
+        )
         d2.markdown(
             t(
-                "**Where these journeys end** — the last screen users see before giving up or finishing",
-                "**Các journey này kết thúc ở đâu** — màn hình cuối user thấy trước khi bỏ cuộc hoặc hoàn tất",
+                "**Where these journeys end** — the last screen the customer saw before finishing or giving up",
+                "**Các journey này kết thúc ở đâu** — màn hình cuối khách hàng nhìn thấy trước khi xong việc hoặc bỏ cuộc",
             )
         )
         d2.dataframe(
             sub["exit_token"].value_counts().head(8).rename_axis(t("exit step", "bước kết thúc")).reset_index(name=JC),
             hide_index=True, width="stretch",
         )
-        with st.expander(t("Example struggling journeys (raw step sequences)", "Ví dụ journey chật vật (chuỗi bước thô)")):
+        with st.expander(t("See real customers struggling, step by step", "Xem khách hàng thật vật lộn, từng bước một")):
+            st.caption(
+                t(
+                    "The five slowest struggling attempts at this task. Read the step list as the screens "
+                    "the customer actually moved through, in order.",
+                    "Năm lượt vật lộn chậm nhất của task này. Hãy đọc danh sách bước như đúng những màn hình "
+                    "khách hàng đã đi qua, theo thứ tự.",
+                )
+            )
             ex = sub[sub["has_struggle"]].nlargest(5, "span_seconds")
             for _, r in ex.iterrows():
+                raw_flags = str(r["behavioral_friction_flags"] or r["friction_flags"] or "")
+                nice = " · ".join(friction_title(f) for f in raw_flags.split("|") if f)
                 st.markdown(
                     t(
-                        f"`{r['journey_id']}` · {r['n_events_final']} steps · {r['span_seconds']:.0f}s · "
-                        f"flags: `{r['behavioral_friction_flags'] or r['friction_flags']}`",
-                        f"`{r['journey_id']}` · {r['n_events_final']} bước · {r['span_seconds']:.0f} giây · "
-                        f"flags: `{r['behavioral_friction_flags'] or r['friction_flags']}`",
+                        f"**{nice}** — {r['n_events_final']} steps in {r['span_seconds']:.0f}s "
+                        f"(`{r['journey_id']}`, flags `{raw_flags}`)",
+                        f"**{nice}** — {r['n_events_final']} bước trong {r['span_seconds']:.0f} giây "
+                        f"(`{r['journey_id']}`, flags `{raw_flags}`)",
                     )
                 )
                 st.code(str(r["sequence"]).replace(" -> ", "\n→ "), language=None)
@@ -446,11 +662,16 @@ lành mạnh; một cú nhảy đột ngột gắn với một entry screen cụ
     DATE = t("date", "ngày")
     HOUR = t("hour (UTC)", "giờ (UTC)")
     a, b = st.columns([3, 2])
-    daily = df.groupby(["date", "family"], as_index=False).size().rename(columns={"size": JC, "date": DATE})
+    daily = dense.groupby(["date", "family"], as_index=False).size().rename(columns={"size": JC, "date": DATE})
     fig = px.area(daily, x=DATE, y=JC, color="family", color_discrete_sequence=PALETTE)
     fig.update_layout(height=340, margin=dict(t=10, b=10), xaxis_title=None, legend_title=None)
     a.plotly_chart(fig, width="stretch")
-    a.caption(t("Daily journey volume by business family.", "Lượng journey theo ngày, chia theo business family."))
+    a.caption(
+        t(
+            f"Daily journey volume by business family, over the dense window {dense_lo.date()} → {dense_hi.date()}.",
+            f"Lượng journey theo ngày chia theo business family, trong khoảng dày dữ liệu {dense_lo.date()} → {dense_hi.date()}.",
+        )
+    )
 
     heat = df.groupby(["family", "hour"], as_index=False).size().rename(columns={"size": JC})
     heat["share"] = heat[JC] / heat.groupby("family")[JC].transform("sum")

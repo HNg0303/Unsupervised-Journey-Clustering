@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -331,21 +332,140 @@ def build_inference_slim() -> None:
         print(f"    -> {out.name} ({len(df):,} journeys, {out.stat().st_size/1e6:.1f} MB)")
 
 
+# --------------------------------------------------------------------------------------
+# 4. End-to-end showcase: one real session, from raw events to scored journeys
+# --------------------------------------------------------------------------------------
+def build_showcase(platform: str = "android") -> dict:
+    """Pick one real session and carry it through the whole pipeline.
+
+    The overview page uses this to show input and output side by side on the *same*
+    session, so the story is traceable rather than illustrative.
+    """
+    inf_path = CACHE_DIR / f"inference_{platform}.parquet"
+    raw_path = RAW_DIR / f"{platform}_t5_1k.csv"
+    if not inf_path.exists() or not raw_path.exists():
+        return {}
+
+    df = pd.read_parquet(inf_path)
+    grp = df.groupby("session_id").agg(
+        journeys=("journey_id", "count"),
+        names=("cluster_name", "nunique"),
+        families=("business_family", "nunique"),
+        events=("n_events_final", "sum"),
+        flagged=("friction_flags", lambda s: s.notna().sum()),
+        predicted=("effective_next_action", lambda s: s.notna().sum()),
+    )
+    # A good teaching example: one session holding two different journey types from two
+    # different business families, one of them flagged, one with a predicted next action.
+    cand = grp[
+        (grp["journeys"] == 2)
+        & (grp["names"] == 2)
+        & (grp["families"] == 2)
+        & grp["events"].between(14, 22)
+        & (grp["flagged"] >= 1)
+        & (grp["predicted"] >= 1)
+    ]
+    if cand.empty:
+        cand = grp[(grp["journeys"] == 2) & (grp["names"] == 2)]
+    if cand.empty:
+        return {}
+    session_id = sorted(cand.index)[0]
+
+    journeys = df[df["session_id"] == session_id].sort_values("start_ts")
+    keep_cols = [
+        "journey_id", "cluster", "cluster_name", "cluster_name_vi", "business_family",
+        "business_family_vi", "naming_confidence", "boundary_reason", "n_events_raw",
+        "n_events_final", "span_seconds", "action_ratio", "back_rate", "entry_token",
+        "exit_token", "sequence", "assignment_type", "distance_to_centroid",
+        "distance_limit", "markov_logprob", "friction_flags", "behavioral_friction_flags",
+        "effective_next_action", "effective_next_action_share", "start_ts", "end_ts",
+    ]
+    keep_cols = [c for c in keep_cols if c in journeys.columns]
+    journeys_out = journeys[keep_cols].astype(object).where(pd.notna(journeys[keep_cols]), None)
+
+    raw_rows = []
+    for chunk in pd.read_csv(raw_path, chunksize=200_000, low_memory=False):
+        hit = chunk[chunk["session_id"] == session_id]
+        if len(hit):
+            raw_rows.append(hit)
+    raw = pd.concat(raw_rows, ignore_index=True) if raw_rows else pd.DataFrame()
+    if not raw.empty:
+        raw["ts"] = parse_client_time(raw["client_time"])
+        raw = raw.sort_values("ts")
+        raw["gap_s"] = raw["ts"].diff().dt.total_seconds().round(2)
+        raw = raw[["key", "segmentation_name", "ts", "gap_s"]].head(40)
+        raw["ts"] = raw["ts"].dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    return {
+        "platform": platform,
+        "session_id": session_id,
+        "source_file": f"{platform}_t5_1k.csv",
+        "raw_events": raw.astype(object).where(pd.notna(raw), None).to_dict("records") if not raw.empty else [],
+        "raw_event_count": int(len(raw)),
+        "journeys": [
+            {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in rec.items()}
+            for rec in journeys_out.to_dict("records")
+        ],
+    }
+
+
+# --------------------------------------------------------------------------------------
+# 5. Fitted friction thresholds, so the dashboard can quote the real rule
+# --------------------------------------------------------------------------------------
+def build_thresholds() -> dict:
+    """Read the percentile cut-offs the scorer actually uses to raise each friction flag.
+
+    They live inside the fitted scorer pickle, which needs src/ on the path to unpickle.
+    """
+    import dataclasses
+    import pickle
+
+    sys.path.insert(0, str(ROOT / "src"))
+    out: dict = {}
+    for platform in ["android", "ios"]:
+        path = RUN_DIR / f"{platform}_journey_scorer.pkl"
+        if not path.exists():
+            continue
+        try:
+            with path.open("rb") as fh:
+                scorer = pickle.load(fh)
+            th = scorer.thresholds
+            out[platform] = dataclasses.asdict(th) if dataclasses.is_dataclass(th) else dict(vars(th))
+        except Exception as exc:  # noqa: BLE001 - the dashboard degrades gracefully without this
+            print(f"    ! could not read thresholds for {platform}: {exc}")
+    return out
+
+
 def main() -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("[1/3] raw-data EDA")
+    print("[1/5] raw-data EDA")
     eda = build_raw_eda()
     eda["generated_at"] = datetime.now(timezone.utc).isoformat()
     (CACHE_DIR / "eda.json").write_text(json.dumps(eda, ensure_ascii=False), encoding="utf-8")
 
-    print("[2/3] training-run artefacts")
+    print("[2/5] training-run artefacts")
     train = build_train_artifacts()
     train["generated_at"] = datetime.now(timezone.utc).isoformat()
     (CACHE_DIR / "train_run.json").write_text(json.dumps(train, ensure_ascii=False), encoding="utf-8")
 
-    print("[3/3] inference tables")
+    print("[3/5] inference tables")
     build_inference_slim()
+
+    print("[4/5] end-to-end showcase session")
+    showcase = build_showcase()
+    if showcase:
+        (CACHE_DIR / "showcase.json").write_text(json.dumps(showcase, ensure_ascii=False, default=str), encoding="utf-8")
+        print(f"    -> session {showcase['session_id']} "
+              f"({showcase['raw_event_count']} raw events -> {len(showcase['journeys'])} journeys)")
+    else:
+        print("    ! could not build a showcase session")
+
+    print("[5/5] fitted friction thresholds")
+    thresholds = build_thresholds()
+    if thresholds:
+        (CACHE_DIR / "thresholds.json").write_text(json.dumps(thresholds, ensure_ascii=False), encoding="utf-8")
+        print(f"    -> {', '.join(thresholds)}")
 
     print(f"\nCache written to {CACHE_DIR}")
 

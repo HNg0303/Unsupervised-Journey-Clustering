@@ -17,7 +17,13 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from lib import RUN_DIR, t  # noqa: E402
-from views import page_clusters, page_eda, page_inference, page_training  # noqa: E402
+from views import (  # noqa: E402
+    page_clusters,
+    page_eda,
+    page_inference,
+    page_overview,
+    page_training,
+)
 
 st.set_page_config(
     page_title="Journey Clustering — production results",
@@ -39,14 +45,19 @@ with st.sidebar:
         help="English / Tiếng Việt",
     )
 
-# Page keys are language-stable so switching language never invalidates the selection.
-PAGES = {
+# Two top-level sections. Detail pages live under the second one. All keys are
+# language-stable so switching language never invalidates a selection.
+SECTIONS = {
+    "overview": t("Overview", "Tổng quan"),
+    "details": t("Details", "Chi tiết"),
+}
+DETAIL_PAGES = {
     "eda": page_eda.render,
     "training": page_training.render,
     "clusters": page_clusters.render,
     "inference": page_inference.render,
 }
-PAGE_LABELS = {
+DETAIL_LABELS = {
     "eda": t("1 · Raw data (EDA)", "1 · Dữ liệu thô (EDA)"),
     "training": t("2 · Training outputs", "2 · Các file khi train"),
     "clusters": t("3 · Learned journey types", "3 · Journey type học được"),
@@ -55,13 +66,20 @@ PAGE_LABELS = {
 
 with st.sidebar:
     st.caption(t("Unsupervised journeys from HiFPT clickstream", "Journey không giám sát từ clickstream HiFPT"))
-    choice = st.radio(
-        t("Page", "Trang"),
-        list(PAGES),
-        format_func=lambda k: PAGE_LABELS[k],
+    section = st.radio(
+        t("Section", "Mục"),
+        list(SECTIONS),
+        format_func=lambda k: SECTIONS[k],
         label_visibility="collapsed",
-        key="page",
+        key="section",
     )
+    if section == "details":
+        page = st.radio(
+            t("Page", "Trang"),
+            list(DETAIL_PAGES),
+            format_func=lambda k: DETAIL_LABELS[k],
+            key="page",
+        )
     st.divider()
     st.markdown(
         t(
@@ -98,4 +116,7 @@ HDBSCAN + Markov → catalogue journey đã đặt tên → scoring.
         + "\n\n`python dashboard/prepare_dashboard_data.py`"
     )
 
-PAGES[choice]()
+if section == "overview":
+    page_overview.render()
+else:
+    DETAIL_PAGES[st.session_state.get("page", "eda")]()

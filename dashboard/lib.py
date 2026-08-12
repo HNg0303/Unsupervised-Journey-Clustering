@@ -19,6 +19,7 @@ RUN_DIR = (
 TEST_DIR = ROOT / "output" / "test"
 
 PLATFORMS = ["android", "ios"]
+PLATFORM_LABEL = {"android": "Android", "ios": "iOS"}
 
 # Plot palette (colour-blind safe, works on light and dark themes)
 PALETTE = ["#4C78A8", "#F58518", "#54A24B", "#E45756", "#72B7B2", "#B279A2", "#EECA3B", "#9D755D"]
@@ -91,27 +92,125 @@ def pretty_family(value) -> str:
     return FAMILY_EN.get(v, v).replace("_", " ")
 
 
-FRICTION_EXPLAIN_EN = {
-    "improbable_transitions": "Steps the trained transition model rates as unlikely — user went somewhere the flow does not normally lead.",
-    "screen_thrash": "Rapid back-and-forth between the same screens — the user could not find what they wanted.",
-    "excessive_back": "High share of back taps — the flow sent the user down a wrong path.",
-    "navigation_loop": "The same short screen cycle repeats — a dead end in the UI.",
-    "slow_journey": "Journey took far longer than the norm for its type.",
-    "unknown_archetype": "Behaviour does not match any learned journey type — new or broken flow.",
+# Each friction signal, described three ways: a plain title, what it means for the
+# customer, and the statistical rule that raised it. `metric` names the fitted threshold
+# in thresholds.json (see src/Rule_based/score.py, where the flags are set).
+FRICTION_META = {
+    "excessive_back": {
+        "title_en": "Kept pressing back",
+        "title_vi": "Bấm back liên tục",
+        "meaning_en": "The customer repeatedly backed out of screens. Usually what they landed on was not what they expected, so they retreated and tried again.",
+        "meaning_vi": "Khách hàng liên tục bấm back để thoát khỏi màn hình. Thường là vì màn hình mở ra không đúng thứ họ mong đợi, nên họ lùi lại và thử đường khác.",
+        "metric": "back_rate_p90",
+        "rule_en": "More than {v} of the steps in the journey were back taps — a level only the top 10% of journeys reach.",
+        "rule_vi": "Hơn {v} số bước trong journey là thao tác back — mức mà chỉ 10% journey cao nhất mới chạm tới.",
+        "fmt": "pct",
+    },
+    "screen_thrash": {
+        "title_en": "Went in circles between screens",
+        "title_vi": "Đi vòng vòng giữa các màn hình",
+        "meaning_en": "The customer kept coming back to screens they had already seen — the signature of hunting for something they could not find.",
+        "meaning_vi": "Khách hàng cứ quay lại những màn hình đã xem rồi — dấu hiệu điển hình của việc đang tìm thứ gì đó mà không thấy.",
+        "metric": "revisit_p90",
+        "rule_en": "More than {v} of the steps revisited a screen already seen in the same journey — the top 10% most repetitive journeys.",
+        "rule_vi": "Hơn {v} số bước quay lại một màn hình đã xem trong cùng journey — thuộc nhóm 10% journey lặp lại nhiều nhất.",
+        "fmt": "pct",
+    },
+    "navigation_loop": {
+        "title_en": "Stuck in a loop",
+        "title_vi": "Kẹt trong một vòng lặp",
+        "meaning_en": "The same short screen cycle repeated over and over. This is what a dead end in the interface looks like from the data side.",
+        "meaning_vi": "Một vòng vài màn hình lặp đi lặp lại. Đây chính là hình ảnh của một ngõ cụt trong giao diện khi nhìn từ phía dữ liệu.",
+        "metric": "loops_p90",
+        "rule_en": "The journey contained a repeating screen cycle at all. Nine out of ten journeys contain none, so any loop is already unusual.",
+        "rule_vi": "Journey có chứa một vòng lặp màn hình. Chín trên mười journey không hề có vòng lặp nào, nên chỉ cần có là đã bất thường.",
+        "fmt": "none",
+    },
+    "slow_journey": {
+        "title_en": "Took much longer than normal",
+        "title_vi": "Mất nhiều thời gian hơn hẳn bình thường",
+        "meaning_en": "The task dragged on well past how long this kind of task usually takes — hesitation, waiting, or repeated attempts.",
+        "meaning_vi": "Task kéo dài vượt xa thời gian mà loại task này thường mất — do phân vân, phải chờ, hoặc thử đi thử lại.",
+        "metric": "span_p95",
+        "rule_en": "Lasted longer than {v} — the slowest 5% of all journeys.",
+        "rule_vi": "Kéo dài hơn {v} — thuộc nhóm 5% journey chậm nhất.",
+        "fmt": "seconds",
+    },
+    "improbable_transitions": {
+        "title_en": "Took a path this flow almost never takes",
+        "title_vi": "Đi một đường mà flow này gần như không bao giờ đi",
+        "meaning_en": "The journey belongs to a known task, but the customer moved between screens in an order that almost nobody else uses — they were off the beaten path.",
+        "meaning_vi": "Journey vẫn thuộc một task đã biết, nhưng khách hàng di chuyển giữa các màn hình theo thứ tự mà gần như không ai khác dùng — họ đã đi chệch khỏi lối mòn.",
+        "metric": "markov_p05",
+        "rule_en": "Among the 5% least likely step orders, measured against the pattern this task normally follows (step log-probability below {v}).",
+        "rule_vi": "Nằm trong 5% thứ tự bước ít khả năng xảy ra nhất, so với lối đi mà task này thường theo (log-probability mỗi bước thấp hơn {v}).",
+        "fmt": "logprob",
+    },
+    "unknown_archetype": {
+        "title_en": "Behaviour we have never seen",
+        "title_vi": "Hành vi chưa từng thấy",
+        "meaning_en": "This journey did not resemble any known task closely enough to be called one. Often a new feature, a campaign, or something broken.",
+        "meaning_vi": "Journey này không đủ giống bất kỳ task nào đã biết để được gọi tên. Thường là do một tính năng mới, một chiến dịch, hoặc một thứ gì đó đang lỗi.",
+        "metric": "distance_p95",
+        "rule_en": "No known task was close enough to claim it — the journey sits beyond every type's own boundary (model distance above ≈ {v}).",
+        "rule_vi": "Không task nào đã biết đủ gần để nhận nó — journey nằm ngoài ranh giới của mọi type (khoảng cách trong model vượt ≈ {v}).",
+        "fmt": "raw",
+    },
 }
 
-FRICTION_EXPLAIN_VI = {
-    "improbable_transitions": "Các bước mà Markov model đánh giá là ít có khả năng xảy ra — user đi tới nơi mà flow bình thường không dẫn tới.",
-    "screen_thrash": "Nhảy qua lại liên tục giữa vài screen — user không tìm được thứ mình cần.",
-    "excessive_back": "Tỷ lệ bấm back cao — flow đã đưa user đi sai hướng.",
-    "navigation_loop": "Một vòng lặp screen ngắn lặp đi lặp lại — ngõ cụt trong UI.",
-    "slow_journey": "Journey kéo dài hơn hẳn mức bình thường của cùng loại journey.",
-    "unknown_archetype": "Hành vi không khớp journey type nào đã học — flow mới hoặc đang lỗi.",
-}
+
+def _fmt_threshold(value: float, kind: str) -> str:
+    if kind == "pct":
+        return f"{value:.0%}"
+    if kind == "seconds":
+        return f"{value:.0f} " + t("seconds", "giây")
+    if kind == "logprob":
+        return f"{value:.1f}"
+    if kind == "raw":
+        return f"{value:.2f}"
+    return ""
+
+
+def friction_title(flag: str) -> str:
+    meta = FRICTION_META.get(flag)
+    if not meta:
+        return flag
+    return meta["title_vi"] if is_vi() else meta["title_en"]
+
+
+def friction_meaning(flag: str) -> str:
+    meta = FRICTION_META.get(flag)
+    if not meta:
+        return ""
+    return meta["meaning_vi"] if is_vi() else meta["meaning_en"]
+
+
+def friction_rule(flag: str, platforms: list[str] | None = None) -> str:
+    """The statistical rule behind a flag, with the run's real cut-off filled in.
+
+    Cut-offs are fitted per platform; when both are in scope, both are shown.
+    """
+    meta = FRICTION_META.get(flag)
+    if not meta:
+        return ""
+    template = meta["rule_vi"] if is_vi() else meta["rule_en"]
+    if meta["fmt"] == "none" or "{v}" not in template:
+        return template
+    th = load_thresholds()
+    picks = [p for p in (platforms or list(th)) if p in th]
+    values = [(p, th[p].get(meta["metric"])) for p in picks]
+    values = [(p, v) for p, v in values if v is not None]
+    if not values:
+        return template.replace("{v}", "—")
+    if len(values) == 1:
+        return template.replace("{v}", _fmt_threshold(values[0][1], meta["fmt"]))
+    shown = " / ".join(f"{PLATFORM_LABEL.get(p, p.title())} {_fmt_threshold(v, meta['fmt'])}" for p, v in values)
+    return template.replace("{v}", shown)
 
 
 def friction_explain() -> dict:
-    return FRICTION_EXPLAIN_VI if is_vi() else FRICTION_EXPLAIN_EN
+    """Backwards-compatible plain-meaning lookup."""
+    return {flag: friction_meaning(flag) for flag in FRICTION_META}
 
 
 # ======================================================================================
@@ -152,6 +251,24 @@ def load_inference(platform: str) -> pd.DataFrame:
     df = pd.read_parquet(path)
     df["start_ts"] = pd.to_datetime(df["start_ts"], errors="coerce", utc=True)
     return df
+
+
+@st.cache_data(show_spinner=False)
+def load_thresholds() -> dict:
+    """Fitted percentile cut-offs the scorer uses to raise each friction flag."""
+    path = CACHE_DIR / "thresholds.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@st.cache_data(show_spinner=False)
+def load_showcase() -> dict:
+    """One real session carried end to end, used by the overview page."""
+    path = CACHE_DIR / "showcase.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 @st.cache_data(show_spinner=False)

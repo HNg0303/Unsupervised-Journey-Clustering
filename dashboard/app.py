@@ -16,7 +16,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lib import RUN_DIR, t  # noqa: E402
+from lib import RUN_DIR, inject_css, t  # noqa: E402
 from views import (  # noqa: E402
     page_clusters,
     page_eda,
@@ -31,6 +31,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+inject_css()
 
 # The language selector must be read before any page renders, so it is created first and
 # every downstream string goes through lib.t().

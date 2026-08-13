@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# The dashboard reuses the *production* segmentation code rather than restating its rules,
+# so the EDA walkthrough can never drift from what the pipeline actually does.
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
 CACHE_DIR = ROOT / "output" / "dashboard_cache"
 RUN_DIR = (
     ROOT
     / "output"
-    / "journey_runs"
-    / "EXACT_ch-c45i30o20_ng1-3_svd64_fdf3_mf20000_nw0p35_mcs100_ms5_sel-eom_gap90_jmin4_tdf3_ent0_chr1_boot0_test0p2"
+    / "EXACT_ch-c45i30o20_ng1-3_svd64_fdf3_mf20000_nw0p35_mcs100_ms5_sel-eom_gap90_jmin4_tdf3_ent0_chr1_boot0"
 )
 TEST_DIR = ROOT / "output" / "test"
 
@@ -23,6 +28,106 @@ PLATFORM_LABEL = {"android": "Android", "ios": "iOS"}
 
 # Plot palette (colour-blind safe, works on light and dark themes)
 PALETTE = ["#4C78A8", "#F58518", "#54A24B", "#E45756", "#72B7B2", "#B279A2", "#EECA3B", "#9D755D"]
+
+
+# ======================================================================================
+# look & feel
+# ======================================================================================
+# Everything here is cosmetic. Colours are expressed with `currentColor` / rgba so the
+# same rules read correctly on both the light and the dark Streamlit theme.
+_CSS = """
+<style>
+@keyframes jc-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes jc-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* page content eases in instead of snapping in on every rerun */
+[data-testid="stMain"] .block-container > div { animation: jc-rise .38s cubic-bezier(.22,.61,.36,1) both; }
+[data-testid="stSidebar"] { animation: jc-fade .5s ease both; }
+
+h1 {
+  background: linear-gradient(90deg, #4C78A8 0%, #72B7B2 45%, #F58518 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  letter-spacing: -.02em;
+}
+h2, h3 { letter-spacing: -.01em; }
+
+/* metric tiles become cards that lift on hover */
+div[data-testid="stMetric"] {
+  position: relative;
+  border: 1px solid rgba(128,128,128,.22);
+  border-radius: 14px;
+  padding: .85rem 1rem .7rem 1.15rem;
+  background: linear-gradient(180deg, rgba(128,128,128,.06), rgba(128,128,128,0));
+  overflow: hidden;
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+div[data-testid="stMetric"]::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: linear-gradient(180deg, #4C78A8, #72B7B2);
+  opacity: .85;
+}
+div[data-testid="stMetric"]:hover {
+  transform: translateY(-3px);
+  border-color: rgba(76,120,168,.55);
+  box-shadow: 0 10px 24px -14px rgba(0,0,0,.55);
+}
+div[data-testid="stMetricValue"] { font-variant-numeric: tabular-nums; }
+
+/* tabs: soft pill + animated underline */
+button[data-baseweb="tab"] { transition: color .18s ease, background .18s ease; border-radius: 8px 8px 0 0; }
+button[data-baseweb="tab"]:hover { background: rgba(128,128,128,.10); }
+
+/* tables and charts share one card language */
+div[data-testid="stDataFrame"], div[data-testid="stTable"] {
+  border-radius: 12px; overflow: hidden;
+  transition: box-shadow .2s ease;
+}
+div[data-testid="stDataFrame"]:hover { box-shadow: 0 8px 22px -16px rgba(0,0,0,.6); }
+div[data-testid="stPlotlyChart"] { animation: jc-fade .5s ease both; }
+
+hr { background: linear-gradient(90deg, rgba(76,120,168,.55), rgba(128,128,128,.12) 60%, transparent); height: 1px; border: none; }
+
+/* reusable card used by the EDA walkthrough */
+.jc-cards { display: flex; flex-wrap: wrap; gap: .6rem; margin: .2rem 0 .9rem; }
+.jc-card {
+  flex: 1 1 190px;
+  border: 1px solid rgba(128,128,128,.22);
+  border-left: 3px solid var(--jc-accent, #4C78A8);
+  border-radius: 12px;
+  padding: .7rem .85rem;
+  background: linear-gradient(180deg, rgba(128,128,128,.07), rgba(128,128,128,0));
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.jc-card:hover { transform: translateY(-3px); box-shadow: 0 10px 24px -16px rgba(0,0,0,.6); }
+.jc-card .jc-title { font-weight: 600; font-size: .93rem; margin-bottom: .18rem; }
+.jc-card .jc-body { font-size: .82rem; opacity: .82; line-height: 1.35; }
+.jc-card .jc-tag {
+  display: inline-block; margin-top: .45rem; padding: .05rem .45rem;
+  border-radius: 999px; font-size: .72rem; font-family: ui-monospace, monospace;
+  background: rgba(128,128,128,.16);
+}
+</style>
+"""
+
+
+def inject_css() -> None:
+    """Apply the dashboard's cosmetic layer. Safe to call once per rerun."""
+    st.markdown(_CSS, unsafe_allow_html=True)
+
+
+def cards(items: list[tuple[str, str, str | None, str]]) -> None:
+    """Render a row of hover cards. items = [(title, body, tag, accent_colour)]"""
+    html = ['<div class="jc-cards">']
+    for title, body, tag, accent in items:
+        tag_html = f'<div class="jc-tag">{tag}</div>' if tag else ""
+        html.append(
+            f'<div class="jc-card" style="--jc-accent:{accent}">'
+            f'<div class="jc-title">{title}</div>'
+            f'<div class="jc-body">{body}</div>{tag_html}</div>'
+        )
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
 
 
 # ======================================================================================

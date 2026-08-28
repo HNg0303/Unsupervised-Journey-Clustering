@@ -130,13 +130,13 @@ what makes a channel's influence its weight and nothing else — not its
 vocabulary size, not its SVD rank.
 
 ```bash
-python scripts/run_journey_pipeline.py --channel-weights "coarse=0.45,intent=0.30,operation=0.20" 0.5, 0.5 
+python scripts/run_partitioned_journey_pipeline.py --channel-weights "coarse=0.45,intent=0.30,operation=0.20" 0.5, 0.5
 ```
 
 `--channel-weights ""` reproduces the single-channel representation exactly.
 That is required for the ONNX/mobile bundle: on-device preprocessing rebuilds
-one TF-IDF block plus the numeric block, so `export_scorer_to_onnx.py` refuses a
-multi-channel scorer rather than shipping features that silently disagree with
+one TF-IDF block plus the numeric block, so the current full-data scorer validates
+the representation before shipping features that silently disagree with
 the centroids.
 
 ## 7. Coverage on the July corpus

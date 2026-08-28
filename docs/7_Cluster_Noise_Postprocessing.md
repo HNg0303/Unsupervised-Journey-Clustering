@@ -41,11 +41,16 @@ The default soft-assignment gates are B cluster distance p95, B cluster Markov
 p05, and a 10% distance margin.  They can be changed with
 `--distance-quantile`, `--markov-quantile`, and `--min-distance-margin`.
 
-Name both namespaces after post-processing:
+The historical B/C naming route is no longer part of the current production pipeline.
+For the current partitioned run, apply the manually reviewed mapping to the scored
+output:
 
 ```powershell
-python scripts/name_hierarchical_clusters.py `
-  --postprocess-run output/journey_runs/L2_ng1-3_C-mcs100-ms5_B-mcs50-ms3_postprocessed
+python scripts/apply_mapping_name.py `
+  --input output/scores/<bundle>/android/model_version=<version>/platform=android `
+  --platform android `
+  --mapping output/scores/<bundle>/Cluster_naming.csv `
+  --output output/scores/<bundle>/android_all_named.csv
 ```
 
 Names use the medoid path and top three ranked n-grams.  A sole action token
@@ -56,7 +61,7 @@ falls back to the coarser medoid surface.
 Run hierarchical inference:
 
 ```powershell
-python scripts/score_new_events.py `
+python scripts/score_partitioned_events.py `
   --platform android `
   --input data/test_data/test_data_android.csv `
   --postprocess-run output/journey_runs/L2_ng1-3_C-mcs100-ms5_B-mcs50-ms3_postprocessed `

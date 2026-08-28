@@ -1,9 +1,9 @@
 # Journey Clustering — Two Representation Routes
 
 > **Partly superseded — kept for the route A/B comparison and the cluster
-> analysis.** `scripts/run_clustering.py` and `scripts/visualize_clusters.py`
-> were removed along with the `outputs/clusters/` layout they read; the single
-> entry point is now `scripts/run_journey_pipeline.py`. Tokenisation is also no
+> analysis.** The old route-specific training and visualisation scripts were
+> removed along with the `outputs/clusters/` layout they read; the single
+> entry point is now `scripts/run_partitioned_journey_pipeline.py`. Tokenisation is also no
 > longer "L1/L2/L3 aliases of the exact token" — see
 > [9_Semantic_Enrichment.md](9_Semantic_Enrichment.md).
 
@@ -288,13 +288,13 @@ key, segmentation.name, segmentation.segment, segmentation.screen_id, duration
 ### Running it
 
 ```bash
-.venv/Scripts/python scripts/score_new_events.py --platform android --input data/new_events.csv
+.venv/Scripts/python scripts/score_partitioned_events.py --platform android --input data/new_events.csv
 ```
 
 Smoke test against the last day of the training file:
 
 ```bash
-.venv/Scripts/python scripts/score_new_events.py --platform ios --holdout-days 1 --predict-next
+.venv/Scripts/python scripts/score_partitioned_events.py --platform ios --holdout-days 1 --predict-next
 ```
 
 From Python:
@@ -380,17 +380,16 @@ navigation changes or when `matched a known archetype` on fresh data drops below
 
 ## 5. Visualising the clusters
 
-### What ships now — zero dependencies
+### Current visualisation contract
 
 ```bash
-.venv/Scripts/python scripts/visualize_clusters.py --platform android --route a
-.venv/Scripts/python scripts/visualize_clusters.py --platform ios --route b
+python scripts/prepare_data_for_post_analysis/html_dashboard.py \
+  --input-dir output/scores/<bundle>/html_dashboard_summary
 ```
 
-Writes a **self-contained HTML** file — no CDN, no plotting library, no server.
-Canvas scatter coloured by cluster; hover any point to read its full token
-sequence; click a legend entry to isolate a cluster. Output:
-`outputs/clusters/{platform}_{route}_map.html`.
+The current HTML is built from compact full-inference summaries and bounded journey
+examples. The Streamlit dashboard uses the same summaries; it does not scan the
+multi-GB inference partitions at page load.
 
 The hover matters more than the plot. The useful question is never "where are the
 clusters" but "what is *in* that blob", and that needs the sequence attached to
@@ -476,6 +475,8 @@ in [5_Cluster_Names.md](5_Cluster_Names.md).
 .venv/Scripts/python -m src.Rule_based.segment
 .venv/Scripts/python -m src.Rule_based.postprocess
 .venv/Scripts/python -m src.Rule_based.prefixspan
-.venv/Scripts/python scripts/run_clustering.py --ngram-sweep
-.venv/Scripts/python scripts/visualize_clusters.py --platform android
+python scripts/run_partitioned_journey_pipeline.py \
+  --input data/lake/raw_events \
+  --output-root output/partitioned_runs \
+  --run-name latest
 ```

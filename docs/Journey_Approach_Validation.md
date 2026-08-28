@@ -98,19 +98,19 @@ src/journeylab/
   features.py     n-gram TF-IDF + SVD + numeric block
   cluster.py      HDBSCAN / KMeans / per-cluster Markov chains
   score.py        inference path: new events -> cluster + anomaly + friction flags
-scripts/run_journey_pipeline.py
+scripts/run_partitioned_journey_pipeline.py
 ```
 
 Run it:
 
 ```bash
-python scripts/run_journey_pipeline.py
+python scripts/run_partitioned_journey_pipeline.py
 ```
 
 Useful variants:
 
 ```bash
-python scripts/run_journey_pipeline.py --level L3 --idle-gap 120 --entropy
+python scripts/run_partitioned_journey_pipeline.py --level L3 --idle-gap 120 --entropy
 ```
 
 ---

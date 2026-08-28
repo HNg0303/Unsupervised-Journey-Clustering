@@ -1,29 +1,32 @@
 # Cluster Names — Every Cluster, Both Platforms, Both Routes
 
 > **Superseded — kept as a record of the `outputs/clusters/` run.**
-> `src/Rule_based/cluster_names.py` and `scripts/apply_cluster_names.py` were
+> `src/Rule_based/cluster_names.py` and the old route-specific naming scripts were
 > removed: the ids below belong to a run that no longer exists, and the routes
-> `a_tfidf` / `b_prefixspan` are no longer produced. Cluster naming now lives in
-> [7_Cluster_Noise_Postprocessing.md](7_Cluster_Noise_Postprocessing.md) and
-> `scripts/name_hierarchical_clusters.py`. The family taxonomy below is still
-> the right level to report on; it is now derived per event by
-> [9_Semantic_Enrichment.md](9_Semantic_Enrichment.md).
+> `a_tfidf` / `b_prefixspan` are no longer produced. The manually reviewed
+> mapping is applied with `scripts/apply_mapping_name.py`. The family taxonomy
+> below is still the right level to report on; it is derived from the
+> authoritative mapping after inference.
 
 Names for all 169 clusters (29 + 34 Android, 50 + 56 iOS, plus one noise group
 per run), so the output can be discussed in words instead of integers.
 
 Cluster ids are arbitrary — HDBSCAN assigns them by internal ordering and they
-**move on every refit**. The names live in
-[cluster_names.py](../src/Rule_based/cluster_names.py) and are applied with:
+**move on every refit**. The historical names are kept here only for context. The
+current names live in the reviewed `Cluster_naming.csv` and are applied with:
 
 ```bash
-.venv/Scripts/python scripts/apply_cluster_names.py
+.venv/Scripts/python scripts/apply_mapping_name.py \
+  --input output/scores/<bundle>/android/model_version=<version>/platform=android \
+  --platform android \
+  --mapping output/scores/<bundle>/Cluster_naming.csv \
+  --output output/scores/<bundle>/android_all_named.csv
 ```
 
-Run `--audit` after any refit before quoting a name — it reports ids present in
-the catalog but missing from the name table, and vice versa.
+The mapping script validates that both platforms have an explicit `cluster_id = -1`
+fallback before writing the `*_all_named.csv` anchor.
 
-Each name came from three pieces of evidence: the **medoid path**, the
+The historical names below came from three pieces of evidence: the **medoid path**, the
 **highest-lift tokens** inside the cluster, and the **behavioural stats**
 (length, back rate, revisit ratio, loop share). The evidence is kept in the
 `note` field so any name can be challenged rather than taken on trust.

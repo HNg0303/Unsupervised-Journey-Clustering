@@ -684,7 +684,7 @@ Không có gì được khớp lại. Nhờ vậy, huấn luyện và suy luận
 khỏi nhau**.
 
 ```bash
-python scripts/score_new_events.py --platform android --input data/new_events.csv
+python scripts/score_partitioned_events.py --platform android --input data/new_events.csv
 ```
 
 ### 7.2 Kết quả trả về

@@ -137,7 +137,7 @@ single-action guard, and a short summary of name/family counts.
 For the current B/C runs, the repository applies this policy with:
 
 ```powershell
-python scripts/name_hierarchical_clusters.py `
+python scripts/apply_mapping_name.py `
   --postprocess-run output/journey_runs/L2_ng1-3_C-mcs100-ms5_B-mcs50-ms3_postprocessed `
   --reference-catalog output/clusters_with_screen/shareholder_cluster_catalog_vi.json
 ```

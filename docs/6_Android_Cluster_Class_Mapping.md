@@ -16,39 +16,25 @@ review trước khi dùng làm KPI chính thức.
 Cluster `-1` là noise. Cluster không có trong mapping cũng được đưa về
 `unknown_journey`; tuyệt đối không ép một hành trình lạ vào một nhãn nghiệp vụ.
 
-## Áp dụng cho event mới
+## Áp dụng cho inference cuối cùng
 
-Đầu tiên dùng fitted scorer để biến raw event thành journey và gán `cluster`.
-Sau đó gắn class mapping vào file kết quả:
+Sau khi `score_partitioned_events.py` tạo output journey, dùng mapping nghiệp vụ
+đã review thủ công để tạo file `*_all_named.csv`. Đây là anchor duy nhất cho
+dashboard và post-analysis:
 
-```powershell
-python scripts/score_new_events.py --platform android --input data/new_events.csv --output output/android_scored.csv
-python scripts/apply_cluster_mapping.py --platform android --input output/android_scored.csv --output output/android_scored_named.csv
-python scripts/apply_cluster_mapping.py --platform ios --input output/ios_scored.csv --output output/ios_scored_named.csv
+```bash
+python scripts/score_partitioned_events.py --input data/giga_data/android_events_t3-2026.csv --platform android \
+  --single-run output/partitioned_runs/latest/android --output-root output/scores/current
+python scripts/apply_mapping_name.py \
+  --input output/scores/current/android/model_version=latest/platform=android \
+  --platform android \
+  --mapping output/scores/current/Cluster_naming.csv \
+  --output output/scores/current/android_all_named.csv
 ```
 
-Hoặc áp dụng trong Python ngay sau `scorer.score(raw_events)`:
-
-```python
-from Rule_based.cluster_mapping import apply_cluster_mapping
-
-scored = scorer.score(raw_events)
-scored = apply_cluster_mapping(scored, "output/android_cluster_class_mapping.json")
-```
-
-Kết quả có thêm sáu cột: `class_group_code`, `class_group`, `class_code`,
-`class_name`, `class_description`, `naming_confidence`.
-
-Nếu cần dùng tên diễn giải trong catalog dành cho cổ đông/lãnh đạo, dùng
-catalog `output/clusters/shareholder_cluster_catalog_vi.json`:
-
-```powershell
-python scripts/apply_cluster_name_mapping.py --platform android --input output/android_scored.csv
-python scripts/apply_cluster_name_mapping.py --platform ios --input output/ios_scored.csv
-```
-
-Kết quả thêm `business_family`, `cluster_name` và `naming_confidence`. Catalog
-chứa cả Android và iOS nên `--platform` là bắt buộc.
+The mapping is joined on `(platform, cluster_id)`. Cluster `-1` is required for
+both platforms and unresolved/new clusters fall back to that row instead of
+receiving a guessed business label.
 
 ## Artifact
 

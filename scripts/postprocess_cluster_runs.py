@@ -18,9 +18,9 @@ import numpy as np
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(REPO_ROOT), str(REPO_ROOT / "src")]
+sys.path.insert(0, str(REPO_ROOT))
 
-from Rule_based.cluster_postprocess import (  # noqa: E402
+from src.cluster_postprocess import (  # noqa: E402
     PostprocessThresholds,
     align_journeys,
     apply_hierarchy,
@@ -29,8 +29,8 @@ from Rule_based.cluster_postprocess import (  # noqa: E402
     friction_flags,
     nearest_two_centroids,
 )
-from Rule_based.score import JourneyScorer  # noqa: E402
-from Rule_based.tokens import channels_from_exact_sequences  # noqa: E402
+from src.score import JourneyScorer  # noqa: E402
+from src.tokens import channels_from_exact_sequences  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

@@ -10,13 +10,13 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
-import android.text.InputType
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -79,21 +79,22 @@ class MainActivity : Activity() {
         }
 
         root.addView(TextView(this).apply {
-            text = "Clickstream Simulator"
-            textSize = 24f
+            text = "Clickstream Journey Simulator"
+            textSize = 22f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.rgb(13, 71, 161))
         }, lp())
+
         root.addView(TextView(this).apply {
-            text = "Replay journey từ test_data_android.csv"
-            textSize = 14f
-            setTextColor(Color.DKGRAY)
-            setPadding(0, dp(3), 0, dp(12))
+            text = "Unsupervised Journey Clustering & Scoring Engine v2.1"
+            textSize = 13f
+            setTextColor(Color.rgb(90, 105, 120))
+            setPadding(0, dp(2), 0, dp(10))
         }, lp())
 
         statsView = TextView(this).apply {
             text = "Đang tải dữ liệu..."
-            textSize = 14f
+            textSize = 13f
             setTextColor(Color.rgb(33, 33, 33))
             setPadding(dp(12), dp(10), dp(12), dp(10))
             background = roundedBackground(Color.WHITE, Color.rgb(220, 226, 232))
@@ -104,42 +105,55 @@ class MainActivity : Activity() {
         sessionSpinner = Spinner(this)
         root.addView(sessionSpinner, lp(bottom = 8))
 
-        root.addView(label("Tốc độ"), lp())
-        speedSpinner = Spinner(this)
-        root.addView(speedSpinner, lp(bottom = 10))
-        speedSpinner.adapter = spinnerAdapter(listOf("0.25x", "1x", "5x", "10x"))
-        speedSpinner.setSelection(1)
-
-        root.addView(label("Route xử lý clickstream"), lp())
-        routeSpinner = Spinner(this)
-        routeSpinner.adapter = spinnerAdapter(listOf(
-            "Fixed duration · xử lý mỗi khoảng",
-            "Journey complete · gom cụm ngay khi hoàn tất"
-        ))
-        root.addView(routeSpinner, lp(bottom = 8))
-
-        val durationRow = LinearLayout(this).apply {
+        val configRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        durationRow.addView(label("Duration (giây)"), LinearLayout.LayoutParams(0, -2, 1f))
+
+        val speedCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(8) }
+        }
+        speedCol.addView(label("Tốc độ replay"), lp())
+        speedSpinner = Spinner(this).apply {
+            adapter = spinnerAdapter(listOf("0.25x", "1x", "5x", "10x"))
+            setSelection(1)
+        }
+        speedCol.addView(speedSpinner, lp())
+        configRow.addView(speedCol)
+
+        val durationCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(dp(110), -2)
+        }
+        durationCol.addView(label("Window (giây)"), lp())
         durationInput = EditText(this).apply {
             setText("30")
             inputType = InputType.TYPE_CLASS_NUMBER
             hint = "30"
-            minWidth = dp(90)
             gravity = Gravity.CENTER
+            textSize = 14f
         }
-        durationRow.addView(durationInput, LinearLayout.LayoutParams(dp(100), -2))
-        root.addView(durationRow, lp(bottom = 10))
+        durationCol.addView(durationInput, lp())
+        configRow.addView(durationCol)
+        root.addView(configRow, lp(bottom = 8))
+
+        root.addView(label("Route xử lý clickstream"), lp())
+        routeSpinner = Spinner(this).apply {
+            adapter = spinnerAdapter(listOf(
+                MobileProcessingRoute.JOURNEY_COMPLETE.displayName,
+                MobileProcessingRoute.FIXED_DURATION.displayName
+            ))
+        }
+        root.addView(routeSpinner, lp(bottom = 10))
 
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        startButton = button("Start").also { it.isEnabled = false }
-        pauseButton = button("Pause").also { it.isEnabled = false }
-        stopButton = button("Stop").also { it.isEnabled = false }
+        startButton = button("▶ Start").also { it.isEnabled = false }
+        pauseButton = button("⏸ Pause").also { it.isEnabled = false }
+        stopButton = button("⏹ Stop").also { it.isEnabled = false }
         buttons.addView(startButton, weightLp())
         buttons.addView(pauseButton, weightLp())
         buttons.addView(stopButton, weightLp())
@@ -149,53 +163,60 @@ class MainActivity : Activity() {
             max = 100
             progress = 0
         }
-        root.addView(progressBar, lp(bottom = 5))
+        root.addView(progressBar, lp(bottom = 4))
 
         statusView = TextView(this).apply {
             text = "Chưa sẵn sàng"
-            textSize = 13f
+            textSize = 12f
             setTextColor(Color.DKGRAY)
-            setPadding(0, 0, 0, dp(8))
+            setPadding(0, 0, 0, dp(6))
         }
         root.addView(statusView, lp())
 
         currentEventView = TextView(this).apply {
             text = "Event hiện tại sẽ hiển thị ở đây"
-            textSize = 15f
+            textSize = 13f
             typeface = Typeface.MONOSPACE
             setTextColor(Color.rgb(20, 45, 70))
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setPadding(dp(12), dp(10), dp(12), dp(10))
             background = roundedBackground(Color.WHITE, Color.rgb(187, 208, 230))
         }
         root.addView(currentEventView, lp(bottom = 10))
 
-        val modelRow = LinearLayout(this).apply {
+        val modelHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        analyzeButton = button("Analyze rule-based journeys").also { it.isEnabled = false }
-        modelRow.addView(analyzeButton, LinearLayout.LayoutParams(-1, -2))
-        root.addView(modelRow, lp(bottom = 6))
+        analyzeButton = button("Phân tích toàn bộ session").also { it.isEnabled = false }
+        modelHeader.addView(analyzeButton, LinearLayout.LayoutParams(-1, -2))
+        root.addView(modelHeader, lp(bottom = 6))
+
         modelResultView = TextView(this).apply {
-            text = "Model output sẽ xuất hiện ngay khi rule-based cắt journey"
+            text = "Model output sẽ xuất hiện ngay khi có journey được cắt và chấm điểm"
             textSize = 12f
             typeface = Typeface.MONOSPACE
-            setTextColor(Color.rgb(20, 65, 45))
+            setTextColor(Color.rgb(15, 60, 40))
             setPadding(dp(10), dp(10), dp(10), dp(10))
-            background = roundedBackground(Color.rgb(247, 253, 249), Color.rgb(176, 213, 190))
+            background = roundedBackground(Color.rgb(245, 252, 248), Color.rgb(170, 215, 185))
         }
-        root.addView(modelResultView, lp(bottom = 10))
+        val modelScroll = ScrollView(this).apply {
+            addView(modelResultView, ViewGroup.LayoutParams(-1, -2))
+        }
+        root.addView(modelScroll, LinearLayout.LayoutParams(-1, dp(150)).apply {
+            bottomMargin = dp(10)
+        })
 
         val jsonHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        jsonHeader.addView(label("Last JSON output"), LinearLayout.LayoutParams(0, -2, 1f))
+        jsonHeader.addView(label("JSON output"), LinearLayout.LayoutParams(0, -2, 1f))
         copyJsonButton = button("Copy JSON").also { it.isEnabled = false }
         jsonHeader.addView(copyJsonButton, LinearLayout.LayoutParams(-2, -2))
         root.addView(jsonHeader, lp(bottom = 4))
+
         jsonOutputView = TextView(this).apply {
-            text = "JSON output sẽ xuất hiện sau khi có window hoặc journey hoàn tất"
+            text = "JSON output xuất hiện tại đây..."
             textSize = 11f
             typeface = Typeface.MONOSPACE
             setTextColor(Color.rgb(35, 35, 35))
@@ -205,17 +226,17 @@ class MainActivity : Activity() {
         val jsonScroll = ScrollView(this).apply {
             addView(jsonOutputView, ViewGroup.LayoutParams(-1, -2))
         }
-        root.addView(jsonScroll, LinearLayout.LayoutParams(-1, dp(180)).apply {
+        root.addView(jsonScroll, LinearLayout.LayoutParams(-1, dp(120)).apply {
             bottomMargin = dp(10)
         })
 
-        root.addView(label("Event log"), lp())
+        root.addView(label("Event stream log"), lp())
         logView = TextView(this).apply {
             text = ""
-            textSize = 12f
+            textSize = 11f
             typeface = Typeface.MONOSPACE
             setTextColor(Color.rgb(40, 40, 40))
-            setPadding(dp(10), dp(10), dp(10), dp(10))
+            setPadding(dp(8), dp(8), dp(8), dp(8))
             background = roundedBackground(Color.rgb(250, 250, 250), Color.rgb(220, 226, 232))
         }
         val logScroll = ScrollView(this).apply {
@@ -232,6 +253,7 @@ class MainActivity : Activity() {
                 updateSessionStatus()
             }
         }
+
         startButton.setOnClickListener { startReplay() }
         pauseButton.setOnClickListener { pauseReplay() }
         stopButton.setOnClickListener { stopReplay(reset = true) }
@@ -240,7 +262,7 @@ class MainActivity : Activity() {
             if (latestJsonOutput.isNotBlank()) {
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 clipboard.setPrimaryClip(ClipData.newPlainText("clickstream_output.json", latestJsonOutput))
-                statusView.text = "Đã copy JSON output"
+                statusView.text = "Đã copy JSON output vào clipboard"
             }
         }
 
@@ -255,7 +277,7 @@ class MainActivity : Activity() {
             } catch (error: Exception) {
                 runOnUiThread {
                     statusView.text = "Không đọc được asset: ${error.message}"
-                    statsView.text = "Kiểm tra app/src/main/assets/test_data_android.csv"
+                    statsView.text = "Kiểm tra file test_data_android.csv trong assets"
                 }
             }
         }.start()
@@ -268,7 +290,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     mobileModel = loaded
                     analyzeButton.isEnabled = currentSession != null
-                    modelResultView.text = "Model Android đã sẵn sàng · boundary-driven inference"
+                    modelResultView.text = "Model JourneyScorer v2.1 sẵn sàng · 734 centroids · native SVD+PCA+Markov"
                 }
             } catch (error: Exception) {
                 runOnUiThread {
@@ -284,11 +306,12 @@ class MainActivity : Activity() {
         val eventCount = sessions.sumOf { it.events.size }
         val platforms = sessions.flatMap { it.events }.map { it.segment }
             .filter { it.isNotBlank() }.groupingBy { it }.eachCount()
+
         statsView.text = "${formatNumber(eventCount)} events  ·  ${sessions.size} sessions\n" +
             platforms.entries.joinToString("  ·  ") { "${it.key}: ${formatNumber(it.value)}" }
 
         sessionSpinner.adapter = spinnerAdapter(sessions.mapIndexed { index, session ->
-            "${index + 1}. ${session.id.take(8)}…  (${session.events.size} events, ${session.platform})"
+            "${index + 1}. ${session.id.take(8)}… (${session.events.size} events, ${session.platform})"
         })
         startButton.isEnabled = sessions.isNotEmpty()
         pauseButton.isEnabled = false
@@ -308,7 +331,7 @@ class MainActivity : Activity() {
         startButton.isEnabled = false
         pauseButton.isEnabled = true
         stopButton.isEnabled = true
-        statusView.text = "Đang replay ${session.id} · event ${replayIndex + 1}/${session.events.size}"
+        statusView.text = "Đang replay session ${session.id} · event ${replayIndex + 1}/${session.events.size}"
         scheduleNext()
     }
 
@@ -322,15 +345,16 @@ class MainActivity : Activity() {
         val delay = if (replayIndex == 0) {
             0L
         } else {
-            val previous = session.events[replayIndex - 1]
-            val current = session.events[replayIndex]
+            val prev = session.events[replayIndex - 1]
+            val curr = session.events[replayIndex]
             val speed = speedMultiplier()
-            max(40L, ((current.timestamp - previous.timestamp).coerceAtLeast(0L) / speed).toLong())
+            max(30L, ((curr.timestamp - prev.timestamp).coerceAtLeast(0L) / speed).toLong())
         }
+
         replayRunnable = Runnable {
             if (!replayRunning) return@Runnable
             emit(session.events[replayIndex])
-            replayIndex += 1
+            replayIndex++
             scheduleNext()
         }.also { handler.postDelayed(it, delay) }
     }
@@ -339,23 +363,15 @@ class MainActivity : Activity() {
         val session = currentSession ?: return
         val progress = if (session.events.isEmpty()) 0 else (replayIndex * 100 / session.events.size)
         progressBar.progress = progress
+
         currentEventView.text = buildString {
-            append(event.key.uppercase(Locale.US))
-            append("  ")
-            append(event.name)
-            append("\n")
-            append("time: ")
-            append(dateFormat.format(Date(event.timestamp)))
-            append("  |  platform: ")
-            append(event.segment.ifBlank { "-" })
-            append("\ndevice: ")
-            append(event.deviceId)
-            append("  |  customer: ")
-            append(event.customerId ?: "anonymous")
+            append("[${event.key.uppercase(Locale.US)}]  ${event.name}\n")
+            append("time: ${dateFormat.format(Date(event.timestamp))}  |  platform: ${event.segment.ifBlank { "Android" }}\n")
+            append("session: ${event.sessionId.take(12)}…  |  customer: ${event.customerId ?: "anonymous"}")
             if (event.screenId.isNotBlank()) append("\nscreen: ${event.screenId}")
         }
-        addLog("${dateFormat.format(Date(event.timestamp))}  ${event.key.padEnd(10)}  ${event.name}")
-        statusView.text = "Đang replay ${session.id} · event ${replayIndex + 1}/${session.events.size}"
+        addLog("${dateFormat.format(Date(event.timestamp))}  ${event.key.padEnd(8)}  ${event.name}")
+        statusView.text = "Đang replay ${session.id.take(8)}… · event ${replayIndex + 1}/${session.events.size}"
         enqueueLiveEvent(event)
     }
 
@@ -365,7 +381,7 @@ class MainActivity : Activity() {
         replayRunnable = null
         pauseButton.isEnabled = false
         startButton.isEnabled = currentSession != null
-        statusView.text = "Đã pause tại event $replayIndex"
+        statusView.text = "Đã tạm dừng tại event $replayIndex"
     }
 
     private fun stopReplay(reset: Boolean) {
@@ -389,7 +405,7 @@ class MainActivity : Activity() {
         pauseButton.isEnabled = false
         startButton.isEnabled = currentSession != null
         progressBar.progress = 100
-        statusView.text = "Hoàn tất replay ${currentSession?.id ?: ""}"
+        statusView.text = "Hoàn tất replay session ${currentSession?.id ?: ""}"
         finishLiveAnalysis()
     }
 
@@ -397,12 +413,12 @@ class MainActivity : Activity() {
         progressBar.progress = 0
         currentEventView.text = "Event hiện tại sẽ hiển thị ở đây"
         modelResultView.text = if (mobileModel == null) {
-            "Model đang tải hoặc chưa có trong assets"
+            "Model đang tải..."
         } else {
-            "Chọn route rồi bấm Start để nhận clickstream"
+            "Bấm Start để bắt đầu nhận clickstream và tính toán journey"
         }
         latestJsonOutput = ""
-        jsonOutputView.text = "JSON output sẽ xuất hiện sau khi có window hoặc journey hoàn tất"
+        jsonOutputView.text = "JSON output xuất hiện tại đây..."
         copyJsonButton.isEnabled = false
         logLines.clear()
         logView.text = ""
@@ -413,7 +429,7 @@ class MainActivity : Activity() {
             clickstreamProcessor = null
             return
         }
-        val route = if (routeSpinner.selectedItemPosition == 0) {
+        val route = if (routeSpinner.selectedItemPosition == 1) {
             MobileProcessingRoute.FIXED_DURATION
         } else {
             MobileProcessingRoute.JOURNEY_COMPLETE
@@ -423,21 +439,21 @@ class MainActivity : Activity() {
         clickstreamProcessor = MobileClickstreamProcessor(model, route, duration).also { it.start() }
         liveGeneration.incrementAndGet()
         modelResultView.text = if (route == MobileProcessingRoute.FIXED_DURATION) {
-            "Đang nhận clickstream · xử lý mỗi ${duration}s theo event timestamp..."
+            "Đang stream · xử lý định kỳ mỗi ${duration}s..."
         } else {
-            "Đang nhận clickstream · gom cụm ngay khi journey hoàn tất..."
+            "Đang stream · phân tích ngay khi chạm boundary journey..."
         }
     }
 
     private fun enqueueLiveEvent(event: ClickstreamEvent) {
         val processor = clickstreamProcessor ?: return
-        val generation = liveGeneration.get()
+        val gen = liveGeneration.get()
         modelExecutor.execute {
-            if (generation != liveGeneration.get()) return@execute
+            if (gen != liveGeneration.get()) return@execute
             val update = processor.accept(event)
             if (!update.emitted) return@execute
             runOnUiThread {
-                if (generation == liveGeneration.get()) {
+                if (gen == liveGeneration.get()) {
                     renderProcessingUpdate(update)
                 }
             }
@@ -450,13 +466,13 @@ class MainActivity : Activity() {
             analyzeCurrentSession()
             return
         }
-        val generation = liveGeneration.get()
+        val gen = liveGeneration.get()
         modelExecutor.execute {
-            if (generation != liveGeneration.get()) return@execute
+            if (gen != liveGeneration.get()) return@execute
             val update = processor.finish()
             if (update != null) {
                 runOnUiThread {
-                    if (generation == liveGeneration.get()) {
+                    if (gen == liveGeneration.get()) {
                         renderProcessingUpdate(update)
                     }
                 }
@@ -467,20 +483,21 @@ class MainActivity : Activity() {
     private fun updateSessionStatus() {
         val session = currentSession
         statusView.text = if (session == null) "Chưa có session" else {
-            "Sẵn sàng · ${session.events.size} events · device ${session.deviceId} · ${session.platform}"
+            "Sẵn sàng · ${session.events.size} events · ${session.platform}"
         }
     }
 
     private fun analyzeCurrentSession() {
         val model = mobileModel ?: run {
-            modelResultView.text = "Model đang tải hoặc chưa có trong assets"
+            modelResultView.text = "Model đang tải..."
             return
         }
         val session = currentSession ?: return
         if (analysisInProgress) return
         analysisInProgress = true
         analyzeButton.isEnabled = false
-        modelResultView.text = "Đang segment rule-based + ONNX + Markov trên ${session.events.size} events..."
+        modelResultView.text = "Đang chạy segmentation + multi-channel SVD/PCA + Centroid matching trên ${session.events.size} events..."
+
         Thread {
             try {
                 val result = model.analyzeEvents(session.events)
@@ -503,18 +520,15 @@ class MainActivity : Activity() {
         updateJsonOutput(result.toJson().toString(2))
         val scored = result.predictions.filter { it.cluster != null }
         modelResultView.text = buildString {
-            append("MODEL OUTPUT · ${result.predictions.size} rule-based journeys\n")
-            append("scored=${scored.size} · collecting=${result.predictions.size - scored.size}\n")
+            append("KẾT QUẢ PHÂN TÍCH · ${result.predictions.size} journeys\n")
+            append("Đã phân cụm: ${scored.size}  |  Đang thu thập: ${result.predictions.size - scored.size}\n")
+            append("--------------------------------------------------\n")
             if (result.predictions.isEmpty()) {
-                append("Không có journey")
+                append("Không có journey nào trong session này.")
             } else {
-                result.predictions.takeLast(5).forEach { prediction ->
-                append("${prediction.journeyId}  boundary=${prediction.boundaryReason.ifBlank { "-" }}\n")
-                append("  cluster=${prediction.effectiveClusterKey ?: "-"}  ${prediction.clusterName ?: prediction.className ?: prediction.state}\n")
-                append("  assignment=${prediction.assignmentType ?: "collecting"}\n")
-                append("  sequence=${prediction.eventSequence.joinToString(" -> ")}\n")
-                append("  flags=${prediction.frictionFlags.ifBlank { "-" }}\n")
-                    append("  next=${prediction.nextAction ?: "-"}\n")
+                result.predictions.forEach { p ->
+                    appendFormatPrediction(p)
+                    append("\n")
                 }
             }
         }
@@ -523,29 +537,56 @@ class MainActivity : Activity() {
     private fun renderProcessingUpdate(update: MobileProcessingUpdate) {
         updateJsonOutput(update.toJson().toString(2))
         modelResultView.text = buildString {
-            append("LIVE MODEL OUTPUT · ${update.route.wireName}\n")
+            append("LIVE MODEL OUTPUT [${update.route.wireName}]\n")
             if (update.windowIndex != null) {
-                append("window=${update.windowIndex}  events=${update.eventsInWindow}")
-                append("  ${formatTimestamp(update.windowStartTimestamp)} -> ${formatTimestamp(update.windowEndTimestamp)}\n")
-            } else if (update.windowEndTimestamp != null) {
-                append("event_time=${formatTimestamp(update.windowEndTimestamp)}\n")
+                append("Window #${update.windowIndex} · ${update.eventsInWindow} events (${formatTimestamp(update.windowStartTimestamp)} -> ${formatTimestamp(update.windowEndTimestamp)})\n")
             }
-            if (update.errors.isNotEmpty()) append("errors=${update.errors.joinToString(",")}\n")
-            update.finalized.forEach { prediction ->
-                append("${prediction.journeyId}  boundary=${prediction.boundaryReason.ifBlank { "flush" }}\n")
-                append("  cluster=${prediction.effectiveClusterKey ?: "-"}  ${prediction.clusterName ?: prediction.className ?: prediction.state}\n")
-                append("  assignment=${prediction.assignmentType ?: "collecting"}\n")
-                append("  sequence=${prediction.eventSequence.joinToString(" -> ")}\n")
-                append("  flags=${prediction.frictionFlags.ifBlank { "-" }}\n")
-                append("  next=${prediction.nextAction ?: "-"}\n")
+            if (update.errors.isNotEmpty()) append("Errors: ${update.errors.joinToString(", ")}\n")
+            append("--------------------------------------------------\n")
+            update.finalized.forEach { p ->
+                appendFormatPrediction(p)
+                append("\n")
             }
-            update.provisional.forEach { prediction ->
-                append("provisional ${prediction.journeyId}  events=${prediction.eventsSeen}  state=${prediction.state}\n")
+            update.provisional.forEach { p ->
+                append("⏳ [PROVISIONAL] ${p.journeyId} (${p.eventsSeen} events)\n")
+                append("   ${p.eventSequence.joinToString(" -> ")}\n")
             }
             if (update.finalized.isEmpty() && update.provisional.isEmpty() && update.errors.isEmpty()) {
-                append("Đã nhận window, chưa có journey đủ dài để gom cụm")
+                append("Đã nhận event, đang gom cụm...")
             }
         }
+    }
+
+    private fun StringBuilder.appendFormatPrediction(p: MobilePrediction) {
+        append("🎯 Journey: ${p.journeyId} [${p.state.uppercase(Locale.US)}] (boundary: ${p.boundaryReason.ifBlank { "none" }})\n")
+        if (p.cluster != null) {
+            append("   Cluster ${p.cluster}: ${p.clusterName ?: "Chưa xác định"}\n")
+            if (!p.businessFamily.isNullOrBlank()) {
+                append("   Nhóm: ${p.businessFamily} > ${p.businessSubmodule.orEmpty()}\n")
+            }
+            val distStr = String.format(Locale.US, "%.4f", p.distanceToCentroid ?: 0.0)
+            val limStr = String.format(Locale.US, "%.4f", p.distanceLimit ?: 0.7073)
+            append("   Khoảng cách: $distStr (ngưỡng p95: $limStr)")
+            if (p.geometricAnomaly) append(" [ANOMALY: XA CENTROID]")
+            append("\n")
+
+            if (p.markovLogprob != null) {
+                val logStr = String.format(Locale.US, "%.4f", p.markovLogprob)
+                append("   Markov Logprob: $logStr")
+                if (p.generativeAnomaly) append(" [ANOMALY: BẤT THƯỜNG]")
+                append("\n")
+            }
+            if (p.frictionFlags.isNotBlank()) {
+                append("   Friction Flags: ${p.frictionFlags}\n")
+            }
+            if (p.nextAction != null) {
+                val sharePct = String.format(Locale.US, "%.1f%%", (p.nextActionShare ?: 0.0) * 100.0)
+                append("   Hành động tiếp theo: ${p.nextAction} ($sharePct)\n")
+            }
+        } else {
+            append("   Trạng thái: Đang tích luỹ events (< 4 events)\n")
+        }
+        append("   Sequence: ${p.eventSequence.joinToString(" -> ")}\n")
     }
 
     private fun updateJsonOutput(json: String) {
@@ -559,7 +600,7 @@ class MainActivity : Activity() {
     } ?: "-"
 
     private fun addLog(line: String) {
-        if (logLines.size >= 120) logLines.removeFirst()
+        if (logLines.size >= 100) logLines.removeFirst()
         logLines.addLast(line)
         logView.text = logLines.joinToString("\n")
     }
@@ -578,12 +619,12 @@ class MainActivity : Activity() {
     private fun button(textValue: String) = Button(this).apply {
         text = textValue
         isAllCaps = false
-        minHeight = dp(44)
+        minHeight = dp(42)
     }
 
     private fun label(textValue: String) = TextView(this).apply {
         text = textValue
-        textSize = 13f
+        textSize = 12f
         typeface = Typeface.DEFAULT_BOLD
         setTextColor(Color.rgb(55, 71, 79))
         setPadding(0, dp(2), 0, dp(2))

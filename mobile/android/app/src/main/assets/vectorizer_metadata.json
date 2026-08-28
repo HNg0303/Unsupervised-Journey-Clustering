@@ -1,0 +1,62 @@
+{
+  "channel_weights": {
+    "primary": 1.0,
+    "coarse": 0.45,
+    "intent": 0.3,
+    "operation": 0.2
+  },
+  "numeric_block_weight": 0.35,
+  "numeric_columns": [
+    "n_events_final",
+    "n_unique_tokens",
+    "action_ratio",
+    "back_rate",
+    "revisit_ratio",
+    "n_loop_removed",
+    "n_dedup_removed",
+    "span_seconds",
+    "median_gap_s",
+    "p90_gap_s",
+    "max_gap_s"
+  ],
+  "numeric_log1p_columns": [
+    "n_events_final",
+    "n_unique_tokens",
+    "n_loop_removed",
+    "n_dedup_removed",
+    "span_seconds",
+    "median_gap_s",
+    "p90_gap_s",
+    "max_gap_s"
+  ],
+  "numeric_mean": [
+    2.2691389143319247,
+    2.17116331323809,
+    0.4620827783310744,
+    0.07109108826370533,
+    0.09047438827443843,
+    0.08846925247075174,
+    0.3570209014727206,
+    3.1775435603469235,
+    0.7663691761755459,
+    2.144603174495757,
+    2.5492706385013
+  ],
+  "numeric_scale": [
+    0.4600617515271972,
+    0.3858942799996196,
+    0.15120513218671966,
+    0.08949383542923099,
+    0.12886862831608017,
+    0.37839503431493227,
+    0.4762529782154742,
+    1.096455591783237,
+    0.6084687404061705,
+    0.7690589115853972,
+    0.946670804978065
+  ],
+  "svd_components_count": 48,
+  "has_global_pca": true,
+  "global_pca_components_count": 48,
+  "final_embedding_dim": 48
+}

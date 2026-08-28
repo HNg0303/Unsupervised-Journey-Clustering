@@ -8,6 +8,10 @@ ipykernel
 tabulate
 streamlit
 plotly
+pyarrow
+duckdb
+tqdm
+pm4py
 
 # optional - visualisation. Everything runs without these; scripts/visualize_clusters.py
 # falls back to sklearn t-SNE and emits dependency-free HTML.

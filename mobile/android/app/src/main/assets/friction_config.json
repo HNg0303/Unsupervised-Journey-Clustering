@@ -1,1 +1,0 @@
-{"schema_version": "2.0", "distance_p95": 0.8944831492591225, "markov_p05": -4.433089761690141, "markov_p01": -5.377812373294846, "back_rate_p90": 0.1667, "loops_p90": 0.0, "revisit_p90": 0.25, "span_p95": 120.0217500000001, "idle_gap_seconds": 90.0, "root_return_min_events": 6, "max_journey_length": 80, "min_journey_length": 4}

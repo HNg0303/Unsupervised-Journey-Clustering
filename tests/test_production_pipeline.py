@@ -7,11 +7,11 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT), str(ROOT / "src")]
+sys.path.insert(0, str(ROOT))
 
-from Rule_based.config import PipelineConfig
-from Rule_based.production import canonicalize_frame
-from Rule_based import segment, tokens
+from src.config import PipelineConfig
+from src.production import canonicalize_frame
+from src import segment, tokens
 
 
 class ProductionPipelineTest(unittest.TestCase):

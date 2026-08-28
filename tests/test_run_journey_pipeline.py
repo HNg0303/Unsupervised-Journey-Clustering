@@ -7,10 +7,10 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT), str(ROOT / "src")]
+sys.path.insert(0, str(ROOT))
 
-from Rule_based.config import PipelineConfig
-from Rule_based.experiment import (
+from src.config import PipelineConfig
+from src.experiment import (
     build_prepared_data_slug,
     build_run_slug,
     split_sessions_chronologically,

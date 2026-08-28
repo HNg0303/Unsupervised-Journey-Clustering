@@ -8,9 +8,9 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT), str(ROOT / "src")]
+sys.path.insert(0, str(ROOT))
 
-from Rule_based.cluster_postprocess import (  # noqa: E402
+from src.cluster_postprocess import (  # noqa: E402
     align_journeys,
     apply_hierarchy,
     nearest_two_centroids,

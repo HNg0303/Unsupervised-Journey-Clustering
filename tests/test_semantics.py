@@ -15,10 +15,10 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT), str(ROOT / "src")]
+sys.path.insert(0, str(ROOT))
 
-from Rule_based import semantics as S
-from Rule_based.taxonomy import GENERAL, UNKNOWN
+from src import semantics as S
+from src.taxonomy import GENERAL, UNKNOWN
 
 
 def label(event_type: str, screen: str, target: str = "") -> S.SemanticLabel:

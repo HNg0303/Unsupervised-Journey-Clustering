@@ -10,12 +10,12 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT), str(ROOT / "src")]
+sys.path.insert(0, str(ROOT))
 
-from Rule_based import tokens as T
-from Rule_based.config import CanonizeConfig, FeatureConfig, TokenConfig
-from Rule_based.features import JourneyVectorizer
-from Rule_based.production import canonicalize_frame
+from src import tokens as T
+from src.config import CanonizeConfig, FeatureConfig, TokenConfig
+from src.features import JourneyVectorizer
+from src.production import canonicalize_frame
 
 
 def canonical_fixture() -> pd.DataFrame:
@@ -169,6 +169,17 @@ class MultiChannelVectorizerTest(unittest.TestCase):
         fitted, _ = vectorizer.fit_transform(self.journeys, self.sequences, self.coarse_only())
         again = vectorizer.transform(self.journeys, self.sequences, self.coarse_only())
         np.testing.assert_allclose(fitted, again, rtol=1e-9, atol=1e-9)
+
+    def test_global_pca_reduces_weighted_matrix_and_round_trips(self) -> None:
+        vectorizer = JourneyVectorizer(
+            FeatureConfig(min_df=1, svd_components=4, global_pca_components=3),
+            channel_weights={"coarse": 0.5},
+        )
+        fitted, info = vectorizer.fit_transform(self.journeys, self.sequences, self.coarse_only())
+        again = vectorizer.transform(self.journeys, self.sequences, self.coarse_only())
+        self.assertEqual(fitted.shape, (self.n, 3))
+        self.assertEqual(info["global_pca_components"], 3)
+        np.testing.assert_allclose(fitted, again, rtol=1e-8, atol=1e-8)
 
     def test_channel_weight_scales_only_its_own_block(self) -> None:
         light = JourneyVectorizer(

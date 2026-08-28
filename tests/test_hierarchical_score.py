@@ -8,10 +8,10 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT), str(ROOT / "src")]
+sys.path.insert(0, str(ROOT))
 
-from Rule_based.hierarchical_score import HierarchicalJourneyScorer  # noqa: E402
-from Rule_based.score import JourneyScorer, ScoreThresholds  # noqa: E402
+from src.hierarchical_score import HierarchicalJourneyScorer  # noqa: E402
+from src.score import JourneyScorer, ScoreThresholds  # noqa: E402
 
 
 class FakeConfig:

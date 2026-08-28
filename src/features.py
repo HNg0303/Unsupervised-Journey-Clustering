@@ -40,7 +40,7 @@ from collections.abc import Mapping
 
 import numpy as np
 import pandas as pd
-from sklearn.decomposition import TruncatedSVD
+from sklearn.decomposition import PCA, TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import StandardScaler, normalize
 
@@ -168,6 +168,7 @@ class JourneyVectorizer:
         }
         self.scaler = StandardScaler()
         self.numeric_columns: list[str] = []
+        self.global_pca: PCA | None = None
 
     # -- backward-compatible accessors ------------------------------------
     @property
@@ -193,6 +194,7 @@ class JourneyVectorizer:
             state["primary"] = encoder
             state.setdefault("channels", {})
             state.setdefault("channel_weights", {})
+        state.setdefault("global_pca", None)
         self.__dict__.update(state)
 
     # -- helpers ----------------------------------------------------------
@@ -213,6 +215,29 @@ class JourneyVectorizer:
                 "channel mismatch: vectorizer was built for "
                 f"{sorted(expected)} but was given {sorted(given)}"
             )
+
+    def _global_projection(self, matrix: np.ndarray, *, fit: bool) -> np.ndarray:
+        """Optionally reduce the already weighted global feature matrix."""
+        components = getattr(self.cfg, "global_pca_components", None)
+        if fit:
+            self.global_pca = None
+            if components is not None:
+                components = int(components)
+                if components < 1:
+                    raise ValueError("global_pca_components must be positive or None")
+                n_components = min(components, matrix.shape[0] - 1, matrix.shape[1])
+                if n_components < 1:
+                    raise ValueError("global PCA requires at least two rows")
+                self.global_pca = PCA(
+                    n_components=n_components,
+                    whiten=bool(getattr(self.cfg, "global_pca_whiten", False)),
+                    svd_solver="randomized",
+                    random_state=0,
+                )
+                matrix = self.global_pca.fit_transform(matrix)
+        elif self.global_pca is not None:
+            matrix = self.global_pca.transform(matrix)
+        return normalize(matrix)
 
     def _blocks(
         self,
@@ -250,7 +275,7 @@ class JourneyVectorizer:
         channels: Mapping[str, list[list[str]]] | None = None,
     ) -> tuple[np.ndarray, dict[str, object]]:
         blocks, channel_info = self._blocks(journeys, sequences, channels, fit=True)
-        matrix = np.hstack(blocks)
+        matrix = self._global_projection(np.hstack(blocks), fit=True)
         info = {
             "n_journeys": int(matrix.shape[0]),
             "tfidf_vocabulary": int(len(self.tfidf.vocabulary_)),
@@ -260,6 +285,13 @@ class JourneyVectorizer:
             "numeric_features": len(self.numeric_columns),
             "final_dimension": int(matrix.shape[1]),
         }
+        if self.global_pca is not None:
+            info["global_pca_components"] = int(self.global_pca.n_components_)
+            info["global_pca_explained_variance"] = round(
+                float(self.global_pca.explained_variance_ratio_.sum()), 4
+            )
+        else:
+            info["global_pca_components"] = None
         return matrix, info
 
     def transform(
@@ -271,7 +303,7 @@ class JourneyVectorizer:
         if self.svd is None:
             raise RuntimeError("call fit_transform before transform")
         blocks, _ = self._blocks(journeys, sequences, channels, fit=False)
-        return np.hstack(blocks)
+        return self._global_projection(np.hstack(blocks), fit=False)
 
 
 class PatternVectorizer:

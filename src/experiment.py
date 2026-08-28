@@ -41,6 +41,7 @@ def build_run_slug(cfg: PipelineConfig, *, test_size: float) -> str:
             f"ch-{channels or 'none'}",
             f"ng{f.ngram_range[0]}-{f.ngram_range[1]}",
             f"svd{f.svd_components}",
+            f"pca{getattr(f, 'global_pca_components', None) or 'none'}",
             f"fdf{f.min_df}",
             f"mf{f.max_features}",
             f"nw{_slug_number(f.numeric_block_weight)}",

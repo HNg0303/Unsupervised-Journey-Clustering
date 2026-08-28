@@ -31,6 +31,7 @@ import re
 import numpy as np
 import pandas as pd
 
+from . import canonize as C
 from .config import BACK_ACTION_MARKERS, PostProcessConfig
 
 
@@ -115,6 +116,40 @@ def _as_bool(series: pd.Series) -> np.ndarray:
     return series.astype(str).str.strip().str.lower().isin({"true", "1", "yes"}).to_numpy()
 
 
+def _screen_contexts(df: pd.DataFrame) -> np.ndarray:
+    """Return the screen associated with each event for structural filtering.
+
+    Canonical frames carry ``screen_context`` for both views and actions.  The
+    fallbacks keep this helper usable with older in-memory frames and focused
+    unit-test fixtures that only provide ``segment_name``/``screen_id``.
+    """
+    if "screen_context" in df.columns:
+        values = df["screen_context"].astype("string")
+    else:
+        values = pd.Series(pd.NA, index=df.index, dtype="string")
+
+    if "screen_id" in df.columns:
+        values = values.fillna(df["screen_id"].astype("string"))
+    if "segment_name" in df.columns and "event_type" in df.columns:
+        views = df["event_type"].astype(str).str.lower().eq("view")
+        values = values.where(~views | values.notna(), df["segment_name"].astype("string"))
+
+    return values.fillna("").astype(str).to_numpy()
+
+
+def _structural_drop_mask(df: pd.DataFrame, cfg: PostProcessConfig) -> np.ndarray:
+    """Mark boot/chrome events that should not shape the modelling sequence."""
+    if not cfg.drop_chrome and not cfg.drop_boot:
+        return np.zeros(len(df), dtype=bool)
+
+    kinds = np.fromiter(
+        (C.classify_screen(value) for value in _screen_contexts(df)),
+        dtype=object,
+        count=len(df),
+    )
+    return ((kinds == "chrome") & cfg.drop_chrome) | ((kinds == "boot") & cfg.drop_boot)
+
+
 # --------------------------------------------------------------------------
 # main entry point
 # --------------------------------------------------------------------------
@@ -140,10 +175,10 @@ def build_journey_sequences(
     ends = np.r_[starts[1:], len(df)]
 
     tok = df[token_col].to_numpy()
-    extras = {c: df[c].to_numpy() for c in extra_token_cols}
+    extras = {c: df[c].to_numpy() for c in extra_token_cols} # Sequence of tokens at level extra (not primary): L2, L3, ...
     is_action = (df["event_type"].to_numpy() == "action")
     is_back = _abandon_mask(df)
-    gap = df["gap_prev_seconds"].fillna(0.0).to_numpy(dtype=float)
+    structural_drop = _structural_drop_mask(df, cfg)
     # read back from CSV `ts` is a string, and only some rows carry fractional
     # seconds - a single inferred format silently NaTs the rest
     ts = pd.to_datetime(df["event_time"], utc=True, format="mixed").to_numpy()
@@ -164,6 +199,8 @@ def build_journey_sequences(
     for lo, hi in zip(starts, ends):
         raw_len = int(hi - lo)
         rows = np.arange(lo, hi)
+        dropped = int(structural_drop[rows].sum())
+        rows = rows[~structural_drop[rows]]
 
         pos, n_dedup, n_loop = clean_positions(tok[rows].tolist(), cfg)
         rows = rows[pos]
@@ -174,8 +211,21 @@ def build_journey_sequences(
 
         n = len(seq)
         act = is_action[rows]
-        gaps = gap[rows][1:] if n > 1 else np.zeros(0)
+        retained_ts = ts[rows]
+        if n > 1:
+            gaps = (
+                pd.Series(pd.to_datetime(retained_ts))
+                .diff()
+                .dt.total_seconds()
+                .dropna()
+                .to_numpy(dtype=float)
+            )
+        else:
+            gaps = np.zeros(0)
         gaps = gaps[np.isfinite(gaps) & (gaps >= 0)]
+        start_ts = retained_ts[0] if n else ts[lo]
+        end_ts = retained_ts[-1] if n else ts[hi - 1]
+        span_seconds = (pd.Timestamp(end_ts) - pd.Timestamp(start_ts)).total_seconds()
 
         records.append(
             {
@@ -185,14 +235,14 @@ def build_journey_sequences(
                 "device_id": device[lo],
                 "customer_id": customer[lo],
                 "os": os_col[lo],
-                "start_ts": ts[lo],
-                "end_ts": ts[hi - 1],
+                "start_ts": start_ts,
+                "end_ts": end_ts,
                 "boundary_reason": reason[lo],
                 # --- size / what cleanup removed -----------------------------
                 "n_events_raw": raw_len,
                 "n_events_final": n,
                 "n_unique_tokens": len(set(seq)),
-                "n_dropped_screens": 0,
+                "n_dropped_screens": dropped,
                 "n_dedup_removed": n_dedup,
                 "n_loop_removed": n_loop,
                 # --- behaviour -----------------------------------------------
@@ -200,9 +250,7 @@ def build_journey_sequences(
                 "back_rate": round(float(is_back[rows].mean()), 4) if n else 0.0,
                 "revisit_ratio": round(1 - len(set(seq)) / n, 4) if n else 0.0,
                 # --- time ----------------------------------------------------
-                "span_seconds": round(
-                    float((ts[hi - 1] - ts[lo]) / np.timedelta64(1, "s")), 3
-                ),
+                "span_seconds": round(float(span_seconds), 3),
                 "median_gap_s": round(float(np.median(gaps)), 3) if gaps.size else 0.0,
                 "p90_gap_s": round(float(np.quantile(gaps, 0.90)), 3) if gaps.size else 0.0,
                 "max_gap_s": round(float(np.max(gaps)), 3) if gaps.size else 0.0,

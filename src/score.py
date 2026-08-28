@@ -19,6 +19,7 @@ reporting separately rather than blending into one opaque number.
 from __future__ import annotations
 
 import pickle
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -77,7 +78,7 @@ class JourneyScorer:
         markov: MarkovBank,
     ) -> "JourneyScorer":
         centroids = {
-            int(label): matrix[labels == label].mean(axis=0)
+            int(label): matrix[labels == label].mean(axis=0) # For each label nadrray (n_samples, ) -> For each row, it is assigned with a cluster_id.
             for label in set(labels.tolist())
             if label != -1
         }
@@ -125,9 +126,9 @@ class JourneyScorer:
             for name in channel_names
         }
         return (
-            journeys.loc[keep].reset_index(drop=True),
-            [s for s, k in zip(sequences, keep) if k],
-            channels,
+            journeys.loc[keep].reset_index(drop=True), # Journeys Dataframe -> Contain info on the journey table, each row is a journeyID.
+            [s for s, k in zip(sequences, keep) if k], # Sequences corresponding to journeys.
+            channels, # Dictionary of key: channel and values: list of sequences corresponding to each channel level.
         )
 
     def score(self, raw_events: pd.DataFrame) -> pd.DataFrame:
@@ -154,7 +155,7 @@ class JourneyScorer:
         if journeys.empty:
             return journeys.copy()
 
-        matrix = self.vectorizer.transform(journeys, sequences, channels)
+        matrix = self.vectorizer.transform(journeys, sequences, channels) # TF-IDF with sequence encoders for each channel and hstack (horizontally Stacking).
         labels, distance = _assign(matrix, self.centroids)
         nearest_labels = labels.copy()
 
@@ -230,6 +231,18 @@ class JourneyScorer:
 
     @staticmethod
     def load(path: Path) -> "JourneyScorer":
+        # Scorers produced before the package was renamed to `src` contain
+        # pickle references such as `Rule_based.score.ScoreThresholds`.
+        # Register the old module names while loading so existing fitted runs
+        # remain readable; newly saved scorers use the canonical `src.*` names.
+        legacy_package = sys.modules.get(__package__)
+        if legacy_package is not None:
+            sys.modules.setdefault("Rule_based", legacy_package)
+        for module_name in ("canonize", "cluster", "config", "features", "postprocess", "segment", "tokens"):
+            module = sys.modules.get(f"{__package__}.{module_name}")
+            if module is not None:
+                sys.modules.setdefault(f"Rule_based.{module_name}", module)
+        sys.modules.setdefault("Rule_based.score", sys.modules[__name__])
         with Path(path).open("rb") as fh:
             return pickle.load(fh)
 
@@ -242,17 +255,17 @@ class JourneyScorer:
 def _assign(matrix: np.ndarray, centroids: dict[int, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
     if not centroids:
         return np.full(matrix.shape[0], -1), np.zeros(matrix.shape[0])
-    keys = np.array(sorted(centroids))
-    stack = np.vstack([centroids[k] for k in keys])
-    labels = np.empty(matrix.shape[0], dtype=keys.dtype)
+    keys = np.array(sorted(centroids)) # Array of assigned cluster_id to each sample (Total number of journeys) with mean value (centroid) -> dict[cluser_id, mean_value(dim = 267)).
+    stack = np.vstack([centroids[k] for k in keys]) # Stack mean value for each centroid of each cluster_id as stack features: (n_clusters, vector_dim).
+    labels = np.empty(matrix.shape[0], dtype=keys.dtype) # Matrix is of (n_sequences, vector_dim) -> matrix of tf-idf features of each journey sequence. 
     minimum = np.empty(matrix.shape[0], dtype=float)
     # A full N x K x D broadcast exceeded 49 GiB on production.  Chunking has
     # identical results and bounds peak memory independently of event volume.
     chunk_size = max(256, min(4096, 20_000_000 // max(len(keys) * matrix.shape[1], 1)))
     for start in range(0, matrix.shape[0], chunk_size):
         stop = min(start + chunk_size, matrix.shape[0])
-        distance = np.linalg.norm(matrix[start:stop, None, :] - stack[None, :, :], axis=2)
-        best = np.argmin(distance, axis=1)
+        distance = np.linalg.norm(matrix[start:stop, None, :] - stack[None, :, :], axis=2) # Calculate L2 distance (Euclidean).
+        best = np.argmin(distance, axis=1) # Calculate the neareast distance to each centroid of cluster_id and assign it. (axis = 1 -> columns).
         labels[start:stop] = keys[best]
         minimum[start:stop] = distance[np.arange(stop - start), best]
-    return labels, minimum
+    return labels, minimum # Return journeys wiht cluster label in labels, Return journeys with its minimum distance.

@@ -31,10 +31,10 @@ AUTH_ACTION_MARKERS: tuple[str, ...] = (
 )
 
 PRODUCTION_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
-    "platform": ("segmentation.segment",),
+    "platform": ("segmentation.segment", "segmentation_segment",),
     "segmentation_name": ("segmentation.name",),
     "client_time": ("timestamp",),
-    "screen_id": ("segmentation.screen_id",),
+    "screen_id": ("segmentation.screen_id", "segmentation_screen_id", ),
     "_id": ("_id.$oid",),
 }
 

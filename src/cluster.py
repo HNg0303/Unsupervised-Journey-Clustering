@@ -22,6 +22,7 @@ HDBSCAN's structure is not an artefact of its hyperparameters.
 from __future__ import annotations
 
 import math
+import logging
 from collections import defaultdict
 
 import numpy as np
@@ -30,6 +31,10 @@ from sklearn.cluster import HDBSCAN, KMeans
 from sklearn.metrics import calinski_harabasz_score, davies_bouldin_score, silhouette_score
 
 from .config import ClusterConfig
+from .timing import timed_stage
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def quality(matrix: np.ndarray, labels: np.ndarray) -> dict[str, float]:
@@ -59,12 +64,18 @@ def fit_hdbscan(matrix: np.ndarray, cfg: ClusterConfig) -> tuple[np.ndarray, HDB
         min_samples=cfg.min_samples,
         metric="euclidean",
         cluster_selection_method=cfg.cluster_selection_method,
-        store_centers="medoid",
+        # The scorer and catalog compute their own representatives. Asking
+        # HDBSCAN to calculate medoids adds another expensive distance pass.
+        store_centers=None,
+        algorithm=cfg.algorithm,
+        copy=False,
     )
-    labels = model.fit_predict(matrix)
+    with timed_stage(LOGGER, "hdbscan.fit_predict", items=len(matrix)) as timing:
+        labels = model.fit_predict(matrix)
     stats = _quality(matrix, labels)
     stats["n_clusters"] = int(len({l for l in labels if l != -1}))
     stats["noise_share"] = round(float((labels == -1).mean()), 4)
+    stats["fit_elapsed_seconds"] = float(timing["elapsed_seconds"])
     return labels, model, stats
 
 
@@ -74,7 +85,8 @@ def sweep_kmeans(matrix: np.ndarray, cfg: ClusterConfig) -> pd.DataFrame:
         if k >= matrix.shape[0]:
             continue
         km = KMeans(n_clusters=k, n_init=10, random_state=cfg.random_state)
-        labels = km.fit_predict(matrix)
+        with timed_stage(LOGGER, f"kmeans.k={k}", items=len(matrix)):
+            labels = km.fit_predict(matrix)
         stats = _quality(matrix, labels)
         rows.append({"k": k, "inertia": round(float(km.inertia_), 3), **stats})
     return pd.DataFrame(rows)

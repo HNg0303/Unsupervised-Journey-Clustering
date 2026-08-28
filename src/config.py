@@ -200,6 +200,12 @@ class FeatureConfig:
     channel_weights: dict[str, float] = field(
         default_factory=lambda: {"coarse": 0.45, "intent": 0.30, "operation": 0.20}
     )
+    # Optional global projection applied after the weighted sequence and
+    # numeric blocks are concatenated.  ``None`` preserves the historical
+    # per-channel representation.  A reduced projection is useful for large
+    # HDBSCAN experiments; a full-rank PCA would only rotate Euclidean space.
+    global_pca_components: int | None = None
+    global_pca_whiten: bool = False
 
     def __getattr__(self, name: str) -> Any:
         """Read a channel-less config out of a pickle written before channels.
@@ -210,6 +216,10 @@ class FeatureConfig:
         """
         if name == "channel_weights":
             return {}
+        if name == "global_pca_components":
+            return None
+        if name == "global_pca_whiten":
+            return False
         raise AttributeError(name)
 
 
@@ -222,6 +232,7 @@ class ClusterConfig:
     min_samples: int = 5 # Number of journeys in a cluster that are considered core points. Smaller clusters are considered noise.
     cluster_selection_method: str = "eom"  # eom | leaf
     kmeans_k_grid: tuple[int, ...] = (6, 8, 10, 12, 15, 20, 25, 30)
+    algorithm: str = "auto"  # auto | ball_tree | kd_tree | brute |
     random_state: int = 42
     # Markov companion model used for likelihood-based anomaly scoring.
     fit_markov: bool = True

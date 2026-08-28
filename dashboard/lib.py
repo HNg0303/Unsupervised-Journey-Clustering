@@ -6,22 +6,57 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parents[1]
 
 # The dashboard reuses the *production* segmentation code rather than restating its rules,
-# so the EDA walkthrough can never drift from what the pipeline actually does.
-if str(ROOT / "src") not in sys.path:
-    sys.path.insert(0, str(ROOT / "src"))
+# so the EDA walkthrough can never drift from what the pipeline actually does. Keep the
+# repository root on the path so package imports such as `src.segment` resolve correctly.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 CACHE_DIR = ROOT / "output" / "dashboard_cache"
-RUN_DIR = (
-    ROOT
-    / "output"
-    / "EXACT_ch-c45i30o20_ng1-3_svd64_fdf3_mf20000_nw0p35_mcs100_ms5_sel-eom_gap90_jmin4_tdf3_ent0_chr1_boot0"
-)
+# The dashboard deliberately keeps the three data products separate:
+#
+# * TRAIN_RUN_DIR contains the fitted artefacts and the 500k train/holdout metadata;
+# * RUN_DIR contains the full-data scored inference bundle and its authoritative names;
+# * SUMMARY_DIR contains compact aggregates generated from the full-data inference CSVs.
+#
+# Keeping these paths explicit is important: a train catalog and a full-data inference
+# summary answer different questions and must not be mixed into one KPI.
+RUN_DIR = ROOT / "output" / "scores" / "pca48_ngrams12_500"
+TRAIN_RUN_DIR = ROOT / "output" / "partitioned_runs" / "pca48_svd48_ngrams12_500k" / "latest"
+MODEL_ROOT = RUN_DIR
+SUMMARY_DIR = RUN_DIR / "html_dashboard_summary"
+POST_ANALYSIS_DIR = RUN_DIR / "post_analysis"
+EDA_SUMMARY_FILE = POST_ANALYSIS_DIR / "eda" / "eda_summary.json"
 TEST_DIR = ROOT / "output" / "test"
+NAMING_FILE = RUN_DIR / "Cluster_naming.csv"
+NAMING_AUDIT_FILE = RUN_DIR / "cluster_naming_audit.csv"
+CUSTOMER_ANALYSIS_DIR = RUN_DIR / "shareholder_analysis"
+
+
+def platform_root(platform: str) -> Path:
+    return MODEL_ROOT / platform / "model_version=latest" / f"platform={platform}"
+
+
+def model_dir(platform: str) -> Path:
+    return platform_root(platform) / "model_output"
+
+
+def train_model_dir(platform: str) -> Path:
+    """Return the canonical fitted-model directory for the selected train run."""
+    return TRAIN_RUN_DIR / platform
+
+
+def inspection_dir(platform: str) -> Path:
+    return platform_root(platform) / "inspection"
+
+
+def inference_dir(platform: str) -> Path:
+    return platform_root(platform)
 
 PLATFORMS = ["android", "ios"]
 PLATFORM_LABEL = {"android": "Android", "ios": "iOS"}
@@ -199,7 +234,7 @@ def pretty_family(value) -> str:
 
 # Each friction signal, described three ways: a plain title, what it means for the
 # customer, and the statistical rule that raised it. `metric` names the fitted threshold
-# in thresholds.json (see src/Rule_based/score.py, where the flags are set).
+# in thresholds.json (see src/score.py, where the flags are set).
 FRICTION_META = {
     "excessive_back": {
         "title_en": "Kept pressing back",
@@ -334,26 +369,188 @@ def missing_cache_notice(what: str) -> None:
 
 @st.cache_data(show_spinner=False)
 def load_eda() -> dict:
-    path = CACHE_DIR / "eda.json"
+    # Raw EDA is a deliberate, separate preparation job.  Never fall back to
+    # prepared-journey parquet footer counts or an old cache: those are not raw
+    # event statistics and caused the dashboard conflict this contract fixes.
+    if EDA_SUMMARY_FILE.exists():
+        payload = json.loads(EDA_SUMMARY_FILE.read_text(encoding="utf-8"))
+        # A capped EDA is useful for validating the parser, but must never be
+        # presented as the production-wide raw-data profile.
+        if payload.get("schema_version") == "raw-eda-v1" and payload.get("status") == "ready" and payload.get("mode") == "full":
+            return payload
+    return {
+        "schema_version": "raw-eda-v1",
+        "status": "not_prepared",
+        "source": "raw event EDA has not been prepared",
+        "per_file": {},
+        "platform_vocab_overlap": {},
+    }
+
+
+@st.cache_data(show_spinner=False)
+def load_customer_analysis_csv(name: str) -> pd.DataFrame:
+    """Load one customer-based artefact generated beside the scored bundle."""
+    path = CUSTOMER_ANALYSIS_DIR / name
     if not path.exists():
-        missing_cache_notice(t("raw-data EDA", "EDA dữ liệu thô"))
+        return pd.DataFrame()
+    frame = pd.read_csv(path, encoding="utf-8-sig", low_memory=False)
+    # Older shareholder scripts called the stable key object_id. Keep old cached
+    # outputs readable while the canonical outputs use the requested customer_id.
+    if "customer_id" not in frame.columns and "object_id" in frame.columns:
+        frame["customer_id"] = frame["object_id"]
+    return frame
+
+
+@st.cache_data(show_spinner=False)
+def load_summary_csv(name: str) -> pd.DataFrame:
+    """Load one compact aggregate from the full-data inference summary.
+
+    The summary directory is the dashboard's primary analytics source.  It is generated
+    out-of-core from the multi-GB named inference CSVs, so opening the app never requires
+    materialising all scored parquet partitions in memory.
+    """
+    path = SUMMARY_DIR / name
+    if not path.exists():
+        return pd.DataFrame()
+    frame = pd.read_csv(path, encoding="utf-8-sig", low_memory=False)
+    if "date" in frame.columns:
+        frame["date"] = pd.to_datetime(frame["date"], errors="coerce").dt.date
+    return frame
+
+
+@st.cache_data(show_spinner=False)
+def load_summary_manifest() -> dict:
+    path = SUMMARY_DIR / "manifest.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@st.cache_data(show_spinner=False)
+def load_inference_profile(platform: str) -> dict:
+    """Read the scorer's small per-platform inspection summary."""
+    path = inspection_dir(platform) / f"{platform}_summary.json"
+    if not path.exists():
+        return {}
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 @st.cache_data(show_spinner=False)
 def load_train_run() -> dict:
-    path = CACHE_DIR / "train_run.json"
-    if not path.exists():
-        missing_cache_notice(t("training run", "training run"))
-    return json.loads(path.read_text(encoding="utf-8"))
+    """Return the training metadata from the selected partitioned model bundle."""
+    cached = CACHE_DIR / "train_run.json"
+    if cached.exists() and not any((model_dir(p) / f"{p}_run_config.json").exists() for p in PLATFORMS):
+        return json.loads(cached.read_text(encoding="utf-8"))
+
+    out = {"run_slug": TRAIN_RUN_DIR.parent.name, "source": str(TRAIN_RUN_DIR), "platforms": {}}
+    for platform in PLATFORMS:
+        # The partitioned training output is canonical.  The scored bundle contains a
+        # convenient copy of these files, but it is not the source of truth for training.
+        cfg_path = train_model_dir(platform) / f"{platform}_run_config.json"
+        if not cfg_path.exists():
+            cfg_path = model_dir(platform) / f"{platform}_run_config.json"
+        summary_path = inspection_dir(platform) / f"{platform}_summary.json"
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
+        summary = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.exists() else {}
+        manifest = cfg.get("training_manifest", {})
+        hdb = cfg.get("hdbscan", {})
+        holdout = train_model_dir(platform) / f"{platform}_scored_holdout.csv"
+        if not holdout.exists():
+            holdout = model_dir(platform) / f"{platform}_scored_holdout.csv"
+        hold = {
+            "n_journeys": int(manifest.get("holdout_journeys", 0) or 0),
+            "n_sessions": 0,
+            "assignment_type": {},
+        }
+        if holdout.exists():
+            # Keep this summary bounded: the detailed rows remain available on the inference
+            # page, while training only needs the holdout headline metrics.
+            sample = pd.read_csv(
+                holdout,
+                usecols=lambda c: c in {"session_id", "cluster", "assignment_type", "distance_to_centroid"},
+                low_memory=False,
+            )
+            hold["n_journeys"] = len(sample)
+            hold["n_sessions"] = int(sample["session_id"].nunique()) if "session_id" in sample else 0
+            if "assignment_type" in sample:
+                assignment = sample["assignment_type"].fillna("").astype(str)
+            elif "cluster" in sample:
+                # The current scorer's holdout CSV predates the named inference export and
+                # has no assignment_type.  Cluster -1 is the exact unresolved convention.
+                cluster = pd.to_numeric(sample["cluster"], errors="coerce")
+                assignment = pd.Series(np.where(cluster.eq(-1), "unassigned_novel", "C_primary"), index=sample.index)
+            else:
+                assignment = pd.Series(dtype=str)
+            if not assignment.empty:
+                hold["assignment_type"] = {str(k): int(v) for k, v in assignment.value_counts(dropna=False).items()}
+            if "distance_to_centroid" in sample:
+                distance = pd.to_numeric(sample["distance_to_centroid"], errors="coerce").dropna()
+                hold["distance_q"] = {
+                    str(k): round(float(v), 3)
+                    for k, v in distance.quantile([0.0, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 1.0]).items()
+                }
+        out["platforms"][platform] = {
+            "run_config": cfg,
+            "holdout": hold,
+            "summary": summary,
+            # The bundle does not duplicate a full training summary; leave this optional
+            # section empty so pages do not present partial shape statistics as if they were
+            # complete.
+            "journeys": {},
+        }
+    return out
 
 
 @st.cache_data(show_spinner=False)
 def load_inference(platform: str) -> pd.DataFrame:
-    path = CACHE_DIR / f"inference_{platform}.parquet"
-    if not path.exists():
-        missing_cache_notice(f"inference ({platform})")
-    df = pd.read_parquet(path)
+    """Load only bounded inference examples for audit/detail views.
+
+    Aggregate pages must use :func:`load_summary_csv`.  This function intentionally does
+    not scan the 24 GB partition lake; it returns the bounded examples generated by the
+    summary extractor and keeps a legacy cache fallback for older local checkouts.
+    """
+    example_path = SUMMARY_DIR / "journey_examples.csv"
+    if example_path.exists():
+        df = pd.read_csv(example_path, encoding="utf-8-sig", low_memory=False)
+        df = df[df.get("platform", platform).eq(platform)].copy() if "platform" in df.columns else df
+    else:
+        legacy = CACHE_DIR / f"inference_{platform}.parquet"
+        if not legacy.exists():
+            return pd.DataFrame()
+        try:
+            df = pd.read_parquet(legacy)
+        except (ImportError, RuntimeError, ValueError):
+            return pd.DataFrame()
+
+    # Examples already carry their names.  The fallback normalisation below keeps older
+    # cached examples and current bounded examples on the same schema.
+    if "cluster" in df.columns:
+        df["cluster"] = pd.to_numeric(df["cluster"], errors="coerce")
+
+    # Keep one stable schema for both the current partitions and older named exports.
+    aliases = {
+        "next_action": "effective_next_action",
+        "next_action_share": "effective_next_action_share",
+    }
+    for source, target in aliases.items():
+        if target not in df.columns and source in df.columns:
+            df[target] = df[source]
+    if "assignment_type" not in df.columns:
+        cluster_series = df["cluster"] if "cluster" in df.columns else pd.Series(-1, index=df.index)
+        df["assignment_type"] = np.where(cluster_series.eq(-1), "unassigned_novel", "C_primary")
+    if "behavioral_friction_flags" not in df.columns:
+        df["behavioral_friction_flags"] = df.get("friction_flags", "")
+    for col, default in {
+        "cluster_name": "unclassified.dynamic",
+        "cluster_name_vi": "Chưa phân loại",
+        "business_family": "unclassified",
+        "business_family_vi": "Chưa phân loại",
+        "naming_confidence": "not_applicable",
+    }.items():
+        if col not in df.columns:
+            df[col] = default
+        else:
+            df[col] = df[col].fillna(default)
     df["start_ts"] = pd.to_datetime(df["start_ts"], errors="coerce", utc=True)
     return df
 
@@ -370,6 +567,10 @@ def load_thresholds() -> dict:
 @st.cache_data(show_spinner=False)
 def load_showcase() -> dict:
     """One real session carried end to end, used by the overview page."""
+    if (MODEL_ROOT / "Cluster_naming.csv").exists():
+        # The scored bundle intentionally contains journey outputs, not a second raw-event
+        # extract. Do not show the old cache's unrelated showcase beside the new model run.
+        return {}
     path = CACHE_DIR / "showcase.json"
     if not path.exists():
         return {}
@@ -378,15 +579,55 @@ def load_showcase() -> dict:
 
 @st.cache_data(show_spinner=False)
 def load_run_csv(name: str) -> pd.DataFrame:
-    path = RUN_DIR / name
-    if not path.exists():
+    """Resolve a run artefact from the partitioned bundle.
+
+    Callers still use the old logical names (``android_cluster_ngrams.csv`` etc.); this
+    resolver keeps those page APIs stable while pointing them at ``model_output``.
+    """
+    candidates = [RUN_DIR / name]
+    for platform in PLATFORMS:
+        if name.startswith(f"{platform}_"):
+            candidates.extend([train_model_dir(platform) / name, model_dir(platform) / name, inspection_dir(platform) / name])
+    if name == "cluster_name_mapping.csv":
+        candidates.insert(0, NAMING_FILE)
+    path = next((p for p in candidates if p.exists()), None)
+    if path is None:
         return pd.DataFrame()
     return pd.read_csv(path, encoding="utf-8-sig", low_memory=False)
 
 
 @st.cache_data(show_spinner=False)
 def load_cluster_names() -> pd.DataFrame:
-    df = load_run_csv("cluster_name_mapping.csv")
+    if not NAMING_FILE.exists():
+        missing_cache_notice(t("cluster name mapping", "bảng tên cluster"))
+    df = pd.read_csv(NAMING_FILE, encoding="utf-8-sig", low_memory=False)
+    # Cluster_naming.csv is intentionally business-facing and stores the readable label in
+    # Vietnamese.  Preserve that label while exposing a stable English/code label to the
+    # existing bilingual page code.
+    raw_name = df.get("cluster_name_vi", df["cluster_name"]).fillna("Unclassified / mixed journeys")
+    df["cluster_name_vi"] = raw_name
+    df["cluster_name"] = (
+        df.get("canonical_level_2_code", raw_name)
+        .fillna(raw_name)
+        .astype(str)
+        .str.replace(".", " · ", regex=False)
+    )
+    raw_family = df["business_family"].fillna("Chưa phân loại")
+    df["business_family_vi"] = raw_family
+    if "business_family_code" in df.columns:
+        family_code = df["business_family_code"]
+    else:
+        # The authoritative naming file currently stores the canonical level-2 code
+        # (for example ``contract.document``) but not a separate family-code column.
+        # Derive the stable English family key from that code so the cluster page does
+        # not accidentally display Vietnamese labels in its EN mode.
+        canonical = df.get("canonical_level_2_code", pd.Series(index=df.index, dtype="object"))
+        family_code = canonical.astype("string").str.split(".").str[0]
+        family_code = family_code.where(family_code.notna() & family_code.ne(""), raw_family)
+    df["business_family"] = family_code.fillna("unclassified")
+    if "cluster_id" in df.columns:
+        df["cluster_id"] = pd.to_numeric(df["cluster_id"], errors="coerce")
+        df["cluster"] = df["cluster_id"]
     if df.empty:
         missing_cache_notice(t("cluster name mapping", "bảng tên cluster"))
     return df
@@ -394,7 +635,7 @@ def load_cluster_names() -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def load_shareholder_catalog() -> dict:
-    path = RUN_DIR / "shareholder_cluster_catalog.json"
+    path = inspection_dir("android") / "shareholder_cluster_catalog.json"
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
@@ -402,7 +643,7 @@ def load_shareholder_catalog() -> dict:
 
 @st.cache_data(show_spinner=False)
 def load_shareholder_catalog_vi() -> dict:
-    path = RUN_DIR / "shareholder_cluster_catalog_vi.json"
+    path = inspection_dir("android") / "shareholder_cluster_catalog_vi.json"
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))

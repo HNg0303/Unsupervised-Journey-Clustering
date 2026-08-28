@@ -8,11 +8,12 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from lib import PALETTE, cards, fmt_int, fmt_pct, kpi_row, load_eda, load_train_run, t
+from dashboard.lib import EDA_SUMMARY_FILE, PALETTE, cards, fmt_int, fmt_pct, kpi_row, load_eda, load_train_run, t
 
-# `lib` puts src/ on the path, so it must be imported first for these to resolve.
-from Rule_based.config import SegmentConfig  # noqa: E402
-from Rule_based.segment import assign_journeys  # noqa: E402
+# Import through the `src` package because production modules use package-relative
+# imports (for example, `src.segment` imports `.config`).
+from src.config import SegmentConfig  # noqa: E402
+from src.segment import assign_journeys  # noqa: E402
 
 # Colour per boundary rule, reused by the timeline and the cut-reason chart so the two
 # read as one picture.
@@ -46,7 +47,7 @@ def _selected_files(eda: dict, platforms: list[str], weeks: list[str]) -> dict:
 def _segment_demo(demo_rows: list[dict], platform: str, cfg: SegmentConfig) -> pd.DataFrame:
     """Run the *production* segmenter over one raw demo session.
 
-    The frame is shaped like the pipeline's tokenised stream (`src/Rule_based/segment.py`
+    The frame is shaped like the pipeline's tokenised stream (`src/segment.py`
     is imported directly), so what the chart shows is what the pipeline does — the rules
     are never restated here.
     """
@@ -63,56 +64,104 @@ def render() -> None:
     st.title(t("1 · Raw production data", "1 · Dữ liệu production thô"))
     st.caption(
         t(
-            "Source: `data/train_data/raw_data_production/data_raw_sample` — Android and iOS "
-            "clickstream extracts T3, T4, T5. Everything below is computed on the raw CSVs "
-            "before any tokenization or cleaning.",
-            "Nguồn: `data/train_data/raw_data_production/data_raw_sample` — clickstream Android và "
-            "iOS, các extract T3, T4, T5. Toàn bộ số liệu bên dưới tính trên CSV thô, trước khi "
-            "tokenize hay làm sạch.",
+            "Source: the explicitly prepared raw-event EDA artifact. It profiles the original CSVs; "
+            "modelled journey analytics are on the Training and Production results pages.",
+            "Nguồn: artifact EDA raw đã được prepare riêng. Trang profile CSV gốc; phân tích journey "
+            "sau model nằm ở trang Train và Kết quả trên production.",
         )
     )
 
     eda = load_eda()
 
+    if eda.get("status") != "ready" or not eda.get("per_file"):
+        st.info(
+            t(
+                "Full raw-event EDA has not been prepared for this bundle. This page intentionally does not show "
+                "prepared-journey footer counts as raw-event statistics. Run the EDA preparation explicitly when you "
+                "want the full scan:",
+                "EDA đầy đủ trên raw event chưa được prepare cho bundle này. Trang không hiển thị số footer của "
+                "prepared journey như thể đó là thống kê raw event. Khi cần scan đầy đủ, hãy chạy riêng:",
+            )
+        )
+        st.code(
+            "python scripts/prepare_data_for_post_analysis/eda_raw.py "
+            f"--output-dir {EDA_SUMMARY_FILE.parent}",
+            language="bash",
+        )
+        st.caption(
+            t(
+                "Use --max-rows 1000 first for a smoke test; omit it for the full raw-data EDA. "
+                "Training outputs and full-data inference aggregates are available on the other pages.",
+                "Có thể dùng --max-rows 1000 để smoke test trước; bỏ option này khi chạy EDA raw đầy đủ. "
+                "Kết quả train và aggregate inference full data nằm ở các trang còn lại.",
+            )
+        )
+        train = load_train_run()
+        config_rows = []
+        for platform in ["android", "ios"]:
+            config = train.get("platforms", {}).get(platform, {}).get("run_config", {}).get("config", {})
+            segment = config.get("segment", {})
+            config_rows.append(
+                {
+                    t("platform", "platform"): platform,
+                    t("idle gap (s)", "idle gap (giây)"): segment.get("idle_gap_seconds", "—"),
+                    t("min journey length", "độ dài journey tối thiểu"): segment.get("min_journey_length", "—"),
+                    t("max journey length", "độ dài journey tối đa"): segment.get("max_journey_length", "—"),
+                    t("raw EDA status", "trạng thái EDA raw"): t("not prepared", "chưa prepare"),
+                }
+            )
+        st.dataframe(pd.DataFrame(config_rows), hide_index=True, width="stretch")
+        return
+
     c1, c2 = st.columns([2, 3])
     platforms = c1.multiselect("Platform", ["android", "ios"], default=["android", "ios"])
-    weeks = c2.multiselect("Extract", ["T3", "T4", "T5"], default=["T3", "T4", "T5"])
+    available_weeks = sorted({str(v["week"]) for v in eda["per_file"].values()})
+    weeks = c2.multiselect("Extract", available_weeks, default=available_weeks)
     files = _selected_files(eda, platforms, weeks)
     if not files:
         st.warning(t("Select at least one platform and one extract.", "Hãy chọn ít nhất một platform và một extract."))
         return
 
     rows = sum(f["rows"] for f in files.values())
-    sessions = sum(f["n_sessions"] for f in files.values())
-    devices = max(f["n_devices"] for f in files.values())
-    customers = max(f["n_customers"] for f in files.values())
+    sessions = sum((f["n_sessions"] or 0) for f in files.values())
+    devices = max((f["n_devices"] or 0) for f in files.values())
+    customers = max((f["n_customers"] or 0) for f in files.values())
     actions = sum(f["key_counts"].get("action", 0) for f in files.values())
+    # The prepared-cache builder may be able to read parquet footer metadata, or may
+    # fall back to the manifest when the local runtime has no parquet engine.  Both
+    # states are inventory-only and must not fall through to the legacy raw-event demo.
+    parquet_inventory = all(
+        f.get("cardinality_available") is False
+        or "footer metadata only" in str(f.get("source", ""))
+        or "manifest only" in str(f.get("source", ""))
+        for f in files.values()
+    )
 
     kpi_row(
         [
             (
-                t("Raw events", "Event thô"),
+                t("Prepared journeys", "Journey đã chuẩn bị") if parquet_inventory else t("Raw events", "Event thô"),
                 fmt_int(rows),
-                t("Rows after dropping unparsable timestamps", "Số dòng sau khi bỏ các timestamp không parse được"),
+                t("Rows counted from parquet footers; data pages were not scanned", "Số dòng lấy từ parquet footer; không scan data page") if parquet_inventory else t("Rows after dropping unparsable timestamps", "Số dòng sau khi bỏ các timestamp không parse được"),
             ),
             (
                 t("Sessions", "Session"),
-                fmt_int(sessions),
-                t("Distinct session_id across selected extracts", "Số session_id khác nhau trong các extract đã chọn"),
+                fmt_int(sessions) if not parquet_inventory else "—",
+                t("Unavailable without scanning all parquet rows", "Không tính khi chưa scan toàn bộ parquet") if parquet_inventory else t("Distinct session_id across selected extracts", "Số session_id khác nhau trong các extract đã chọn"),
             ),
             (
                 t("Devices (max/extract)", "Device (max/extract)"),
-                fmt_int(devices),
-                t("device_id — the sample is ~1k devices per extract", "device_id — mẫu lấy ~1k device mỗi extract"),
+                fmt_int(devices) if not parquet_inventory else "—",
+                t("Unavailable without scanning all parquet rows", "Không tính khi chưa scan toàn bộ parquet") if parquet_inventory else t("device_id — the sample is ~1k devices per extract", "device_id — mẫu lấy ~1k device mỗi extract"),
             ),
             (
                 t("Customers (max/extract)", "Customer (max/extract)"),
-                fmt_int(customers),
-                t("customer_id — sampled at 1k users per extract", "customer_id — lấy mẫu 1k user mỗi extract"),
+                fmt_int(customers) if not parquet_inventory else "—",
+                t("Use the customer-based page for customer_id statistics", "Dùng trang customer-based cho thống kê customer_id") if parquet_inventory else t("customer_id — sampled at 1k users per extract", "customer_id — lấy mẫu 1k user mỗi extract"),
             ),
             (
                 t("Action events", "Event action"),
-                fmt_pct(actions / rows),
+                fmt_pct(actions / rows) if rows and not parquet_inventory else "—",
                 t("Share of `key = action`; the rest are screen views", "Tỷ lệ `key = action`; phần còn lại là screen view"),
             ),
         ]
@@ -171,6 +220,36 @@ def render() -> None:
             "— nên được xem như một mẫu production gộp, không phải các tuần liên tiếp.",
         )
     )
+
+    if parquet_inventory:
+        # The current run's raw source is a prepared journey parquet lake.  Footer metadata
+        # gives a truthful inventory, but it cannot provide a raw-session demo, distinct
+        # customer counts, or event-level taxonomy charts without scanning the lake.  Stop
+        # here rather than showing empty/legacy charts with numbers from another run.
+        train = load_train_run()
+        st.info(
+            t(
+                "This source is a prepared journey lake, not the raw event CSV. The table above is footer metadata only; "
+                "session/customer cardinalities and event-level distributions are intentionally not inferred from it. "
+                "Use Training outputs for the fitted-run contract and Production results for full-data aggregates.",
+                "Nguồn hiện tại là prepared journey lake, không phải CSV event thô. Bảng trên chỉ đọc metadata từ parquet footer; "
+                "không suy diễn session/customer cardinality hay phân phối event khi chưa scan data page. "
+                "Xem Các file khi train để biết contract của run và Kết quả trên production để xem aggregate full data.",
+            )
+        )
+        rows = []
+        for platform in platforms:
+            cfg = train.get("platforms", {}).get(platform, {}).get("run_config", {})
+            rows.append({
+                t("platform", "platform"): platform,
+                t("prepared journeys in source", "journey đã chuẩn bị trong source"): files[platform].get("rows", 0),
+                t("idle gap (s)", "idle gap (giây)"): cfg.get("config", {}).get("segment", {}).get("idle_gap_seconds", "—"),
+                t("min journey length", "độ dài journey tối thiểu"): cfg.get("config", {}).get("segment", {}).get("min_journey_length", "—"),
+                t("max journey length", "độ dài journey tối đa"): cfg.get("config", {}).get("segment", {}).get("max_journey_length", "—"),
+                t("drop boot", "bỏ boot"): cfg.get("config", {}).get("post", {}).get("drop_boot", "—"),
+            })
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        return
 
     # ------------------------------------------------------------------ raw stream
     st.subheader(t("A raw event stream, untouched", "Một luồng event thô, chưa xử lý gì"))
@@ -520,11 +599,11 @@ nằm chung một dòng.
         t(
             "A **journey** is one goal-directed stretch of behaviour. Since the schema never "
             "marks where a goal starts or ends, the pipeline places a boundary whenever the "
-            "stream shows one of five interpretable signals (`src/Rule_based/segment.py`, "
+            "stream shows one of five interpretable signals (`src/segment.py`, "
             "stage L0 — no fitting, fully auditable). A journey never spans two sessions.",
             "**Journey** là một đoạn hành vi hướng tới một mục tiêu. Vì schema không hề đánh dấu "
             "mục tiêu bắt đầu hay kết thúc ở đâu, pipeline đặt ranh giới mỗi khi luồng event xuất "
-            "hiện một trong năm tín hiệu có thể giải thích được (`src/Rule_based/segment.py`, "
+            "hiện một trong năm tín hiệu có thể giải thích được (`src/segment.py`, "
             "tầng L0 — không cần fit, kiểm tra được từng bước). Một journey không bao giờ nằm vắt "
             "qua hai session.",
         )

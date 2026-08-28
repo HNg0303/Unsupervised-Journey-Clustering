@@ -7,15 +7,18 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from lib import (
+from dashboard.lib import (
     PALETTE,
     RUN_DIR,
+    TRAIN_RUN_DIR,
     fmt_int,
     fmt_pct,
     hist_to_df,
     kpi_row,
     load_run_csv,
     load_train_run,
+    model_dir,
+    inspection_dir,
     t,
 )
 
@@ -85,6 +88,13 @@ def artifacts() -> dict:
                 "Các n-gram đặc trưng nhất của từng cluster kèm lift và cluster mass — bằng chứng để đặt tên.",
             ),
         ),
+        "{p}_cluster_business_mapping.csv": (
+            t("Business cluster mapping", "Mapping cluster nghiệp vụ"),
+            t(
+                "Cluster-to-function mapping with evidence share, dominant intents, and medoid support.",
+                "Mapping cluster tới function kèm tỷ lệ bằng chứng, intent trội và medoid support.",
+            ),
+        ),
         "{p}_cluster_name_mapping.csv": (
             t("Cluster names", "Tên cluster"),
             t(
@@ -109,6 +119,10 @@ def artifacts() -> dict:
         "{p}_RUN_REPORT.md": (
             t("Run report", "Báo cáo run"),
             t("Human-readable narrative report of the whole run.", "Báo cáo dạng văn bản mô tả toàn bộ run."),
+        ),
+        "inference_manifest.json": (
+            t("Inference manifest", "Manifest inference"),
+            t("Partition-level counts and source/output lineage for the scored production data.", "Số liệu từng partition và lineage nguồn/đầu ra của dữ liệu production đã score."),
         ),
     }
 
@@ -166,7 +180,12 @@ def _kv_report(df: pd.DataFrame) -> dict:
 
 def render() -> None:
     st.title(t("2 · What the training run produced", "2 · Training run đã tạo ra những gì"))
-    st.caption(t("Run directory: ", "Thư mục run: ") + f"`output/journey_runs/{RUN_DIR.name}`")
+    st.caption(
+        t("Canonical fitted run: ", "Run fit canonical: ")
+        + f"`{TRAIN_RUN_DIR.relative_to(TRAIN_RUN_DIR.parents[2])}`"
+        + t(" · names/inference bundle: ", " · bundle tên/inference: ")
+        + f"`{RUN_DIR.relative_to(RUN_DIR.parents[2])}`"
+    )
 
     run = load_train_run()
     platform = st.radio(
@@ -245,13 +264,17 @@ def render() -> None:
     inv = []
     for pattern, (title, desc) in artifacts().items():
         name = pattern.format(p=platform)
-        path = RUN_DIR / name
+        path = model_dir(platform) / name
+        if not path.exists():
+            path = inspection_dir(platform) / name
         if not path.exists():
             continue
         inv.append({A: title, F: name, S: round(path.stat().st_size / 1e6, 2), W: desc})
     for pattern, desc in report_csvs().items():
         name = pattern.format(p=platform)
-        path = RUN_DIR / name
+        path = model_dir(platform) / name
+        if not path.exists():
+            path = inspection_dir(platform) / name
         if not path.exists():
             continue
         inv.append(
@@ -262,6 +285,16 @@ def render() -> None:
                 W: desc,
             }
         )
+    naming_path = RUN_DIR / "Cluster_naming.csv"
+    if naming_path.exists():
+        inv.append(
+            {
+                A: t("Authoritative cluster naming", "Tên cluster authoritative"),
+                F: "Cluster_naming.csv",
+                S: round(naming_path.stat().st_size / 1e6, 2),
+                W: t("Shared Android/iOS business names and naming confidence.", "Tên nghiệp vụ dùng chung Android/iOS và độ tin cậy khi đặt tên."),
+            }
+        )
     st.dataframe(pd.DataFrame(inv), hide_index=True, width="stretch", height=430)
 
     with st.expander(t("Open a report CSV", "Mở một report CSV")):
@@ -270,7 +303,7 @@ def render() -> None:
             "split_report.csv",
             f"{platform}_cluster_name_mapping.csv",
         ]
-        options = [o for o in options if (RUN_DIR / o).exists()]
+        options = [o for o in options if (model_dir(platform) / o).exists() or (inspection_dir(platform) / o).exists()]
         pick = st.selectbox(F, options)
         st.dataframe(load_run_csv(pick).head(300), hide_index=True, width="stretch")
 

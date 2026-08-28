@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from lib import (
+from dashboard.lib import (
     PALETTE,
     fmt_int,
     fmt_pct,
@@ -18,6 +20,8 @@ from lib import (
     load_shareholder_catalog,
     load_shareholder_catalog_vi,
     load_train_run,
+    model_dir,
+    train_model_dir,
     pretty_family,
     t,
 )
@@ -25,17 +29,55 @@ from lib import (
 
 @st.cache_data(show_spinner=False)
 def build_cluster_table(platform: str) -> pd.DataFrame:
-    catalog = load_run_csv(f"{platform}_report_cluster_catalog.csv")
+    # The fitted run already publishes a complete per-cluster catalog.  It contains the
+    # shape metrics this page needs, so do not rescan the ~1 GB *_journeys.csv training
+    # table merely to reconstruct the catalog at app startup.
+    catalog_path = train_model_dir(platform) / f"{platform}_cluster_catalog.json"
+    if catalog_path.exists():
+        catalog = pd.DataFrame(json.loads(catalog_path.read_text(encoding="utf-8")))
+    else:
+        catalog = load_run_csv(f"{platform}_report_cluster_catalog.csv")
     names = load_cluster_names()
-    names = names[names["platform"] == platform].rename(columns={"cluster_id": "cluster"})
+    names = names[names["platform"] == platform].copy()
+    names["cluster"] = pd.to_numeric(names.get("cluster_id", names.get("cluster")), errors="coerce")
+    names = names.drop_duplicates("cluster")
+
+    if catalog.empty:
+        return catalog
+
+    # Catalogs use size/share and the naming table uses journey_count/journey_share. Keep
+    # one stable shape for both the JSON catalog and older CSV mirrors.
+    if "cluster" not in catalog.columns and "cluster_id" in catalog.columns:
+        catalog["cluster"] = catalog["cluster_id"]
+    if "size" not in catalog.columns:
+        catalog["size"] = catalog.get("journey_count", 0)
+    if "share" not in catalog.columns:
+        catalog["share"] = catalog.get("journey_share", 0)
+    catalog["cluster"] = pd.to_numeric(catalog["cluster"], errors="coerce")
     df = catalog.merge(
-        names[
-            ["cluster", "cluster_name", "cluster_name_vi", "business_family",
-             "business_family_vi", "naming_confidence", "ngrams"]
-        ],
-        on="cluster",
-        how="left",
+        names[[c for c in ["cluster", "cluster_name", "cluster_name_vi", "business_family",
+                           "business_family_vi", "naming_confidence", "ngrams"] if c in names.columns]],
+        on="cluster", how="left", suffixes=("", "_name"),
     )
+    audit = load_run_csv("cluster_naming_audit.csv")
+    if not audit.empty:
+        audit = audit[audit["platform"] == platform].copy()
+        audit["cluster"] = pd.to_numeric(audit["cluster"], errors="coerce")
+        audit = audit.drop_duplicates("cluster")
+        keep = [c for c in ["cluster", "medoid_path"] if c in audit.columns]
+        if len(keep) == 2:
+            df = df.merge(audit[keep], on="cluster", how="left")
+    if "medoid_path" not in df.columns:
+        df["medoid_path"] = ""
+    df["medoid_path"] = df["medoid_path"].fillna("")
+    if "medoid_journey_id" not in df.columns:
+        df["medoid_journey_id"] = ""
+    if "medoid_length" not in df.columns:
+        df["medoid_length"] = df.get("median_length", 0)
+    if "median_length" not in df.columns:
+        df["median_length"] = df["medoid_length"]
+    if "median_span_s" not in df.columns:
+        df["median_span_s"] = 0.0
     df["business_family"] = df["business_family"].fillna("unknown")
     df["cluster_name"] = df["cluster_name"].fillna("Unnamed cluster")
     df["cluster_name_vi"] = df["cluster_name_vi"].fillna(df["cluster_name"])

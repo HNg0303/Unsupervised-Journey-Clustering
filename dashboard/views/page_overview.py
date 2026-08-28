@@ -11,7 +11,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from lib import (
+from dashboard.lib import (
     PALETTE,
     fmt_int,
     fmt_pct,
@@ -20,6 +20,7 @@ from lib import (
     load_eda,
     load_run_csv,
     load_showcase,
+    load_summary_csv,
     load_train_run,
     t,
 )
@@ -71,12 +72,26 @@ BASELINES = [
 ]
 
 
-def _our_dataset_row(eda: dict) -> dict:
+def _our_dataset_row(eda: dict, kpi: dict | None = None, run: dict | None = None) -> dict:
     files = eda["per_file"]
-    events = sum(f["rows"] for f in files.values())
-    sessions = sum(f["n_sessions"] for f in files.values())
-    vocab = max(f["taxonomy_signals"]["vocab_size"] for f in files.values())
-    singleton = sum(f["taxonomy_signals"]["singleton_share"] for f in files.values()) / len(files)
+    # The current EDA cache inventories the prepared journey lake and may intentionally
+    # omit cardinalities when only parquet footer metadata is available.  The headline
+    # comparison must therefore use the full-data inference KPI when it exists, rather
+    # than treating missing metadata as zero or mixing it with a legacy cache.
+    events = int(kpi.get("journeys", 0) or 0) if kpi else sum(int(f.get("rows") or 0) for f in files.values())
+    sessions = int(kpi.get("sessions", 0) or 0) if kpi else sum(int(f.get("n_sessions") or 0) for f in files.values())
+    vocab_values = [f.get("taxonomy_signals", {}).get("vocab_size") for f in files.values()]
+    vocab_values = [float(v) for v in vocab_values if v is not None and pd.notna(v)]
+    if not vocab_values and run:
+        vocab_values = [
+            float(p.get("run_config", {}).get("feature_info", {}).get("tfidf_vocabulary"))
+            for p in run.get("platforms", {}).values()
+            if p.get("run_config", {}).get("feature_info", {}).get("tfidf_vocabulary") is not None
+        ]
+    vocab = int(max(vocab_values, default=0))
+    singleton_values = [f.get("taxonomy_signals", {}).get("singleton_share") for f in files.values()]
+    singleton_values = [float(v) for v in singleton_values if v is not None and pd.notna(v)]
+    singleton = sum(singleton_values) / len(singleton_values) if singleton_values else 0.0
     return {
         "dataset": t("HiFPT production clickstream (this project)", "Clickstream production HiFPT (dự án này)"),
         "events": events,
@@ -104,6 +119,9 @@ def _step_cards(steps: list[dict]) -> None:
 def render() -> None:
     eda = load_eda()
     run = load_train_run()
+    kpi_table = load_summary_csv("kpi.csv")
+    kpi = kpi_table[kpi_table["scope"].eq("all")].iloc[0].to_dict() if not kpi_table[kpi_table["scope"].eq("all")].empty else {}
+    cluster_summary = load_summary_csv("cluster_summary.csv")
     showcase = load_showcase()
 
     st.title(t("Turning raw clicks into journeys", "Biến click thô thành journey"))
@@ -121,15 +139,18 @@ def render() -> None:
     # ---------------------------------------------------------------- headline numbers
     android = run["platforms"].get("android", {}).get("run_config", {}).get("hdbscan", {})
     ios = run["platforms"].get("ios", {}).get("run_config", {}).get("hdbscan", {})
-    total_events = sum(f["rows"] for f in eda["per_file"].values())
-    total_sessions = sum(f["n_sessions"] for f in eda["per_file"].values())
+    total_events = int(kpi.get("journeys", 0) or 0)
+    total_sessions = int(kpi.get("sessions", 0) or 0)
+    known_clusters = cluster_summary[cluster_summary.get("cluster", pd.Series(dtype=float)).ne(-1)] if not cluster_summary.empty else pd.DataFrame()
+    cluster_count = int(known_clusters[["platform", "cluster"]].drop_duplicates().shape[0]) if not known_clusters.empty else int((android.get("n_clusters") or 0) + (ios.get("n_clusters") or 0))
+    journey_type_count = int(known_clusters["journey_type_en"].nunique()) if not known_clusters.empty and "journey_type_en" in known_clusters else 0
     kpi_row(
         [
-            (t("Raw events in", "Event thô đầu vào"), fmt_int(total_events), t("Android + iOS, extracts T3–T5", "Android + iOS, extract T3–T5")),
+            (t("Scored journeys", "Journey đã score"), fmt_int(total_events), t("Android + iOS in the selected inference bundle", "Android + iOS trong bundle inference đang chọn")),
             (t("Sessions", "Session"), fmt_int(total_sessions), None),
             (
                 t("Journey types out", "Journey type đầu ra"),
-                fmt_int((android.get("n_clusters") or 0) + (ios.get("n_clusters") or 0)),
+                fmt_int(cluster_count),
                 t("Clusters learned across both platform models", "Số cluster học được trên cả hai model platform"),
             ),
             (
@@ -246,7 +267,7 @@ không thứ nào trong số đó tồn tại sẵn trong dữ liệu nguồn.
             )
         )
     else:
-        st.info(t("Showcase session not built yet — rerun the prepare script.", "Chưa dựng được session mẫu — hãy chạy lại script chuẩn bị dữ liệu."))
+        st.info(t("The selected bundle contains scored journey outputs but no duplicated raw-event extract for a traceable session showcase.", "Bundle đang chọn có output journey đã score nhưng không chứa bản sao raw event để dựng showcase theo từng session."))
 
     st.divider()
 
@@ -263,10 +284,10 @@ không thứ nào trong số đó tồn tại sẵn trong dữ liệu nguồn.
         )
     )
 
-    ours = _our_dataset_row(eda)
+    ours = _our_dataset_row(eda, kpi=kpi, run=run)
     rows = [ours] + BASELINES
     DS = t("dataset", "bộ dữ liệu")
-    EV = t("events", "event")
+    EV = t("rows / events", "dòng / event")
     SE = t("sessions", "session")
     VO = t("distinct event vocabulary", "số event khác nhau")
     ET = t("event types", "loại event")
@@ -297,9 +318,11 @@ không thứ nào trong số đó tồn tại sẵn trong dữ liệu nguồn.
     st.caption(
         t(
             "Baseline figures are the headline numbers published by each dataset's authors, rounded. "
-            "They are shown to contrast the *structure* of the data, not to rank size.",
-            "Số liệu của các bộ baseline là con số công bố bởi tác giả từng bộ dữ liệu, đã làm tròn. "
-            "Chúng được đưa vào để đối chiếu *cấu trúc* dữ liệu, không phải để so kích thước.",
+            "For HiFPT this row is a scored-journey count because the selected bundle does not carry a raw-event copy; "
+            "baselines count raw events. Compare the *structure*, not the absolute volume.",
+            "Số liệu baseline là con số công bố bởi tác giả từng bộ dữ liệu, đã làm tròn. "
+            "Với HiFPT, dòng này là số journey đã score vì bundle hiện tại không chứa bản sao raw event; "
+            "baseline đếm raw event. Hãy so sánh *cấu trúc*, không so sánh volume tuyệt đối.",
         )
     )
 
@@ -405,7 +428,18 @@ không thứ nào trong số đó tồn tại sẵn trong dữ liệu nguồn.
     rare = load_run_csv("android_report_rare_folding.csv")
     seg = kv("android_report_segmentation.csv")
     post = kv("android_report_postprocess.csv")
-    fit = run["platforms"].get("android", {}).get("run_config", {}).get("feature_info", {})
+    android_run = run["platforms"].get("android", {}).get("run_config", {})
+    fit = android_run.get("feature_info", {})
+    model_cfg = android_run.get("config", {})
+    segment_cfg = model_cfg.get("segment", {})
+    feature_cfg = model_cfg.get("features", {})
+    idle_gap = int(float(segment_cfg.get("idle_gap_seconds", 90)))
+    min_length = int(segment_cfg.get("min_journey_length", 4))
+    max_length = int(segment_cfg.get("max_journey_length", 80))
+    ngram_range = feature_cfg.get("ngram_range", [1, 2])
+    ngram_label = "–".join(str(v) for v in ngram_range)
+    svd_components = int(fit.get("svd_components", feature_cfg.get("svd_components", 48)))
+    numeric_features = int(fit.get("numeric_features", 0))
 
     steps = [
         {
@@ -444,7 +478,10 @@ không thứ nào trong số đó tồn tại sẵn trong dữ liệu nguồn.
         },
         {
             "title": t("Build journeys — find the task boundaries", "Dựng journey — tìm ranh giới task"),
-            "tech": t("90 s idle gap · return-to-root · auth change · length cap", "Idle gap 90 giây · quay về root · đổi auth · giới hạn độ dài"),
+            "tech": t(
+                f"{idle_gap} s idle gap · return-to-root · auth change · {min_length}–{max_length} step cap",
+                f"Idle gap {idle_gap} giây · quay về root · đổi auth · giới hạn {min_length}–{max_length} bước",
+            ),
             "plain": t(
                 "Cut each session where the customer clearly stopped one task and started another: a long "
                 "pause, a return to the home screen, or a login change. This replaces the session with the "
@@ -462,7 +499,10 @@ không thứ nào trong số đó tồn tại sẵn trong dữ liệu nguồn.
         },
         {
             "title": t("Represent — describe each journey with numbers", "Biểu diễn — mô tả mỗi journey bằng số"),
-            "tech": t("multi-channel TF-IDF (1–3 grams) + SVD + shape features", "TF-IDF đa kênh (1–3 gram) + SVD + feature hình dạng"),
+            "tech": t(
+                f"multi-channel TF-IDF ({ngram_label} grams) + SVD-{svd_components} + {numeric_features} shape features",
+                f"TF-IDF đa kênh ({ngram_label} gram) + SVD-{svd_components} + {numeric_features} feature hình dạng",
+            ),
             "plain": t(
                 "Describe a journey by the step patterns it contains — at four levels of detail at once "
                 "(exact screen, intent, coarse area, operation) — plus how it felt: length, duration, how "
@@ -475,7 +515,10 @@ không thứ nào trong số đó tồn tại sẵn trong dữ liệu nguồn.
             ),
             "metric_label": t("dimensions per journey", "số chiều mỗi journey"),
             "metric_value": fmt_int(fit.get("final_dimension")),
-            "metric_help": t("4 text channels × 64 SVD components + 11 shape features", "4 kênh text × 64 SVD component + 11 feature hình dạng"),
+            "metric_help": t(
+                f"4 text channels × {svd_components} SVD components + {numeric_features} shape features",
+                f"4 kênh text × {svd_components} SVD component + {numeric_features} feature hình dạng",
+            ),
         },
         {
             "title": t("Cluster + detect anomalies", "Cluster + phát hiện bất thường"),
@@ -589,10 +632,10 @@ không thứ nào trong số đó tồn tại sẵn trong dữ liệu nguồn.
         t(
             "**Where to go next.** The *Details* section carries the evidence behind every claim on this "
             "page: the raw data and its quirks, every file the training run wrote, the learned journey "
-            "catalogue with its naming evidence, and the production results on the held-out T5 extract.",
+            "catalogue with its naming evidence, and the production results from the selected partitioned inference bundle.",
             "**Xem tiếp ở đâu.** Mục *Chi tiết* chứa bằng chứng cho mọi khẳng định ở trang này: dữ liệu thô và "
             "các đặc điểm của nó, mọi file mà training run đã ghi ra, catalogue journey đã học kèm bằng chứng đặt tên, "
-            "và kết quả production trên extract T5 được giữ lại.",
+            "và kết quả production từ bundle inference đã partition đang chọn.",
         ),
         icon=":material/arrow_forward:",
     )

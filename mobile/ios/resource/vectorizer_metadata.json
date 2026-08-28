@@ -1,0 +1,62 @@
+{
+  "channel_weights": {
+    "primary": 1.0,
+    "coarse": 0.45,
+    "intent": 0.3,
+    "operation": 0.2
+  },
+  "numeric_block_weight": 0.35,
+  "numeric_columns": [
+    "n_events_final",
+    "n_unique_tokens",
+    "action_ratio",
+    "back_rate",
+    "revisit_ratio",
+    "n_loop_removed",
+    "n_dedup_removed",
+    "span_seconds",
+    "median_gap_s",
+    "p90_gap_s",
+    "max_gap_s"
+  ],
+  "numeric_log1p_columns": [
+    "n_events_final",
+    "n_unique_tokens",
+    "n_loop_removed",
+    "n_dedup_removed",
+    "span_seconds",
+    "median_gap_s",
+    "p90_gap_s",
+    "max_gap_s"
+  ],
+  "numeric_mean": [
+    2.2836124016637283,
+    2.125517083862503,
+    0.4640537470792728,
+    0.03910190122924519,
+    0.1463594022017885,
+    0.1049715529162031,
+    0.20744483610242057,
+    3.104792413260766,
+    0.839891360829315,
+    2.018805219363408,
+    2.436776633073144
+  ],
+  "numeric_scale": [
+    0.5271983235234935,
+    0.4279244020006818,
+    0.15171080239000045,
+    0.0679274848591228,
+    0.14009528271157956,
+    0.4214635343535274,
+    0.4204478181218633,
+    1.0847127906569642,
+    0.5676475577060784,
+    0.7595951540746593,
+    0.9610258860454334
+  ],
+  "svd_components_count": 48,
+  "has_global_pca": true,
+  "global_pca_components_count": 48,
+  "final_embedding_dim": 48
+}

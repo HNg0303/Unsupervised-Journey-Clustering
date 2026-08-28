@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/mobile/ios/.build/arm64-apple-macosx/debug/JourneyClusteringPackageTests.build/primary.swiftdeps"
+  },
+  "/Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/mobile/ios/.build/arm64-apple-macosx/debug/JourneyClusteringPackageTests.derived/runner.swift": {
+    "dependencies": "/Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/mobile/ios/.build/arm64-apple-macosx/debug/JourneyClusteringPackageTests.build/runner.d",
+    "object": "/Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/mobile/ios/.build/arm64-apple-macosx/debug/JourneyClusteringPackageTests.build/runner.swift.o",
+    "swiftmodule": "/Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/mobile/ios/.build/arm64-apple-macosx/debug/JourneyClusteringPackageTests.build/runner~partial.swiftmodule",
+    "swift-dependencies": "/Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/mobile/ios/.build/arm64-apple-macosx/debug/JourneyClusteringPackageTests.build/runner.swiftdeps",
+    "diagnostics": "/Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/mobile/ios/.build/arm64-apple-macosx/debug/JourneyClusteringPackageTests.build/runner.dia"
+  }
+}

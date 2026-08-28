@@ -1,0 +1,29 @@
+{
+  "platform": "ios",
+  "segment": {
+    "idle_gap_seconds": 90.0,
+    "root_return_min_events": 6,
+    "max_journey_length": 80,
+    "min_journey_length": 4,
+    "cut_on_root_return": true,
+    "cut_on_auth_change": true
+  },
+  "postprocess": {
+    "collapse_consecutive": true,
+    "collapse_cycles": true,
+    "max_cycle_period": 4,
+    "min_cycle_repeats": 2,
+    "drop_chrome": true,
+    "drop_boot": true
+  },
+  "tokens": {
+    "level": "EXACT",
+    "backoff_level": "L2",
+    "min_journey_df": 3
+  },
+  "canonize": {
+    "namespace_by_os": true,
+    "canonize_urls": true,
+    "mask_id_segments": true
+  }
+}

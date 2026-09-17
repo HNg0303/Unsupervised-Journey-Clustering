@@ -102,6 +102,53 @@ def create_source_view(
     )
 
 
+def create_naming_view(connection, naming_path: Path, header: set[str]) -> None:
+    """Register a stable naming projection for canonical and monthly mapping files.
+
+    The original dashboard run uses ``Cluster_naming.csv`` with canonical level columns,
+    while monthly exports may provide the equivalent ``*_cluster_mapping.csv`` with
+    ``business_submodule``/``business_detail`` instead.  Normalising the optional fields
+    here keeps the aggregate SQL identical for both layouts.
+    """
+    expressions = {
+        "platform": "NULL::VARCHAR AS platform",
+        "cluster_id": 'try_cast(cluster_id AS BIGINT) AS cluster_id',
+        "cluster_name": "cluster_name",
+        "canonical_level_2_code": "NULL::VARCHAR AS canonical_level_2_code",
+        "cluster_name_level_2": "NULL::VARCHAR AS cluster_name_level_2",
+        "cluster_name_en": "NULL::VARCHAR AS cluster_name_en",
+        "business_family": "business_family",
+        "business_family_code": "NULL::VARCHAR AS business_family_code",
+        "business_submodule": "NULL::VARCHAR AS business_submodule",
+        "naming_confidence": "naming_confidence",
+    }
+    aliases = {
+        "canonical_level_2_code": "cluster_name_en",
+        "cluster_name_level_2": "business_submodule",
+        "business_family_code": "business_family",
+    }
+    projection = []
+    for column, expression in expressions.items():
+        source = column if column in header else aliases.get(column)
+        if source and source in header:
+            if column == "cluster_id":
+                projection.append(expression)
+            else:
+                projection.append(f'"{source}" AS "{column}"')
+        else:
+            projection.append(expression)
+    connection.execute(
+        f"""
+        CREATE OR REPLACE VIEW cluster_names AS
+        SELECT {', '.join(projection)}
+        FROM read_csv_auto(
+            {sql_string(naming_path)}, header=true, all_varchar=true,
+            encoding='utf-8', sample_size=100000, ignore_errors=false
+        )
+        """
+    )
+
+
 def write_readme(output_dir: Path) -> None:
     files = {
         "kpi.csv": "KPI tổng quan theo toàn bộ dữ liệu và từng platform.",
@@ -111,11 +158,17 @@ def write_readme(output_dir: Path) -> None:
         "cluster_heatmap.csv": "Heatmap cluster × giờ địa phương; có count và tỷ lệ chuẩn hóa trong cluster.",
         "family_heatmap.csv": "Heatmap family × giờ địa phương.",
         "daily_trend.csv": "Trend ngày × platform × family × journey type.",
+        "daily_kpi.csv": "KPI theo ngày × platform; session/customer là distinct trong ngày.",
+        "daily_cluster_summary.csv": "KPI theo ngày × platform × cluster.",
+        "daily_family_summary.csv": "KPI theo ngày × platform × business family.",
         "friction_summary.csv": "Tần suất từng friction flag (một journey có thể có nhiều flag).",
+        "daily_friction_summary.csv": "Friction flag theo ngày × platform.",
+        "daily_friction_by_type.csv": "Friction theo ngày × journey type.",
         "friction_by_type.csv": "Friction rate và thời gian dư theo journey type.",
         "novel_daily.csv": "Novel/unrecognised rate theo ngày và platform.",
         "novel_entry_exit.csv": "Top entry/exit của novel journeys.",
         "next_action_summary.csv": "Next action phổ biến và confidence trung bình.",
+        "daily_next_action_summary.csv": "Next action theo ngày × platform.",
         "session_composition.csv": "Phân bố số journey và số family trong session.",
         "journey_examples.csv": "Mẫu bounded cho explorer/audit; không phải dữ liệu thống kê.",
         "manifest.json": "Data contract, tham số chạy, input và danh sách output.",
@@ -166,15 +219,8 @@ def build(args: argparse.Namespace) -> None:
         # The scored row-level exports can carry stale or row-level fallback labels.  Join
         # the frozen business naming table once here so every aggregate and example uses the
         # same platform + cluster namespace as the dashboard.
-        connection.execute(
-            f"""
-            CREATE OR REPLACE VIEW cluster_names AS
-            SELECT * FROM read_csv_auto(
-                {sql_string(naming_path)}, header=true, all_varchar=true,
-                encoding='utf-8', sample_size=100000, ignore_errors=false
-            )
-            """
-        )
+        naming_header = read_header(naming_path)
+        create_naming_view(connection, naming_path, naming_header)
 
         connection.execute(
             f"""
@@ -224,7 +270,10 @@ def build(args: argparse.Namespace) -> None:
         )
         connection.execute("CREATE INDEX journey_session_idx ON journeys(platform, session_id)")
 
-        scope = "start_ts IS NOT NULL"
+        # Epoch/zero timestamps occasionally appear in scored exports when an upstream
+        # parser cannot materialise a source timestamp.  They are not valid production
+        # dates and would otherwise create a misleading 1970 bucket in timeframe controls.
+        scope = "start_ts IS NOT NULL AND start_ts >= TIMESTAMP '2000-01-01'"
         session_key = "platform || ':' || session_id"
         copy_query(connection, f"""
             WITH scoped AS (SELECT * FROM journeys WHERE {scope}),
@@ -329,6 +378,35 @@ def build(args: argparse.Namespace) -> None:
             FROM journeys WHERE {scope} GROUP BY ALL ORDER BY date, platform, journeys DESC
         """, output_dir / "daily_trend.csv")
 
+        # Date-grain summaries let the Streamlit page apply the same timeframe to KPIs,
+        # family/cluster tables, friction and next-action charts.  They intentionally keep
+        # daily distinct session/customer counts; the UI does not add those counts across
+        # multiple days because that would double-count people who return.
+        copy_query(connection, f"""
+            SELECT CAST(start_ts AS DATE) AS date, platform,
+                   count(*) AS journeys,
+                   count(DISTINCT {session_key}) AS sessions,
+                   count(DISTINCT customer_id) FILTER (WHERE customer_id <> '__anonymous__') AS customers,
+                   avg(is_known::INTEGER) AS known_rate,
+                   avg(has_struggle::INTEGER) AS struggle_rate,
+                   avg((has_struggle OR has_any_flag)::INTEGER) AS any_flag_rate,
+                   avg(n_events_final) AS mean_steps,
+                   avg(span_seconds) AS mean_span_seconds
+            FROM journeys WHERE {scope} GROUP BY ALL ORDER BY date, platform
+        """, output_dir / "daily_kpi.csv")
+        copy_query(connection, f"""
+            SELECT CAST(start_ts AS DATE) AS date, platform, cluster, journey_type,
+                   journey_type_en, business_family, business_family_code, business_submodule,
+                   naming_confidence, {common_group_metrics}
+            FROM journeys WHERE {scope} GROUP BY ALL ORDER BY date, platform, journeys DESC, cluster
+        """, output_dir / "daily_cluster_summary.csv")
+        copy_query(connection, f"""
+            SELECT CAST(start_ts AS DATE) AS date, platform, business_family, business_family_code,
+                   {common_group_metrics}, count(DISTINCT cluster) AS cluster_count,
+                   count(DISTINCT journey_type_en) AS journey_type_count
+            FROM journeys WHERE {scope} GROUP BY ALL ORDER BY date, platform, journeys DESC, business_family
+        """, output_dir / "daily_family_summary.csv")
+
         copy_query(connection, f"""
             WITH scoped AS (SELECT * FROM journeys WHERE {scope}),
             flags AS (
@@ -345,6 +423,26 @@ def build(args: argparse.Namespace) -> None:
         """, output_dir / "friction_summary.csv")
         copy_query(connection, f"""
             WITH scoped AS (SELECT * FROM journeys WHERE {scope}),
+            flags AS (
+                SELECT CAST(start_ts AS DATE) AS date, platform, 'behavioral' AS flag_source,
+                       unnest(string_split(behavioral_friction_flags, '|')) AS flag
+                FROM scoped WHERE behavioral_friction_flags <> ''
+                UNION ALL
+                SELECT CAST(start_ts AS DATE) AS date, platform, 'model',
+                       unnest(string_split(friction_flags, '|'))
+                FROM scoped WHERE friction_flags <> ''
+            ), totals AS (
+                SELECT CAST(start_ts AS DATE) AS date, platform, count(*) AS total
+                FROM scoped GROUP BY ALL
+            )
+            SELECT flags.date, flags.platform, flag_source, flag, count(*) AS journeys,
+                   count(*) / max(total)::DOUBLE AS journey_share
+            FROM flags JOIN totals USING (date, platform) WHERE flag <> ''
+            GROUP BY flags.date, flags.platform, flag_source, flag
+            ORDER BY date, platform, journeys DESC
+        """, output_dir / "daily_friction_summary.csv")
+        copy_query(connection, f"""
+            WITH scoped AS (SELECT * FROM journeys WHERE {scope}),
             clean AS (
                 SELECT platform, journey_type, median(span_seconds) AS clean_median_seconds
                 FROM scoped WHERE NOT has_struggle GROUP BY platform, journey_type
@@ -357,6 +455,22 @@ def build(args: argparse.Namespace) -> None:
             FROM scoped s LEFT JOIN clean c USING (platform, journey_type)
             GROUP BY ALL ORDER BY struggle_rate DESC, journeys DESC
         """, output_dir / "friction_by_type.csv")
+        copy_query(connection, f"""
+            WITH scoped AS (SELECT * FROM journeys WHERE {scope}),
+            clean AS (
+                SELECT platform, CAST(start_ts AS DATE) AS date, journey_type,
+                       median(span_seconds) AS clean_median_seconds
+                FROM scoped WHERE NOT has_struggle GROUP BY ALL
+            )
+            SELECT CAST(s.start_ts AS DATE) AS date, s.platform, s.journey_type, s.business_family,
+                   count(*) AS journeys, sum(s.has_struggle::INTEGER) AS struggling_journeys,
+                   avg(s.has_struggle::INTEGER) AS struggle_rate,
+                   sum(CASE WHEN s.has_struggle THEN greatest(s.span_seconds - c.clean_median_seconds, 0) ELSE 0 END) AS excess_seconds,
+                   median(s.n_events_final) AS median_steps, median(s.span_seconds) AS median_span_seconds
+            FROM scoped s LEFT JOIN clean c
+              ON c.platform = s.platform AND c.date = CAST(s.start_ts AS DATE) AND c.journey_type = s.journey_type
+            GROUP BY ALL ORDER BY date, struggle_rate DESC, journeys DESC
+        """, output_dir / "daily_friction_by_type.csv")
 
         copy_query(connection, f"""
             SELECT CAST(start_ts AS DATE) AS date, platform, count(*) AS journeys,
@@ -387,6 +501,15 @@ def build(args: argparse.Namespace) -> None:
                 FROM grouped
             ) SELECT * FROM ranked WHERE rank <= {int(args.top_limit)} ORDER BY platform, rank
         """, output_dir / "next_action_summary.csv")
+        copy_query(connection, f"""
+            WITH grouped AS (
+                SELECT CAST(start_ts AS DATE) AS date, platform, next_action, count(*) AS journeys,
+                       avg(next_action_share) AS mean_confidence
+                FROM journeys WHERE {scope} AND next_action IS NOT NULL GROUP BY ALL
+            )
+            SELECT *, journeys / sum(journeys) OVER (PARTITION BY date, platform)::DOUBLE AS action_share
+            FROM grouped ORDER BY date, platform, journeys DESC, next_action
+        """, output_dir / "daily_next_action_summary.csv")
         copy_query(connection, f"""
             WITH per_session AS (
                 SELECT platform, session_id, count(*) AS journey_count,
@@ -429,10 +552,10 @@ def build(args: argparse.Namespace) -> None:
             "naming": {"path": str(naming_path), "size_bytes": naming_path.stat().st_size},
             "outputs": generated,
             "notes": [
-                "Statistics include only rows with a valid start_ts, matching the Streamlit inference page.",
+                "Statistics include only rows with a valid start_ts on or after 2000-01-01; malformed epoch timestamps are excluded.",
                 "Journey examples are bounded audit samples and must not be used for aggregate statistics.",
                 "A journey may contribute to multiple friction flags.",
-                "Cluster and business labels are rejoined from the authoritative Cluster_naming.csv on (platform, cluster_id).",
+                "Cluster and business labels are rejoined from the supplied cluster mapping on (platform, cluster_id).",
             ],
         }
         (output_dir / "manifest.json").write_text(

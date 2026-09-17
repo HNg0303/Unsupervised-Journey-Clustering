@@ -22,6 +22,7 @@ from dashboard.lib import (
     load_showcase,
     load_summary_csv,
     load_train_run,
+    get_inference_bundle,
     t,
 )
 
@@ -117,11 +118,14 @@ def _step_cards(steps: list[dict]) -> None:
 
 
 def render() -> None:
-    eda = load_eda()
-    run = load_train_run()
-    kpi_table = load_summary_csv("kpi.csv")
+    bundle = get_inference_bundle(st.session_state.get("inference_bundle"))
+    bundle_key = bundle.key if bundle else None
+    focus_platform = (bundle.platforms[0] if bundle and bundle.platforms else "android")
+    eda = load_eda(bundle_key)
+    run = load_train_run(bundle_key)
+    kpi_table = load_summary_csv("kpi.csv", bundle_key=bundle_key)
     kpi = kpi_table[kpi_table["scope"].eq("all")].iloc[0].to_dict() if not kpi_table[kpi_table["scope"].eq("all")].empty else {}
-    cluster_summary = load_summary_csv("cluster_summary.csv")
+    cluster_summary = load_summary_csv("cluster_summary.csv", bundle_key=bundle_key)
     showcase = load_showcase()
 
     st.title(t("Turning raw clicks into journeys", "Biến click thô thành journey"))
@@ -137,7 +141,7 @@ def render() -> None:
     )
 
     # ---------------------------------------------------------------- headline numbers
-    android = run["platforms"].get("android", {}).get("run_config", {}).get("hdbscan", {})
+    android = run["platforms"].get(focus_platform, {}).get("run_config", {}).get("hdbscan", {})
     ios = run["platforms"].get("ios", {}).get("run_config", {}).get("hdbscan", {})
     total_events = int(kpi.get("journeys", 0) or 0)
     total_sessions = int(kpi.get("sessions", 0) or 0)
@@ -411,26 +415,26 @@ không thứ nào trong số đó tồn tại sẵn trong dữ liệu nguồn.
     st.caption(
         t(
             "Each step below is a real stage of the pipeline, with the number it produced on this run "
-            "(Android model shown; the iOS model is fitted the same way on its own data).",
+            f"({focus_platform.title()} model shown; other available platform models are fitted on their own data).",
             "Mỗi bước dưới đây là một giai đoạn thật của pipeline, kèm con số nó tạo ra ở run này "
-            "(hiển thị model Android; model iOS được fit theo đúng cách trên dữ liệu riêng của nó).",
+            f"(hiển thị model {focus_platform.title()}; các platform khác được fit theo đúng cách trên dữ liệu riêng).",
         )
     )
 
     def kv(name: str) -> dict:
-        d = load_run_csv(name)
+        d = load_run_csv(name, bundle_key=bundle_key, platform=focus_platform)
         if d.empty or not {"metric", "value"} <= set(d.columns):
             return {}
         return dict(zip(d["metric"], d["value"]))
 
-    canon = load_run_csv("android_report_canonization.csv")
-    vocab_rep = load_run_csv("android_report_vocabulary.csv")
-    rare = load_run_csv("android_report_rare_folding.csv")
-    seg = kv("android_report_segmentation.csv")
-    post = kv("android_report_postprocess.csv")
-    android_run = run["platforms"].get("android", {}).get("run_config", {})
-    fit = android_run.get("feature_info", {})
-    model_cfg = android_run.get("config", {})
+    canon = load_run_csv(f"{focus_platform}_report_canonization.csv", bundle_key=bundle_key, platform=focus_platform)
+    vocab_rep = load_run_csv(f"{focus_platform}_report_vocabulary.csv", bundle_key=bundle_key, platform=focus_platform)
+    rare = load_run_csv(f"{focus_platform}_report_rare_folding.csv", bundle_key=bundle_key, platform=focus_platform)
+    seg = kv(f"{focus_platform}_report_segmentation.csv")
+    post = kv(f"{focus_platform}_report_postprocess.csv")
+    focus_run = run["platforms"].get(focus_platform, {}).get("run_config", {})
+    fit = focus_run.get("feature_info", {})
+    model_cfg = focus_run.get("config", {})
     segment_cfg = model_cfg.get("segment", {})
     feature_cfg = model_cfg.get("features", {})
     idle_gap = int(float(segment_cfg.get("idle_gap_seconds", 90)))
@@ -549,7 +553,7 @@ không thứ nào trong số đó tồn tại sẵn trong dữ liệu nguồn.
     rows_in = None
     prep = load_run_csv("preprocessing_report.csv")
     if not prep.empty:
-        rows_in = prep[prep["source_file"].str.startswith("android", na=False)]["rows_output"].sum()
+        rows_in = prep[prep["source_file"].str.startswith(focus_platform, na=False)]["rows_output"].sum()
     funnel = [
         (t("Raw events", "Event thô"), rows_in),
         (t("After cleaning", "Sau khi làm sạch"), post.get("events_after_cleanup")),

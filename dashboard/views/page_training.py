@@ -10,13 +10,17 @@ import streamlit as st
 from dashboard.lib import (
     PALETTE,
     RUN_DIR,
-    TRAIN_RUN_DIR,
+    bundle_model_dir,
+    bundle_inspection_dir,
+    bundle_platform_root,
+    bundle_training_root,
     fmt_int,
     fmt_pct,
     hist_to_df,
     kpi_row,
     load_run_csv,
     load_train_run,
+    get_inference_bundle,
     model_dir,
     inspection_dir,
     t,
@@ -180,30 +184,39 @@ def _kv_report(df: pd.DataFrame) -> dict:
 
 def render() -> None:
     st.title(t("2 · What the training run produced", "2 · Training run đã tạo ra những gì"))
+    bundle_key = st.session_state.get("inference_bundle")
+    active_train_root = bundle_training_root(bundle_key)
+    active_bundle = get_inference_bundle(bundle_key)
+    active_inference_root = active_bundle.root if active_bundle else RUN_DIR
     st.caption(
-        t("Canonical fitted run: ", "Run fit canonical: ")
-        + f"`{TRAIN_RUN_DIR.relative_to(TRAIN_RUN_DIR.parents[2])}`"
+        t("Active fitted run: ", "Run fit đang dùng: ")
+        + f"`{active_train_root.relative_to(active_train_root.parents[2])}`"
         + t(" · names/inference bundle: ", " · bundle tên/inference: ")
-        + f"`{RUN_DIR.relative_to(RUN_DIR.parents[2])}`"
+        + f"`{active_inference_root.relative_to(active_inference_root.parents[2])}`"
     )
 
-    run = load_train_run()
+    run = load_train_run(bundle_key)
+    available_platforms = [p for p in ["android", "ios"] if run.get("platforms", {}).get(p, {}).get("run_config")]
+    available_platforms = available_platforms or ["android", "ios"]
     platform = st.radio(
-        t("Platform model", "Model theo platform"), ["android", "ios"], horizontal=True, format_func=str.title
+        t("Platform model", "Model theo platform"), available_platforms, horizontal=True, format_func=str.title
     )
+    def run_csv(name: str) -> pd.DataFrame:
+        return load_run_csv(name, bundle_key=bundle_key, platform=platform)
+
     pdata = run["platforms"].get(platform, {})
     cfg = pdata.get("run_config", {})
     fit = cfg.get("feature_info", {})
     hdb = cfg.get("hdbscan", {})
 
-    seg = _kv_report(load_run_csv(f"{platform}_report_segmentation.csv"))
-    post = _kv_report(load_run_csv(f"{platform}_report_postprocess.csv"))
-    sem = _kv_report(load_run_csv(f"{platform}_report_semantics.csv"))
-    canon = load_run_csv(f"{platform}_report_canonization.csv")
-    vocab = load_run_csv(f"{platform}_report_vocabulary.csv")
-    rare = load_run_csv(f"{platform}_report_rare_folding.csv")
-    split = load_run_csv("split_report.csv")
-    prep = load_run_csv("preprocessing_report.csv")
+    seg = _kv_report(run_csv(f"{platform}_report_segmentation.csv"))
+    post = _kv_report(run_csv(f"{platform}_report_postprocess.csv"))
+    sem = _kv_report(run_csv(f"{platform}_report_semantics.csv"))
+    canon = run_csv(f"{platform}_report_canonization.csv")
+    vocab = run_csv(f"{platform}_report_vocabulary.csv")
+    rare = run_csv(f"{platform}_report_rare_folding.csv")
+    split = run_csv("split_report.csv")
+    prep = run_csv("preprocessing_report.csv")
 
     kpi_row(
         [
@@ -262,20 +275,21 @@ def render() -> None:
     S = t("size (MB)", "dung lượng (MB)")
     W = t("what it holds", "chứa gì")
     inv = []
+    bundle = active_bundle
+    artifact_roots = [active_train_root / platform]
+    if bundle:
+        artifact_roots.extend([bundle_model_dir(bundle, platform), bundle_inspection_dir(bundle, platform)])
+    artifact_roots.extend([model_dir(platform), inspection_dir(platform)])
     for pattern, (title, desc) in artifacts().items():
         name = pattern.format(p=platform)
-        path = model_dir(platform) / name
-        if not path.exists():
-            path = inspection_dir(platform) / name
-        if not path.exists():
+        path = next((root / name for root in artifact_roots if (root / name).exists()), None)
+        if path is None:
             continue
         inv.append({A: title, F: name, S: round(path.stat().st_size / 1e6, 2), W: desc})
     for pattern, desc in report_csvs().items():
         name = pattern.format(p=platform)
-        path = model_dir(platform) / name
-        if not path.exists():
-            path = inspection_dir(platform) / name
-        if not path.exists():
+        path = next((root / name for root in artifact_roots if (root / name).exists()), None)
+        if path is None:
             continue
         inv.append(
             {
@@ -285,8 +299,12 @@ def render() -> None:
                 W: desc,
             }
         )
-    naming_path = RUN_DIR / "Cluster_naming.csv"
-    if naming_path.exists():
+    naming_candidates = []
+    if bundle:
+        naming_candidates.append(bundle_platform_root(bundle, platform) / "model_version=latest" / f"{platform}_cluster_mapping.csv")
+    naming_candidates.extend([RUN_DIR / "Cluster_naming.csv", RUN_DIR / "cluster_mapping.csv"])
+    naming_path = next((path for path in naming_candidates if path.exists()), None)
+    if naming_path is not None:
         inv.append(
             {
                 A: t("Authoritative cluster naming", "Tên cluster authoritative"),
@@ -303,9 +321,9 @@ def render() -> None:
             "split_report.csv",
             f"{platform}_cluster_name_mapping.csv",
         ]
-        options = [o for o in options if (model_dir(platform) / o).exists() or (inspection_dir(platform) / o).exists()]
+        options = [o for o in options if any((root / o).exists() for root in artifact_roots)]
         pick = st.selectbox(F, options)
-        st.dataframe(load_run_csv(pick).head(300), hide_index=True, width="stretch")
+        st.dataframe(run_csv(pick).head(300), hide_index=True, width="stretch")
 
     st.divider()
 
@@ -392,7 +410,7 @@ số event có độ tin cậy thấp. Danh sách event chưa giải được n�
                 """,
             )
         )
-        unknowns = load_run_csv(f"{platform}_report_semantic_unknowns.csv")
+        unknowns = run_csv(f"{platform}_report_semantic_unknowns.csv")
         if not unknowns.empty:
             with st.expander(t("Top unresolved events (taxonomy backlog)", "Các event chưa giải được (backlog taxonomy)")):
                 st.dataframe(unknowns.head(30), hide_index=True, width="stretch")
@@ -411,7 +429,7 @@ số event có độ tin cậy thấp. Danh sách event chưa giải được n�
         fig.update_layout(height=340, margin=dict(t=10, b=10))
         a.plotly_chart(fig, width="stretch")
         a.caption(t("Why each journey boundary was created.", "Lý do tạo ra mỗi điểm cắt journey."))
-    sweep = load_run_csv(f"{platform}_report_idle_gap_sweep.csv")
+    sweep = run_csv(f"{platform}_report_idle_gap_sweep.csv")
     if not sweep.empty:
         fig = go.Figure()
         fig.add_bar(x=sweep["idle_gap_seconds"], y=sweep["journeys"], name=t("journeys", "journey"), marker_color=PALETTE[0])
@@ -523,7 +541,7 @@ số event có độ tin cậy thấp. Danh sách event chưa giải được n�
         ),
         hide_index=True, width="stretch",
     )
-    kmeans = load_run_csv(f"{platform}_report_kmeans_sweep.csv")
+    kmeans = run_csv(f"{platform}_report_kmeans_sweep.csv")
     if not kmeans.empty:
         fig = go.Figure()
         fig.add_scatter(x=kmeans["k"], y=kmeans["silhouette"], name=t("k-means silhouette", "silhouette k-means"), mode="lines+markers", line_color=PALETTE[0])

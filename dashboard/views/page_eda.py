@@ -8,7 +8,11 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from dashboard.lib import EDA_SUMMARY_FILE, PALETTE, cards, fmt_int, fmt_pct, kpi_row, load_eda, load_train_run, t
+from dashboard.lib import (
+    PALETTE, cards, fmt_int, fmt_pct, kpi_row,
+    load_eda, load_summary_csv, load_summary_manifest, load_train_run,
+    render_inference_scope, t,
+)
 
 # Import through the `src` package because production modules use package-relative
 # imports (for example, `src.segment` imports `.config`).
@@ -60,6 +64,93 @@ def _segment_demo(demo_rows: list[dict], platform: str, cfg: SegmentConfig) -> p
     return assign_journeys(df, cfg)
 
 
+def _render_journey_eda(bundle_key: str, platforms: list[str], date_range) -> None:
+    """EDA over the current scored journey summaries, independent of raw-event EDA."""
+    st.header(t("Journey-level EDA for the selected inference", "EDA ở cấp journey của inference đang chọn"))
+    cluster = load_summary_csv("cluster_summary.csv", bundle_key=bundle_key)
+    daily_cluster = load_summary_csv("daily_cluster_summary.csv", bundle_key=bundle_key)
+    daily = load_summary_csv("daily_kpi.csv", bundle_key=bundle_key)
+    kpi = load_summary_csv("kpi.csv", bundle_key=bundle_key)
+    family = load_summary_csv("family_summary.csv", bundle_key=bundle_key)
+    manifest = load_summary_manifest(bundle_key=bundle_key)
+    timeframe_is_narrow = False
+    if not cluster.empty and "platform" in cluster.columns:
+        cluster = cluster[cluster["platform"].isin(platforms)].copy()
+    if not daily.empty and "platform" in daily.columns:
+        daily = daily[daily["platform"].isin(platforms)].copy()
+    if not family.empty and "platform" in family.columns:
+        family = family[family["platform"].isin(platforms)].copy()
+    if not daily_cluster.empty and "platform" in daily_cluster.columns:
+        daily_cluster = daily_cluster[daily_cluster["platform"].isin(platforms)].copy()
+    if date_range is not None:
+        for frame in [daily]:
+            if not frame.empty and "date" in frame.columns:
+                frame["date"] = pd.to_datetime(frame["date"], errors="coerce").dt.date
+                frame.drop(frame[(frame["date"] < date_range[0]) | (frame["date"] > date_range[1])].index, inplace=True)
+        if not daily_cluster.empty and "date" in daily_cluster.columns:
+            daily_cluster["date"] = pd.to_datetime(daily_cluster["date"], errors="coerce").dt.date
+            daily_cluster = daily_cluster[(daily_cluster["date"] >= date_range[0]) & (daily_cluster["date"] <= date_range[1])]
+            # A narrowed timeframe needs a cluster table at the same grain; do not keep
+            # displaying all-period type volumes beside a date-filtered daily chart.
+            all_dates = pd.to_datetime(load_summary_csv("daily_cluster_summary.csv", bundle_key=bundle_key).get("date", pd.Series(dtype="object")), errors="coerce").dropna().dt.date
+            if not all_dates.empty and (date_range[0] != all_dates.min() or date_range[1] != all_dates.max()):
+                timeframe_is_narrow = True
+                keys = [c for c in ["platform", "cluster", "journey_type", "journey_type_en", "business_family", "business_submodule", "naming_confidence"] if c in daily_cluster.columns]
+                agg = daily_cluster.groupby(keys, as_index=False).agg({c: "sum" for c in ["journeys", "sessions", "customers"] if c in daily_cluster.columns})
+                for metric in ["struggle_rate", "any_flag_rate", "median_steps", "median_span_seconds"]:
+                    if metric in daily_cluster.columns:
+                        extra = daily_cluster.groupby(keys, as_index=False)[metric].mean()
+                        agg = agg.merge(extra, on=keys, how="left")
+                cluster = agg
+    if cluster.empty:
+        st.warning(t("No journey summary is available for this scope.", "Chưa có journey summary cho phạm vi này."))
+        return
+    journeys = int(cluster["journeys"].sum()) if "journeys" in cluster else 0
+    # Cluster rows are mutually exclusive for journeys, but sessions/customers can occur
+    # in several clusters.  Use the bundle KPI table for those distinct counts instead of
+    # summing cluster-level cardinalities.
+    if timeframe_is_narrow and not daily.empty:
+        # Daily aggregates are additive for journeys but sessions/customers are distinct
+        # within each day, so summing them would over-count users crossing day boundaries.
+        sessions = None
+        customers = None
+    elif not kpi.empty and "scope" in kpi.columns:
+        scope = "all" if set(platforms) == {"android", "ios"} and "all" in set(kpi["scope"]) else platforms[0] if len(platforms) == 1 else None
+        krows = kpi[kpi["scope"].eq(scope)] if scope else kpi[kpi["scope"].isin(platforms)]
+        sessions = int(krows["sessions"].sum()) if not krows.empty else 0
+        customers = int(krows["customers"].sum()) if not krows.empty else 0
+    else:
+        sessions = int(cluster["sessions"].sum()) if "sessions" in cluster else 0
+        customers = int(cluster["customers"].sum()) if "customers" in cluster else 0
+    known = float(cluster.loc[cluster["cluster"].ne(-1), "journeys"].sum() / max(journeys, 1)) if "cluster" in cluster else 0.0
+    kpi_row([
+        (t("Inferred journeys", "Journey đã inference"), fmt_int(journeys), None),
+        (t("Sessions", "Session"), fmt_int(sessions), t("Unavailable for a narrowed range because daily distincts cannot be summed safely", "Không cộng distinct theo ngày cho khoảng thời gian thu hẹp")),
+        (t("Customers", "Customer"), fmt_int(customers), t("Unavailable for a narrowed range because daily distincts cannot be summed safely", "Không cộng distinct theo ngày cho khoảng thời gian thu hẹp")),
+        (t("Known-cluster rate", "Tỷ lệ cluster đã biết"), fmt_pct(known), None),
+        (t("Journey types", "Journey type"), fmt_int(cluster["journey_type"].nunique()) if "journey_type" in cluster else "—", None),
+    ])
+    source = manifest.get("inputs", [])
+    source_text = ", ".join(str(item.get("path", "")) for item in source if item.get("path"))
+    st.caption(t(f"Source: {source_text or 'compact inference summary'}", f"Nguồn: {source_text or 'inference summary dạng compact'}"))
+    left, right = st.columns(2)
+    with left:
+        if not daily.empty:
+            daily_plot = daily.groupby("date", as_index=False)["journeys"].sum()
+            fig = px.line(daily_plot, x="date", y="journeys", markers=True, title=t("Inferred journeys by day", "Journey inference theo ngày"))
+            fig.update_layout(height=350, margin=dict(t=45, b=10))
+            st.plotly_chart(fig, width="stretch")
+    with right:
+        top = cluster.sort_values("journeys", ascending=False).head(15).copy()
+        label = "journey_type_en" if "journey_type_en" in top else "journey_type"
+        fig = px.bar(top.sort_values("journeys"), x="journeys", y=label, orientation="h", title=t("Top observed journey types", "Journey type quan sát nhiều nhất"))
+        fig.update_layout(height=350, margin=dict(t=45, b=10), yaxis_title=None)
+        st.plotly_chart(fig, width="stretch")
+    st.subheader(t("Journey shape and friction", "Hình dạng journey và friction"))
+    cols = [c for c in ["platform", "cluster", "journey_type", "business_family", "journeys", "sessions", "customers", "struggle_rate", "any_flag_rate", "median_steps", "median_span_seconds"] if c in cluster.columns]
+    st.dataframe(cluster.sort_values("journeys", ascending=False)[cols].head(200), hide_index=True, width="stretch", height=420)
+
+
 def render() -> None:
     st.title(t("1 · Raw production data", "1 · Dữ liệu production thô"))
     st.caption(
@@ -71,9 +162,16 @@ def render() -> None:
         )
     )
 
-    eda = load_eda()
+    bundle, selected_platforms, date_range = render_inference_scope()
+    if bundle is None:
+        return
+    if not selected_platforms:
+        st.warning(t("Select at least one platform.", "Hãy chọn ít nhất một platform."))
+        return
+    eda = load_eda(bundle.key)
 
     if eda.get("status") != "ready" or not eda.get("per_file"):
+        _render_journey_eda(bundle.key, selected_platforms, date_range)
         st.info(
             t(
                 "Full raw-event EDA has not been prepared for this bundle. This page intentionally does not show "
@@ -85,7 +183,7 @@ def render() -> None:
         )
         st.code(
             "python scripts/prepare_data_for_post_analysis/eda_raw.py "
-            f"--output-dir {EDA_SUMMARY_FILE.parent}",
+            f"--output-dir {bundle.root / 'post_analysis' / 'eda'}",
             language="bash",
         )
         st.caption(
@@ -96,9 +194,9 @@ def render() -> None:
                 "Kết quả train và aggregate inference full data nằm ở các trang còn lại.",
             )
         )
-        train = load_train_run()
+        train = load_train_run(bundle.key)
         config_rows = []
-        for platform in ["android", "ios"]:
+        for platform in selected_platforms:
             config = train.get("platforms", {}).get(platform, {}).get("run_config", {}).get("config", {})
             segment = config.get("segment", {})
             config_rows.append(
@@ -114,7 +212,8 @@ def render() -> None:
         return
 
     c1, c2 = st.columns([2, 3])
-    platforms = c1.multiselect("Platform", ["android", "ios"], default=["android", "ios"])
+    platform_options = [p for p in ["android", "ios"] if p in selected_platforms]
+    platforms = c1.multiselect("Platform", platform_options, default=platform_options)
     available_weeks = sorted({str(v["week"]) for v in eda["per_file"].values()})
     weeks = c2.multiselect("Extract", available_weeks, default=available_weeks)
     files = _selected_files(eda, platforms, weeks)
@@ -226,7 +325,7 @@ def render() -> None:
         # gives a truthful inventory, but it cannot provide a raw-session demo, distinct
         # customer counts, or event-level taxonomy charts without scanning the lake.  Stop
         # here rather than showing empty/legacy charts with numbers from another run.
-        train = load_train_run()
+        train = load_train_run(bundle.key)
         st.info(
             t(
                 "This source is a prepared journey lake, not the raw event CSV. The table above is footer metadata only; "
@@ -842,9 +941,9 @@ nằm chung một dòng.
             st.dataframe(show, hide_index=True, width="stretch", height=340)
 
     # ---- what the rules do at production scale
-    train = load_train_run()
+    train = load_train_run(bundle.key)
     reason_rows = []
-    for platform in ["android", "ios"]:
+    for platform in selected_platforms:
         counts = train["platforms"].get(platform, {}).get("journeys", {}).get("boundary_reason", {})
         total = sum(counts.values()) or 1
         for reason, n in counts.items():
@@ -870,8 +969,8 @@ nằm chung một dòng.
             yaxis_title=None, legend_title=None,
         )
         st.plotly_chart(fig, width="stretch")
-        tot_j = sum(train["platforms"][p]["journeys"]["n_journeys"] for p in ["android", "ios"] if train["platforms"].get(p, {}).get("journeys"))
-        tot_s = sum(train["platforms"][p]["journeys"]["n_sessions"] for p in ["android", "ios"] if train["platforms"].get(p, {}).get("journeys"))
+        tot_j = sum(train["platforms"][p]["journeys"]["n_journeys"] for p in selected_platforms if train["platforms"].get(p, {}).get("journeys"))
+        tot_s = sum(train["platforms"][p]["journeys"]["n_sessions"] for p in selected_platforms if train["platforms"].get(p, {}).get("journeys"))
         st.markdown(
             t(
                 f"""

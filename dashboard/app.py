@@ -16,7 +16,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from dashboard.lib import RUN_DIR, SUMMARY_DIR, TRAIN_RUN_DIR, inject_css, t  # noqa: E402
+from dashboard.lib import discover_inference_bundles, inject_css, t  # noqa: E402
 from dashboard.views import (  # noqa: E402
     page_clusters,
     page_eda,
@@ -86,31 +86,36 @@ with st.sidebar:
             key="page",
         )
     st.divider()
+    bundles = discover_inference_bundles()
+    bundle_text = "\n".join(
+        f"- `{bundle.label}` — {', '.join(platform.title() for platform in bundle.platforms)}"
+        for bundle in bundles
+    ) or t("- No scored bundles discovered", "- Chưa phát hiện bundle scored")
     st.markdown(
         t(
             f"""
-**Inference data**
-`output/scores/pca48_ngrams12_500` — full Android + iOS scored journey partitions.
+**Inference bundles**
+{bundle_text}
 
 **Dashboard summaries**
-`output/scores/pca48_ngrams12_500/html_dashboard_summary` — compact aggregates used by the pages.
+Production Results lets you choose an available bundle, platform(s), and timeframe.
 
 **Training run**
-`output/partitioned_runs/pca48_svd48_ngrams12_500k/latest` — fitted model + holdout artefacts.
+Resolved from the selected inference bundle; fitted model + holdout artefacts are kept separate from observed inference summaries.
 
 **Preparation**
 raw events → canonization + taxonomy → journey segmentation → multi-channel TF-IDF + SVD →
 HDBSCAN + Markov → named journey catalogue → scoring → post-analysis summaries.
             """,
             f"""
-**Dữ liệu inference**
-`output/scores/pca48_ngrams12_500` — các partition journey đã score cho Android + iOS.
+**Bundle inference**
+{bundle_text}
 
 **Summary dashboard**
-`output/scores/pca48_ngrams12_500/html_dashboard_summary` — các bảng aggregate mà dashboard sử dụng.
+Trang Kết quả production cho phép chọn bundle, platform và khoảng thời gian khả dụng.
 
 **Run train**
-`output/partitioned_runs/pca48_svd48_ngrams12_500k/latest` — model fit và holdout.
+Được resolve theo bundle inference đang chọn; model fit và holdout được tách khỏi summary inference quan sát.
 
 **Chuẩn bị dữ liệu**
 event thô → canonization + taxonomy → cắt journey → TF-IDF đa kênh + SVD →

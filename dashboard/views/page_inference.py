@@ -1,4 +1,4 @@
-"""Page 4 — full-data production inference, read from compact summaries."""
+"""Page 4 — bundle-aware production inference and complete journey event inspection."""
 
 from __future__ import annotations
 
@@ -8,16 +8,18 @@ import plotly.express as px
 import streamlit as st
 
 from dashboard.lib import (
+    InferenceBundle,
     PALETTE,
-    SUMMARY_DIR,
     fmt_int,
     fmt_pct,
     kpi_row,
     load_inference,
+    load_journey_detail,
     load_inference_profile,
     load_summary_csv,
     load_summary_manifest,
     pretty_family,
+    render_inference_scope,
     t,
 )
 
@@ -31,10 +33,36 @@ def _selected(frame: pd.DataFrame, platforms: list[str]) -> pd.DataFrame:
     return frame[frame["platform"].isin(platforms)].copy()
 
 
-def _kpi(platforms: list[str]) -> dict:
-    table = load_summary_csv("kpi.csv")
+def _kpi(platforms: list[str], bundle_key: str, date_range=None) -> dict:
+    table = load_summary_csv("kpi.csv", bundle_key=bundle_key)
     if table.empty:
         return {}
+    # Exact KPI rows describe the full bundle.  For a narrowed timeframe, use daily
+    # aggregates for additive/weighted measures and deliberately leave unique counts
+    # blank rather than summing daily distincts into an incorrect global customer count.
+    full_start = pd.to_datetime(table.get("first_start_ts"), errors="coerce").min()
+    full_end = pd.to_datetime(table.get("last_start_ts"), errors="coerce").max()
+    full_range = date_range is not None and pd.notna(full_start) and pd.notna(full_end) and date_range[0] <= full_start.date() and date_range[1] >= full_end.date()
+    if date_range is not None and not full_range:
+        trend = _selected(load_summary_csv("daily_kpi.csv", bundle_key=bundle_key), platforms)
+        if not trend.empty:
+            trend["date"] = pd.to_datetime(trend["date"], errors="coerce").dt.date
+            trend = trend[(trend["date"] >= date_range[0]) & (trend["date"] <= date_range[1])]
+            if not trend.empty:
+                journey = pd.to_numeric(trend["journeys"], errors="coerce").fillna(0)
+                out = {
+                    "journeys": int(journey.sum()),
+                    "sessions": None,
+                    "customers": None,
+                    "struggle_rate": float((pd.to_numeric(trend["struggle_rate"], errors="coerce").fillna(0) * journey).sum() / journey.sum()) if journey.sum() else 0.0,
+                    "mean_span_seconds": float((pd.to_numeric(trend.get("mean_span_seconds", trend.get("median_span_seconds", 0)), errors="coerce").fillna(0) * journey).sum() / journey.sum()) if journey.sum() else None,
+                    "any_flag_rate": float((pd.to_numeric(trend["any_flag_rate"], errors="coerce").fillna(0) * journey).sum() / journey.sum()) if journey.sum() else 0.0,
+                    "known_rate": float((pd.to_numeric(trend["known_rate"], errors="coerce").fillna(0) * journey).sum() / journey.sum()) if journey.sum() else 0.0,
+                    "time_scoped": True,
+                }
+                out["sessions_note"] = "Daily distinct sessions are not summed across days"
+                out["customers_note"] = "Daily distinct customers are not summed across days"
+                return out
     scope = "all" if set(platforms) == set(PLATFORMS) else platforms[0]
     row = table[table["scope"].astype(str).eq(scope)]
     if not row.empty:
@@ -52,9 +80,38 @@ def _kpi(platforms: list[str]) -> dict:
     return out
 
 
-def _cluster_metrics(platforms: list[str]) -> tuple[pd.DataFrame, dict]:
+def _cluster_metrics(platforms: list[str], bundle_key: str, date_range=None) -> tuple[pd.DataFrame, dict]:
     """Return exact inference cluster totals and derived assignment coverage."""
-    table = _selected(load_summary_csv("cluster_summary.csv"), platforms)
+    kpi_table = load_summary_csv("kpi.csv", bundle_key=bundle_key)
+    full_start = pd.to_datetime(kpi_table.get("first_start_ts"), errors="coerce").min() if not kpi_table.empty else pd.NaT
+    full_end = pd.to_datetime(kpi_table.get("last_start_ts"), errors="coerce").max() if not kpi_table.empty else pd.NaT
+    full_range = date_range is not None and pd.notna(full_start) and pd.notna(full_end) and date_range[0] <= full_start.date() and date_range[1] >= full_end.date()
+    if date_range is not None and not full_range:
+        table = _date_filter(
+            _selected(load_summary_csv("daily_cluster_summary.csv", bundle_key=bundle_key), platforms),
+            date_range,
+        )
+        if not table.empty:
+            weights = pd.to_numeric(table["journeys"], errors="coerce").fillna(0)
+            table["_w"] = weights
+            group_cols = [c for c in ["platform", "cluster", "journey_type", "journey_type_en", "business_family", "business_family_code", "business_submodule", "naming_confidence"] if c in table.columns]
+            agg = table.groupby(group_cols, as_index=False).agg(
+                journeys=("journeys", "sum"), sessions=("sessions", "sum"), customers=("customers", "sum"),
+                _w=("_w", "sum"),
+                struggle_weight=("struggle_rate", lambda s: float((s * table.loc[s.index, "_w"]).sum())),
+                flag_weight=("any_flag_rate", lambda s: float((s * table.loc[s.index, "_w"]).sum())),
+                median_steps=("median_steps", "median"), p90_steps=("p90_steps", "median"),
+                median_span_seconds=("median_span_seconds", "median"), p90_span_seconds=("p90_span_seconds", "median"),
+                mean_back_rate=("mean_back_rate", "mean"), mean_distance_to_centroid=("mean_distance_to_centroid", "mean"),
+            )
+            agg["struggle_rate"] = agg["struggle_weight"] / agg["_w"].replace(0, np.nan)
+            agg["any_flag_rate"] = agg["flag_weight"] / agg["_w"].replace(0, np.nan)
+            agg["platform_share"] = agg["journeys"] / agg.groupby("platform")["journeys"].transform("sum")
+            table = agg.drop(columns=["_w", "struggle_weight", "flag_weight"])
+        if table.empty:
+            table = _selected(load_summary_csv("cluster_summary.csv", bundle_key=bundle_key), platforms)
+    else:
+        table = _selected(load_summary_csv("cluster_summary.csv", bundle_key=bundle_key), platforms)
     if table.empty:
         return table, {}
     table["cluster"] = pd.to_numeric(table["cluster"], errors="coerce")
@@ -71,6 +128,19 @@ def _cluster_metrics(platforms: list[str]) -> tuple[pd.DataFrame, dict]:
         "n_clusters": n_clusters,
         "n_types": n_types,
     }
+
+
+def _scope_controls() -> tuple[InferenceBundle | None, list[str], tuple[object, object] | None]:
+    """Backwards-compatible alias for the shared scope controls."""
+    return render_inference_scope()
+
+
+def _date_filter(frame: pd.DataFrame, date_range) -> pd.DataFrame:
+    if frame.empty or date_range is None or "date" not in frame.columns:
+        return frame
+    out = frame.copy()
+    out["date"] = pd.to_datetime(out["date"], errors="coerce").dt.date
+    return out[(out["date"] >= date_range[0]) & (out["date"] <= date_range[1])]
 
 
 def _label_columns(frame: pd.DataFrame) -> pd.DataFrame:
@@ -103,47 +173,52 @@ def render() -> None:
         )
     )
 
-    platforms = st.multiselect(
-        t("Platform", "Platform"), PLATFORMS, default=PLATFORMS,
-        format_func=str.title, key="inference_platforms",
-    )
+    bundle, platforms, date_range = _scope_controls()
+    if bundle is None:
+        return
     if not platforms:
         st.warning(t("Select at least one platform.", "Hãy chọn ít nhất một platform."))
         return
 
-    kpi = _kpi(platforms)
-    clusters, cluster_meta = _cluster_metrics(platforms)
+    kpi = _kpi(platforms, bundle.key, date_range=date_range)
+    clusters, cluster_meta = _cluster_metrics(platforms, bundle.key, date_range=date_range)
     if not kpi or clusters.empty:
         st.error(
             t(
-                f"Inference summaries are missing under `{SUMMARY_DIR}`. Run the summary extractor first.",
-                f"Chưa có inference summary trong `{SUMMARY_DIR}`. Hãy chạy script sinh summary trước.",
+                f"Inference summaries are missing for `{bundle.label}`. Run the summary extractor for this bundle first.",
+                f"Chưa có inference summary cho `{bundle.label}`. Hãy chạy script sinh summary cho bundle này trước.",
             )
         )
         return
 
     total = int(kpi.get("journeys", cluster_meta["total"]) or 0)
-    assigned = cluster_meta["known_rate"]
-    profiles = [load_inference_profile(p) for p in platforms]
+    assigned = kpi.get("known_rate", cluster_meta["known_rate"])
+    scoped_note = f" · {date_range[0]} → {date_range[1]}" if date_range is not None else ""
+    st.caption(
+        t(
+            f"Active scope: {bundle.label} · {', '.join(p.title() for p in platforms)}{scoped_note}.",
+            f"Phạm vi đang xem: {bundle.label} · {', '.join(p.title() for p in platforms)}{scoped_note}.",
+        )
+    )
     kpi_row(
         [
             (t("Scored journeys", "Journey đã score"), fmt_int(total), t("One row = one journey", "Một dòng = một journey")),
-            (t("Sessions", "Session"), fmt_int(kpi.get("sessions")), t("Distinct sessions in the selected bundle", "Số session khác nhau trong bundle")),
-            (t("Customers", "Customer"), fmt_int(kpi.get("customers")), t("Unique customer ids; anonymous ids excluded by the extractor", "Customer id duy nhất; loại id anonymous")),
+            (t("Sessions", "Session"), fmt_int(kpi.get("sessions")), t(kpi.get("sessions_note", "Distinct sessions in the selected bundle"), kpi.get("sessions_note", "Số session khác nhau trong bundle"))),
+            (t("Customers", "Customer"), fmt_int(kpi.get("customers")), t(kpi.get("customers_note", "Unique customer ids; anonymous ids excluded by the extractor"), kpi.get("customers_note", "Customer id duy nhất; loại id anonymous"))),
             (t("Recognised by the scorer", "Được scorer nhận diện"), fmt_pct(assigned), t("Cluster assignment within the learned distance limit", "Được gán cluster trong distance limit đã học")),
             (t("Behavioural friction", "Behavioural friction"), fmt_pct(kpi.get("struggle_rate")), t("Back, revisit, loop or unusually slow", "Back, revisit, loop hoặc chậm bất thường")),
             (t("Any model flag", "Có model flag"), fmt_pct(kpi.get("any_flag_rate")), t("A journey may carry more than one flag", "Một journey có thể có nhiều flag")),
         ]
     )
 
-    manifest = load_summary_manifest()
+    manifest = load_summary_manifest(bundle_key=bundle.key)
     if manifest:
         st.caption(
             t(
                 f"Summary generated {manifest.get('generated_at', '—')}. Source grain: one row per journey; "
-                f"valid start timestamps only. Source directory: `{SUMMARY_DIR}`.",
+                f"valid start timestamps only. Source directory: `{bundle.summary_dir}`.",
                 f"Summary sinh lúc {manifest.get('generated_at', '—')}. Grain nguồn: một dòng mỗi journey; "
-                f"chỉ tính dòng có start timestamp hợp lệ. Thư mục nguồn: `{SUMMARY_DIR}`.",
+                f"chỉ tính dòng có start timestamp hợp lệ. Thư mục nguồn: `{bundle.summary_dir}`.",
             )
         )
 
@@ -151,7 +226,10 @@ def render() -> None:
 
     # ------------------------------------------------------------------ traffic mix
     st.header(t("What are people doing in the app?", "User đang làm gì trong app?"))
-    family = _label_columns(_selected(load_summary_csv("family_summary.csv"), platforms))
+    family_name = "daily_family_summary.csv" if date_range is not None else "family_summary.csv"
+    family = _label_columns(_date_filter(_selected(load_summary_csv(family_name, bundle_key=bundle.key), platforms), date_range))
+    if family.empty and family_name != "family_summary.csv":
+        family = _label_columns(_selected(load_summary_csv("family_summary.csv", bundle_key=bundle.key), platforms))
     if not family.empty:
         # The summary keeps one row per platform/family-code. Collapse those rows into
         # one human-facing family with journey-weighted rates; a simple mean would give
@@ -227,12 +305,8 @@ def render() -> None:
 
     # ------------------------------------------------------------------ trend
     st.header(t("How the journey mix changes over time", "Cơ cấu journey thay đổi theo thời gian"))
-    trend = _label_columns(_selected(load_summary_csv("daily_trend.csv"), platforms))
-    lo, hi = _date_range(trend)
-    if not trend.empty and lo and hi:
-        selected_range = st.date_input(t("Date range", "Khoảng ngày"), value=(lo, hi), min_value=lo, max_value=hi, key="inference_dates")
-        if isinstance(selected_range, tuple) and len(selected_range) == 2:
-            trend = trend[(trend["date"] >= selected_range[0]) & (trend["date"] <= selected_range[1])]
+    trend = _label_columns(_date_filter(_selected(load_summary_csv("daily_trend.csv", bundle_key=bundle.key), platforms), date_range))
+    if not trend.empty:
         top_types = top.head(8)["type_label"].tolist() if not top.empty else []
         series = trend[trend["type_label"].isin(top_types)].groupby(["date", "type_label"], as_index=False)["journeys"].sum()
         if not series.empty:
@@ -256,7 +330,10 @@ def render() -> None:
 
     # ------------------------------------------------------------------ friction / anomaly
     st.header(t("Where do customers get stuck?", "Khách hàng bị mắc kẹt ở đâu?"))
-    friction = _selected(load_summary_csv("friction_summary.csv"), platforms)
+    friction_name = "daily_friction_summary.csv" if date_range is not None else "friction_summary.csv"
+    friction = _date_filter(_selected(load_summary_csv(friction_name, bundle_key=bundle.key), platforms), date_range)
+    if friction.empty and friction_name != "friction_summary.csv":
+        friction = _selected(load_summary_csv("friction_summary.csv", bundle_key=bundle.key), platforms)
     if not friction.empty:
         behavioral = friction[friction["flag_source"].eq("behavioral")].copy()
         model_flags = friction[friction["flag_source"].eq("model")].copy()
@@ -274,7 +351,10 @@ def render() -> None:
             b.plotly_chart(fig, width="stretch")
             b.caption(t("Model flags include improbable transitions and novel archetypes; one journey may have multiple flags.", "Model flag gồm transition bất thường và archetype mới; một journey có thể có nhiều flag."))
 
-    friction_type = _label_columns(_selected(load_summary_csv("friction_by_type.csv"), platforms))
+    friction_type_name = "daily_friction_by_type.csv" if date_range is not None else "friction_by_type.csv"
+    friction_type = _label_columns(_date_filter(_selected(load_summary_csv(friction_type_name, bundle_key=bundle.key), platforms), date_range))
+    if friction_type.empty and friction_type_name != "friction_by_type.csv":
+        friction_type = _label_columns(_selected(load_summary_csv("friction_by_type.csv", bundle_key=bundle.key), platforms))
     if not friction_type.empty:
         friction_type = friction_type.sort_values(["struggle_rate", "journeys"], ascending=[False, False]).head(15)
         friction_type["label"] = friction_type["type_label"] + " · " + friction_type["platform"].str.title()
@@ -288,16 +368,19 @@ def render() -> None:
 
     anomaly = pd.DataFrame({
         "platform": platforms,
-        "unresolved journeys": [int(load_inference_profile(p).get("geometric_anomalies", 0) or 0) for p in platforms],
-        "severe anomalies": [int(load_inference_profile(p).get("severe_anomalies", 0) or 0) for p in platforms],
-        "scored journeys": [int(load_inference_profile(p).get("rows", 0) or 0) for p in platforms],
+        "unresolved journeys": [int(load_inference_profile(p, bundle_key=bundle.key).get("geometric_anomalies", 0) or 0) for p in platforms],
+        "severe anomalies": [int(load_inference_profile(p, bundle_key=bundle.key).get("severe_anomalies", 0) or 0) for p in platforms],
+        "scored journeys": [int((load_inference_profile(p, bundle_key=bundle.key).get("rows") or load_inference_profile(p, bundle_key=bundle.key).get("total_journeys") or 0)) for p in platforms],
     })
     anomaly["unresolved rate"] = anomaly["unresolved journeys"] / anomaly["scored journeys"].replace(0, np.nan)
     st.dataframe(anomaly, hide_index=True, width="stretch")
 
     # ------------------------------------------------------------------ next action + bounded explorer
     st.header(t("What is likely to happen next?", "Bước tiếp theo có khả năng xảy ra là gì?"))
-    next_action = _selected(load_summary_csv("next_action_summary.csv"), platforms)
+    next_action_name = "daily_next_action_summary.csv" if date_range is not None else "next_action_summary.csv"
+    next_action = _date_filter(_selected(load_summary_csv(next_action_name, bundle_key=bundle.key), platforms), date_range)
+    if next_action.empty and next_action_name != "next_action_summary.csv":
+        next_action = _selected(load_summary_csv("next_action_summary.csv", bundle_key=bundle.key), platforms)
     if not next_action.empty:
         next_action = next_action.sort_values("journeys", ascending=False).head(15).copy()
         next_action["label"] = next_action["next_action"].fillna("<missing>").astype(str).str.slice(0, 100)
@@ -311,7 +394,13 @@ def render() -> None:
     st.divider()
     st.header(t("Bounded journey examples", "Ví dụ journey có giới hạn"))
     st.caption(t("These rows are an audit sample only. All KPI and chart totals above come from aggregate tables.", "Các dòng này chỉ là sample để audit. Toàn bộ KPI và biểu đồ ở trên lấy từ bảng aggregate."))
-    examples = pd.concat([load_inference(p) for p in platforms], ignore_index=True)
+    examples = pd.concat([load_inference(p, bundle_key=bundle.key) for p in platforms], ignore_index=True)
+    if not examples.empty and date_range is not None and "start_ts" in examples.columns:
+        examples["start_ts"] = pd.to_datetime(examples["start_ts"], errors="coerce", utc=True)
+        examples = examples[
+            (examples["start_ts"].dt.date >= date_range[0])
+            & (examples["start_ts"].dt.date <= date_range[1])
+        ]
     if examples.empty:
         st.info(t("No bounded examples were generated.", "Chưa có bounded example."))
     else:
@@ -320,3 +409,37 @@ def render() -> None:
         view = examples if selected_type == "all" else examples[examples["journey_type"].astype(str).eq(selected_type)]
         columns = [c for c in ["platform", "journey_id", "cluster", "journey_type", "business_family", "n_events_final", "span_seconds", "back_rate", "behavioral_friction_flags", "friction_flags", "entry_token", "exit_token"] if c in view.columns]
         st.dataframe(view[columns].head(200), hide_index=True, width="stretch", height=450)
+
+        st.subheader(t("Inspect every inferred event in one journey", "Xem toàn bộ event suy luận trong một journey"))
+        st.caption(
+            t(
+                "The table above is a bounded example sample. Pick one of those journeys—or paste any journey id from the scored export—to inspect its complete ordered `sequence`.",
+                "Bảng trên là sample bounded. Chọn một journey—or dán journey id bất kỳ từ scored export—để xem đầy đủ `sequence` theo đúng thứ tự.",
+            )
+        )
+        ids = view[[c for c in ["platform", "journey_id"] if c in view.columns]].dropna().astype(str)
+        choices = [""] + [f"{row.platform} · {row.journey_id}" for row in ids.itertuples(index=False)]
+        picked = st.selectbox(t("Journey from sample", "Journey từ sample"), choices, key="inference_journey_pick")
+        custom = st.text_input(t("Or paste journey id", "Hoặc dán journey id"), key="inference_journey_custom").strip()
+        selected_platform = None
+        selected_id = custom
+        if not selected_id and picked:
+            selected_platform, selected_id = picked.split(" · ", 1)
+        elif selected_id:
+            selected_platform = selected_id.split("_", 1)[0].split("=", 1)[-1] if selected_id.startswith("platform=") else platforms[0]
+        if selected_id and selected_platform:
+            detail = load_journey_detail(selected_platform, selected_id, bundle_key=bundle.key)
+            if detail.empty:
+                st.warning(t("Journey was not found in this bundle or its partition is unavailable.", "Không tìm thấy journey trong bundle hoặc partition không khả dụng."))
+            else:
+                record = detail.iloc[0]
+                meta_cols = [c for c in ["platform", "journey_id", "session_id", "customer_id", "start_ts", "end_ts", "cluster", "cluster_name", "business_family", "n_events_final", "span_seconds", "friction_flags", "behavioral_friction_flags", "next_action"] if c in detail.columns]
+                meta_view = detail[meta_cols].T.rename(columns={record.name: t("value", "giá trị")})
+                meta_view[t("value", "giá trị")] = meta_view[t("value", "giá trị")].astype(str)
+                st.dataframe(meta_view, width="stretch")
+                sequence = str(record.get("sequence", ""))
+                tokens = [token.strip() for token in sequence.split(" -> ") if token.strip()]
+                if tokens:
+                    st.dataframe(pd.DataFrame({t("step", "bước"): range(1, len(tokens) + 1), t("inferred event", "event suy luận"): tokens}), hide_index=True, width="stretch", height=min(120 + len(tokens) * 28, 620))
+                else:
+                    st.info(t("This journey has no serialized event sequence.", "Journey này không có sequence event được serialize."))

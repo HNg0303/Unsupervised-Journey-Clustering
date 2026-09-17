@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 CACHE_DIR = ROOT / "output" / "dashboard_cache"
+SCORES_DIR = ROOT / "output" / "scores"
 # The dashboard deliberately keeps the three data products separate:
 #
 # * TRAIN_RUN_DIR contains the fitted artefacts and the 500k train/holdout metadata;
@@ -36,6 +38,216 @@ TEST_DIR = ROOT / "output" / "test"
 NAMING_FILE = RUN_DIR / "Cluster_naming.csv"
 NAMING_AUDIT_FILE = RUN_DIR / "cluster_naming_audit.csv"
 CUSTOMER_ANALYSIS_DIR = RUN_DIR / "shareholder_analysis"
+
+
+@dataclass(frozen=True)
+class InferenceBundle:
+    """A discoverable scored-data bundle used by the production-results page.
+
+    ``summary_dir`` is optional because newer/monthly exports may arrive before their
+    compact dashboard summaries are generated.  Those bundles can still power the bounded
+    journey/event explorer from their partitioned Parquet files without pretending a sample
+    is a full-data aggregate.
+    """
+
+    key: str
+    label: str
+    root: Path
+    platforms: tuple[str, ...]
+    summary_dir: Path | None = None
+    source_kind: str = "summary"
+
+    @property
+    def has_summary(self) -> bool:
+        return bool(self.summary_dir and (self.summary_dir / "kpi.csv").exists())
+
+
+def _bundle_platform_root(root: Path, platform: str) -> Path:
+    """Return the platform directory for either a canonical or monthly export."""
+    direct = root / platform
+    if direct.exists():
+        return direct
+    # A few export jobs write a platform directory one level below the month/run root.
+    nested = root / platform / "model_version=latest"
+    return nested if nested.exists() else direct
+
+
+def _bundle_platform_files(root: Path, platform: str) -> list[Path]:
+    p = _bundle_platform_root(root, platform)
+    candidates = [
+        p / "model_version=latest" / f"platform={platform}" / "inspection" / f"{platform}_all_named.csv",
+        p / "model_version=latest" / f"{platform}_scores_named.csv",
+        p / "model_version=latest" / f"{platform}_scores.csv",
+        p / f"{platform}_scores_named.csv",
+        p / f"{platform}_scores.csv",
+    ]
+    parquet_root = p / "model_version=latest" / f"platform={platform}"
+    candidates.extend(sorted(parquet_root.glob("*.parquet")))
+    return [path for path in candidates if path.exists()]
+
+
+@st.cache_data(show_spinner=False)
+def discover_inference_bundles() -> tuple[InferenceBundle, ...]:
+    """Discover scored bundles and the platforms actually present in each one.
+
+    The older bundle stores summaries directly under ``<run>/html_dashboard_summary``;
+    monthly exports store platform folders under ``<month>/<platform>``.  Discovery is
+    deliberately filesystem-only and cheap enough to run on every Streamlit rerun.
+    """
+    found: dict[str, InferenceBundle] = {}
+    if not SCORES_DIR.exists():
+        return ()
+    for root in sorted((p for p in SCORES_DIR.iterdir() if p.is_dir()), key=lambda p: p.name):
+        summary = root / "html_dashboard_summary"
+        platforms = tuple(p for p in PLATFORMS if _bundle_platform_files(root, p))
+        if summary.exists() or platforms:
+            key = root.name
+            label = root.name.replace("_", " ")
+            if summary.exists():
+                label = f"{label} · dashboard summary"
+            found[key] = InferenceBundle(
+                key=key,
+                label=label,
+                root=root,
+                platforms=platforms,
+                summary_dir=summary if summary.exists() else None,
+                source_kind="summary" if summary.exists() else "partitioned",
+            )
+    # Stable ordering puts the canonical summary bundle first, then monthly/newest runs.
+    return tuple(sorted(found.values(), key=lambda b: (not b.has_summary, b.key)))
+
+
+def default_inference_bundle() -> InferenceBundle | None:
+    bundles = discover_inference_bundles()
+    if not bundles:
+        return None
+    # The monthly/current export is the useful default for the dashboard.  Keep the
+    # canonical historical run as a fallback for older workspaces without a monthly bundle.
+    for bundle in bundles:
+        if bundle.key == "july":
+            return bundle
+    for bundle in bundles:
+        if bundle.key == RUN_DIR.name:
+            return bundle
+    return bundles[0]
+
+
+def get_inference_bundle(key: str | None = None) -> InferenceBundle | None:
+    """Resolve a bundle key, falling back to the canonical dashboard bundle."""
+    bundles = discover_inference_bundles()
+    if key:
+        for bundle in bundles:
+            if bundle.key == key:
+                return bundle
+    return default_inference_bundle()
+
+
+def render_inference_scope() -> tuple[InferenceBundle | None, list[str], tuple[object, object] | None]:
+    """Render the shared bundle/platform/timeframe controls used by detail pages."""
+    bundles = list(discover_inference_bundles())
+    if not bundles:
+        st.error(t("No scored inference bundles were found under output/scores.", "Không tìm thấy bundle inference trong output/scores."))
+        return None, [], None
+    labels = {bundle.key: bundle.label for bundle in bundles}
+    default = next((i for i, bundle in enumerate(bundles) if bundle.key == "july"), 0)
+    key = st.selectbox(
+        t("Inference bundle", "Bundle inference"),
+        [bundle.key for bundle in bundles], index=default,
+        format_func=lambda value: labels.get(value, value), key="inference_bundle",
+    )
+    bundle = get_inference_bundle(key)
+    if bundle is None:
+        return None, [], None
+    left, right = st.columns([1, 2])
+    platforms = left.multiselect(
+        t("Available platforms", "Platform khả dụng"), list(bundle.platforms),
+        default=list(bundle.platforms), format_func=str.title,
+        key=f"inference_platforms_{bundle.key}",
+    )
+    trend = load_summary_csv("daily_trend.csv", bundle_key=bundle.key)
+    dates = pd.to_datetime(trend.get("date", pd.Series(dtype="object")), errors="coerce").dropna().dt.date
+    if not dates.empty:
+        lo, hi = dates.min(), dates.max()
+        selected = right.date_input(
+            t("Timeframe", "Khoảng thời gian"), value=(lo, hi), min_value=lo, max_value=hi,
+            key=f"inference_dates_{bundle.key}",
+        )
+        date_range = selected if isinstance(selected, tuple) and len(selected) == 2 else (lo, hi)
+    else:
+        right.info(t("This bundle has no compact date summary yet; timeframe is the full scored export.", "Bundle này chưa có summary ngày; timeframe là toàn bộ scored export."))
+        date_range = None
+    return bundle, platforms, date_range
+
+
+def bundle_platform_root(bundle: InferenceBundle, platform: str) -> Path:
+    return _bundle_platform_root(bundle.root, platform)
+
+
+def bundle_partition_root(bundle: InferenceBundle, platform: str) -> Path:
+    return bundle_platform_root(bundle, platform) / "model_version=latest" / f"platform={platform}"
+
+
+def bundle_named_path(bundle: InferenceBundle, platform: str) -> Path | None:
+    """Find the row-level named/score export for a platform, if one exists."""
+    paths = _bundle_platform_files(bundle.root, platform)
+    preferred = [p for p in paths if "named" in p.name or "all_named" in p.name]
+    return (preferred or paths or [None])[0]
+
+
+def bundle_partition_for_journey(bundle: InferenceBundle, platform: str, journey_id: str) -> Path | None:
+    """Resolve a partition from the stable journey id/source partition convention."""
+    root = bundle_partition_root(bundle, platform)
+    value = str(journey_id)
+    # Example: platform=ios_bucket=056_part-00000::J032694
+    stem = value.split("::", 1)[0]
+    candidate = root / f"{stem}.parquet"
+    if candidate.exists():
+        return candidate
+    for path in root.glob("*.parquet"):
+        if path.stem == stem:
+            return path
+    return None
+
+
+@st.cache_data(show_spinner=False)
+def bundle_training_root(bundle_key: str | None = None) -> Path:
+    """Resolve the fitted run associated with an inference bundle.
+
+    Monthly exports are named after the source month but their training artefacts live
+    under ``output/partitioned_runs``.  Keep the resolution here so pages never have to
+    guess which old canonical run they should read.
+    """
+    bundle = get_inference_bundle(bundle_key)
+    if bundle is None:
+        return TRAIN_RUN_DIR
+    candidates = []
+    # Prefer an exact monthly run (for example july_*), then a run whose name contains
+    # the bundle key.  The current export convention uses ``<month>_.../latest``.
+    if bundle.key and bundle.key not in {RUN_DIR.name, TRAIN_RUN_DIR.parent.name}:
+        candidates.extend(sorted(
+            (p for p in (ROOT / "output" / "partitioned_runs").glob(f"{bundle.key}_*/latest") if p.is_dir()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        ))
+    candidates.append(TRAIN_RUN_DIR)
+    return next((path for path in candidates if path.exists()), TRAIN_RUN_DIR)
+
+
+def bundle_train_model_dir(bundle_key: str | None, platform: str) -> Path:
+    return bundle_training_root(bundle_key) / platform
+
+
+def bundle_model_dir(bundle: InferenceBundle, platform: str) -> Path:
+    """Return the model-output directory for a discovered bundle/platform."""
+    root = bundle_platform_root(bundle, platform)
+    candidates = [root / "model_output", root / "model_version=latest" / f"platform={platform}" / "model_output"]
+    return next((path for path in candidates if path.exists()), candidates[0])
+
+
+def bundle_inspection_dir(bundle: InferenceBundle, platform: str) -> Path:
+    root = bundle_platform_root(bundle, platform)
+    candidates = [root / "inspection", root / "model_version=latest" / f"platform={platform}" / "inspection"]
+    return next((path for path in candidates if path.exists()), candidates[0])
 
 
 def platform_root(platform: str) -> Path:
@@ -368,12 +580,23 @@ def missing_cache_notice(what: str) -> None:
 
 
 @st.cache_data(show_spinner=False)
-def load_eda() -> dict:
+def load_eda(bundle_key: str | None = None) -> dict:
     # Raw EDA is a deliberate, separate preparation job.  Never fall back to
     # prepared-journey parquet footer counts or an old cache: those are not raw
     # event statistics and caused the dashboard conflict this contract fixes.
-    if EDA_SUMMARY_FILE.exists():
-        payload = json.loads(EDA_SUMMARY_FILE.read_text(encoding="utf-8"))
+    path = None
+    # A raw EDA may be published beside a monthly scored bundle.  The canonical legacy
+    # location remains a compatibility fallback, but is never silently mixed with a
+    # selected monthly bundle when that bundle has its own artifact.
+    bundle = get_inference_bundle(bundle_key)
+    if bundle and bundle.summary_dir:
+        monthly = bundle.root / "post_analysis" / "eda" / "eda_summary.json"
+        if monthly.exists():
+            path = monthly
+    if path is None and (bundle is None or bundle.key == RUN_DIR.name):
+        path = EDA_SUMMARY_FILE
+    if path is not None and path.exists():
+        payload = json.loads(path.read_text(encoding="utf-8"))
         # A capped EDA is useful for validating the parser, but must never be
         # presented as the production-wide raw-data profile.
         if payload.get("schema_version") == "raw-eda-v1" and payload.get("status") == "ready" and payload.get("mode") == "full":
@@ -388,10 +611,19 @@ def load_eda() -> dict:
 
 
 @st.cache_data(show_spinner=False)
-def load_customer_analysis_csv(name: str) -> pd.DataFrame:
+def load_customer_analysis_csv(name: str, bundle_key: str | None = None) -> pd.DataFrame:
     """Load one customer-based artefact generated beside the scored bundle."""
-    path = CUSTOMER_ANALYSIS_DIR / name
-    if not path.exists():
+    bundle = get_inference_bundle(bundle_key)
+    candidates = []
+    if bundle:
+        candidates.extend([
+            bundle.root / "shareholder_analysis" / name,
+            bundle.root / "customer_analysis" / name,
+        ])
+    if bundle is None or bundle.key == RUN_DIR.name:
+        candidates.append(CUSTOMER_ANALYSIS_DIR / name)
+    path = next((candidate for candidate in candidates if candidate.exists()), None)
+    if path is None:
         return pd.DataFrame()
     frame = pd.read_csv(path, encoding="utf-8-sig", low_memory=False)
     # Older shareholder scripts called the stable key object_id. Keep old cached
@@ -402,14 +634,15 @@ def load_customer_analysis_csv(name: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def load_summary_csv(name: str) -> pd.DataFrame:
+def load_summary_csv(name: str, bundle_key: str | None = None) -> pd.DataFrame:
     """Load one compact aggregate from the full-data inference summary.
 
     The summary directory is the dashboard's primary analytics source.  It is generated
     out-of-core from the multi-GB named inference CSVs, so opening the app never requires
     materialising all scored parquet partitions in memory.
     """
-    path = SUMMARY_DIR / name
+    bundle = get_inference_bundle(bundle_key)
+    path = (bundle.summary_dir / name) if bundle and bundle.summary_dir else SUMMARY_DIR / name
     if not path.exists():
         return pd.DataFrame()
     frame = pd.read_csv(path, encoding="utf-8-sig", low_memory=False)
@@ -419,44 +652,54 @@ def load_summary_csv(name: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def load_summary_manifest() -> dict:
-    path = SUMMARY_DIR / "manifest.json"
+def load_summary_manifest(bundle_key: str | None = None) -> dict:
+    bundle = get_inference_bundle(bundle_key)
+    path = (bundle.summary_dir / "manifest.json") if bundle and bundle.summary_dir else SUMMARY_DIR / "manifest.json"
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 @st.cache_data(show_spinner=False)
-def load_inference_profile(platform: str) -> dict:
+def load_inference_profile(platform: str, bundle_key: str | None = None) -> dict:
     """Read the scorer's small per-platform inspection summary."""
-    path = inspection_dir(platform) / f"{platform}_summary.json"
+    bundle = get_inference_bundle(bundle_key)
+    if bundle:
+        path = bundle_platform_root(bundle, platform) / "model_version=latest" / f"platform={platform}" / "inspection" / f"{platform}_summary.json"
+        if not path.exists():
+            path = bundle_platform_root(bundle, platform) / "model_version=latest" / f"platform={platform}" / "inference_manifest.json"
+    else:
+        path = inspection_dir(platform) / f"{platform}_summary.json"
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 @st.cache_data(show_spinner=False)
-def load_train_run() -> dict:
+def load_train_run(bundle_key: str | None = None) -> dict:
     """Return the training metadata from the selected partitioned model bundle."""
+    train_root = bundle_training_root(bundle_key)
     cached = CACHE_DIR / "train_run.json"
-    if cached.exists() and not any((model_dir(p) / f"{p}_run_config.json").exists() for p in PLATFORMS):
+    if bundle_key is None and cached.exists() and not any((model_dir(p) / f"{p}_run_config.json").exists() for p in PLATFORMS):
         return json.loads(cached.read_text(encoding="utf-8"))
 
-    out = {"run_slug": TRAIN_RUN_DIR.parent.name, "source": str(TRAIN_RUN_DIR), "platforms": {}}
+    out = {"run_slug": train_root.parent.name, "source": str(train_root), "platforms": {}}
     for platform in PLATFORMS:
         # The partitioned training output is canonical.  The scored bundle contains a
         # convenient copy of these files, but it is not the source of truth for training.
-        cfg_path = train_model_dir(platform) / f"{platform}_run_config.json"
+        cfg_path = train_root / platform / f"{platform}_run_config.json"
         if not cfg_path.exists():
-            cfg_path = model_dir(platform) / f"{platform}_run_config.json"
-        summary_path = inspection_dir(platform) / f"{platform}_summary.json"
+            bundle = get_inference_bundle(bundle_key)
+            cfg_path = (bundle_model_dir(bundle, platform) / f"{platform}_run_config.json") if bundle else model_dir(platform) / f"{platform}_run_config.json"
+        bundle = get_inference_bundle(bundle_key)
+        summary_path = (bundle_inspection_dir(bundle, platform) / f"{platform}_summary.json") if bundle else inspection_dir(platform) / f"{platform}_summary.json"
         cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
         summary = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.exists() else {}
         manifest = cfg.get("training_manifest", {})
         hdb = cfg.get("hdbscan", {})
-        holdout = train_model_dir(platform) / f"{platform}_scored_holdout.csv"
+        holdout = train_root / platform / f"{platform}_scored_holdout.csv"
         if not holdout.exists():
-            holdout = model_dir(platform) / f"{platform}_scored_holdout.csv"
+            holdout = (bundle_model_dir(bundle, platform) / f"{platform}_scored_holdout.csv") if bundle else model_dir(platform) / f"{platform}_scored_holdout.csv"
         hold = {
             "n_journeys": int(manifest.get("holdout_journeys", 0) or 0),
             "n_sessions": 0,
@@ -502,25 +745,32 @@ def load_train_run() -> dict:
 
 
 @st.cache_data(show_spinner=False)
-def load_inference(platform: str) -> pd.DataFrame:
+def load_inference(platform: str, bundle_key: str | None = None) -> pd.DataFrame:
     """Load only bounded inference examples for audit/detail views.
 
     Aggregate pages must use :func:`load_summary_csv`.  This function intentionally does
     not scan the 24 GB partition lake; it returns the bounded examples generated by the
     summary extractor and keeps a legacy cache fallback for older local checkouts.
     """
-    example_path = SUMMARY_DIR / "journey_examples.csv"
+    bundle = get_inference_bundle(bundle_key)
+    example_path = (bundle.summary_dir / "journey_examples.csv") if bundle and bundle.summary_dir else SUMMARY_DIR / "journey_examples.csv"
     if example_path.exists():
         df = pd.read_csv(example_path, encoding="utf-8-sig", low_memory=False)
         df = df[df.get("platform", platform).eq(platform)].copy() if "platform" in df.columns else df
     else:
         legacy = CACHE_DIR / f"inference_{platform}.parquet"
         if not legacy.exists():
-            return pd.DataFrame()
-        try:
-            df = pd.read_parquet(legacy)
-        except (ImportError, RuntimeError, ValueError):
-            return pd.DataFrame()
+            # Monthly exports may not have compact summaries yet.  Return a bounded
+            # partition sample for the event explorer, explicitly marked as a sample by
+            # the page; never use this frame for KPI calculations.
+            df = load_inference_sample(platform, bundle_key=bundle_key)
+            if df.empty:
+                return df
+        else:
+            try:
+                df = pd.read_parquet(legacy)
+            except (ImportError, RuntimeError, ValueError):
+                return pd.DataFrame()
 
     # Examples already carry their names.  The fallback normalisation below keeps older
     # cached examples and current bounded examples on the same schema.
@@ -556,6 +806,96 @@ def load_inference(platform: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
+def load_inference_sample(platform: str, bundle_key: str | None = None, limit: int = 3000) -> pd.DataFrame:
+    """Read a bounded row sample from a monthly Parquet/CSV export.
+
+    This is intentionally a detail-view helper.  It must not be used as a substitute for
+    compact summary tables because the first rows of a partitioned export are not a random
+    or volume-representative sample.
+    """
+    bundle = get_inference_bundle(bundle_key)
+    if not bundle or platform not in bundle.platforms:
+        return pd.DataFrame()
+    path = bundle_named_path(bundle, platform)
+    columns = [
+        "journey_id", "session_id", "customer_id", "start_ts", "end_ts", "cluster",
+        "cluster_name", "cluster_name_en", "business_family", "business_family_code",
+        "business_submodule", "n_events_final", "span_seconds", "back_rate",
+        "friction_flags", "behavioral_friction_flags", "entry_token", "exit_token",
+        "next_action", "effective_next_action", "sequence", "assignment_type",
+    ]
+    if path and path.suffix.lower() == ".csv":
+        try:
+            header = pd.read_csv(path, nrows=0, encoding="utf-8-sig").columns
+            usecols = [c for c in columns if c in header]
+            frame = pd.read_csv(path, usecols=usecols, nrows=limit, encoding="utf-8-sig", low_memory=False)
+        except (OSError, ValueError, pd.errors.ParserError):
+            return pd.DataFrame()
+    else:
+        paths = sorted(bundle_partition_root(bundle, platform).glob("*.parquet"))
+        if not paths:
+            return pd.DataFrame()
+        try:
+            # PyArrow's batch iterator avoids materialising the full monthly lake.
+            import pyarrow as pa  # noqa: F401
+            import pyarrow.dataset as ds
+
+            dataset = ds.dataset([str(p) for p in paths], format="parquet")
+            available = [c for c in columns if c in dataset.schema.names]
+            batches = []
+            rows = 0
+            for batch in dataset.to_batches(columns=available, batch_size=min(limit, 1000)):
+                batches.append(batch)
+                rows += batch.num_rows
+                if rows >= limit:
+                    break
+            if not batches:
+                return pd.DataFrame()
+            frame = pa.Table.from_batches(batches).to_pandas().head(limit)
+        except (ImportError, OSError, ValueError, RuntimeError):
+            return pd.DataFrame()
+    if "cluster" in frame.columns:
+        frame["cluster"] = pd.to_numeric(frame["cluster"], errors="coerce")
+    if "start_ts" in frame.columns:
+        frame["start_ts"] = pd.to_datetime(frame["start_ts"], errors="coerce", utc=True)
+    return frame
+
+
+@st.cache_data(show_spinner=False)
+def load_journey_detail(platform: str, journey_id: str, bundle_key: str | None = None) -> pd.DataFrame:
+    """Load one complete scored journey from its partition, including its sequence."""
+    bundle = get_inference_bundle(bundle_key)
+    if not bundle:
+        return pd.DataFrame()
+    # Summary examples already carry the complete inferred sequence.
+    examples = load_inference(platform, bundle_key=bundle_key)
+    if not examples.empty and "journey_id" in examples.columns:
+        hit = examples[examples["journey_id"].astype(str).eq(str(journey_id))]
+        if not hit.empty:
+            return hit.head(1).copy()
+    path = bundle_partition_for_journey(bundle, platform, journey_id)
+    if path is None:
+        return pd.DataFrame()
+    try:
+        # Read only the columns needed by the detail panel from one partition.
+        available = pd.read_parquet(path, engine="pyarrow").columns
+        columns = [c for c in [
+            "journey_id", "session_id", "customer_id", "start_ts", "end_ts", "cluster",
+            "cluster_name", "cluster_name_en", "business_family", "business_submodule",
+            "n_events_raw", "n_events_final", "span_seconds", "back_rate", "revisit_ratio",
+            "friction_flags", "behavioral_friction_flags", "entry_token", "exit_token",
+            "next_action", "effective_next_action", "assignment_type", "sequence",
+        ] if c in available]
+        frame = pd.read_parquet(path, columns=columns, engine="pyarrow")
+        frame = frame[frame["journey_id"].astype(str).eq(str(journey_id))].copy()
+        if "start_ts" in frame.columns:
+            frame["start_ts"] = pd.to_datetime(frame["start_ts"], errors="coerce", utc=True)
+        return frame.head(1)
+    except (ImportError, OSError, ValueError, RuntimeError):
+        return pd.DataFrame()
+
+
+@st.cache_data(show_spinner=False)
 def load_thresholds() -> dict:
     """Fitted percentile cut-offs the scorer uses to raise each friction flag."""
     path = CACHE_DIR / "thresholds.json"
@@ -578,18 +918,28 @@ def load_showcase() -> dict:
 
 
 @st.cache_data(show_spinner=False)
-def load_run_csv(name: str) -> pd.DataFrame:
+def load_run_csv(name: str, bundle_key: str | None = None, platform: str | None = None) -> pd.DataFrame:
     """Resolve a run artefact from the partitioned bundle.
 
     Callers still use the old logical names (``android_cluster_ngrams.csv`` etc.); this
     resolver keeps those page APIs stable while pointing them at ``model_output``.
     """
-    candidates = [RUN_DIR / name]
-    for platform in PLATFORMS:
-        if name.startswith(f"{platform}_"):
-            candidates.extend([train_model_dir(platform) / name, model_dir(platform) / name, inspection_dir(platform) / name])
-    if name == "cluster_name_mapping.csv":
-        candidates.insert(0, NAMING_FILE)
+    bundle = get_inference_bundle(bundle_key)
+    candidates = []
+    if bundle:
+        if platform:
+            candidates.extend([
+                bundle_platform_root(bundle, platform) / "model_version=latest" / name,
+                bundle_platform_root(bundle, platform) / "model_version=latest" / f"platform={platform}" / name,
+                bundle_train_model_dir(bundle.key, platform) / name,
+            ])
+        candidates.append(bundle.root / name)
+    candidates.append(RUN_DIR / name)
+    for p in ([platform] if platform else PLATFORMS):
+        if name.startswith(f"{p}_"):
+            candidates.extend([train_model_dir(p) / name, model_dir(p) / name, inspection_dir(p) / name])
+    if name in {"cluster_name_mapping.csv", "Cluster_naming.csv", "cluster_mapping.csv"}:
+        candidates.extend([NAMING_FILE, RUN_DIR / "cluster_mapping.csv"])
     path = next((p for p in candidates if p.exists()), None)
     if path is None:
         return pd.DataFrame()
@@ -597,10 +947,33 @@ def load_run_csv(name: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def load_cluster_names() -> pd.DataFrame:
-    if not NAMING_FILE.exists():
-        missing_cache_notice(t("cluster name mapping", "bảng tên cluster"))
-    df = pd.read_csv(NAMING_FILE, encoding="utf-8-sig", low_memory=False)
+def load_cluster_names(bundle_key: str | None = None, platform: str | None = None) -> pd.DataFrame:
+    """Load the best available authoritative mapping without stopping the page.
+
+    Monthly scoring exports use ``<platform>_cluster_mapping.csv`` while the older
+    combined run uses ``cluster_mapping.csv``/``Cluster_naming.csv``.  Both schemas are
+    normalized below so the UI can render even when the optional naming audit is absent.
+    """
+    candidates: list[Path] = []
+    bundle = get_inference_bundle(bundle_key)
+    platforms = [platform] if platform else PLATFORMS
+    if bundle:
+        for p in platforms:
+            root = bundle_platform_root(bundle, p)
+            candidates.extend([
+                root / "model_version=latest" / f"{p}_cluster_mapping.csv",
+                root / "model_version=latest" / f"{p}_scores_named.cluster_mapping.csv",
+                root / f"{p}_cluster_mapping.csv",
+            ])
+        candidates.append(bundle.root / "cluster_mapping.csv")
+    # Do not borrow names from the historical combined run for a monthly bundle; a
+    # missing mapping should remain an explicit empty state for that bundle/platform.
+    if bundle is None or bundle.key == RUN_DIR.name:
+        candidates.extend([NAMING_FILE, RUN_DIR / "cluster_mapping.csv"])
+    path = next((p for p in candidates if p.exists()), None)
+    if path is None:
+        return pd.DataFrame()
+    df = pd.read_csv(path, encoding="utf-8-sig", low_memory=False)
     # Cluster_naming.csv is intentionally business-facing and stores the readable label in
     # Vietnamese.  Preserve that label while exposing a stable English/code label to the
     # existing bilingual page code.
@@ -628,25 +1001,46 @@ def load_cluster_names() -> pd.DataFrame:
     if "cluster_id" in df.columns:
         df["cluster_id"] = pd.to_numeric(df["cluster_id"], errors="coerce")
         df["cluster"] = df["cluster_id"]
-    if df.empty:
-        missing_cache_notice(t("cluster name mapping", "bảng tên cluster"))
     return df
 
 
 @st.cache_data(show_spinner=False)
-def load_shareholder_catalog() -> dict:
-    path = inspection_dir("android") / "shareholder_cluster_catalog.json"
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+def load_shareholder_catalog(bundle_key: str | None = None, platform: str = "android") -> dict:
+    bundle = get_inference_bundle(bundle_key)
+    candidates = []
+    if bundle:
+        root = bundle_platform_root(bundle, platform)
+        candidates.extend([
+            root / "model_version=latest" / f"{platform}_shareholder_catalog.json",
+            root / "model_version=latest" / f"{platform}_scores_named.shareholder_catalog.json",
+            root / "model_version=latest" / f"{platform}_scores_named" / f"{platform}_shareholder_catalog.json",
+        ])
+    if bundle is None or bundle.key == RUN_DIR.name:
+        candidates.extend([
+            inspection_dir(platform) / "shareholder_cluster_catalog.json",
+            inspection_dir("android") / "shareholder_cluster_catalog.json",
+        ])
+    path = next((p for p in candidates if p.exists()), None)
+    return json.loads(path.read_text(encoding="utf-8")) if path else {}
 
 
 @st.cache_data(show_spinner=False)
-def load_shareholder_catalog_vi() -> dict:
-    path = inspection_dir("android") / "shareholder_cluster_catalog_vi.json"
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+def load_shareholder_catalog_vi(bundle_key: str | None = None, platform: str = "android") -> dict:
+    bundle = get_inference_bundle(bundle_key)
+    candidates = []
+    if bundle:
+        root = bundle_platform_root(bundle, platform)
+        candidates.extend([
+            root / "model_version=latest" / f"{platform}_shareholder_catalog_vi.json",
+            root / "model_version=latest" / f"{platform}_scores_named.shareholder_catalog_vi.json",
+        ])
+    if bundle is None or bundle.key == RUN_DIR.name:
+        candidates.extend([
+            inspection_dir(platform) / "shareholder_cluster_catalog_vi.json",
+            inspection_dir("android") / "shareholder_cluster_catalog_vi.json",
+        ])
+    path = next((p for p in candidates if p.exists()), None)
+    return json.loads(path.read_text(encoding="utf-8")) if path else {}
 
 
 # ======================================================================================

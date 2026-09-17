@@ -11,12 +11,17 @@ import streamlit as st
 
 from dashboard.lib import (
     PALETTE,
+    bundle_train_model_dir,
+    get_inference_bundle,
     fmt_int,
     fmt_pct,
     is_vi,
     kpi_row,
     load_cluster_names,
     load_run_csv,
+    load_summary_csv,
+    load_inference,
+    render_inference_scope,
     load_shareholder_catalog,
     load_shareholder_catalog_vi,
     load_train_run,
@@ -28,22 +33,29 @@ from dashboard.lib import (
 
 
 @st.cache_data(show_spinner=False)
-def build_cluster_table(platform: str) -> pd.DataFrame:
+def build_cluster_table(platform: str, bundle_key: str | None = None) -> pd.DataFrame:
     # The fitted run already publishes a complete per-cluster catalog.  It contains the
     # shape metrics this page needs, so do not rescan the ~1 GB *_journeys.csv training
     # table merely to reconstruct the catalog at app startup.
-    catalog_path = train_model_dir(platform) / f"{platform}_cluster_catalog.json"
+    bundle = get_inference_bundle(bundle_key)
+    train_dir = train_model_dir(platform)
+    if bundle_key:
+        train_dir = bundle_train_model_dir(bundle_key, platform)
+    catalog_path = train_dir / f"{platform}_cluster_catalog.json"
     if catalog_path.exists():
         catalog = pd.DataFrame(json.loads(catalog_path.read_text(encoding="utf-8")))
     else:
-        catalog = load_run_csv(f"{platform}_report_cluster_catalog.csv")
-    names = load_cluster_names()
-    names = names[names["platform"] == platform].copy()
+        catalog = load_run_csv(f"{platform}_report_cluster_catalog.csv", bundle_key=bundle_key, platform=platform)
+    observed = load_summary_csv("cluster_summary.csv", bundle_key=bundle_key)
+    observed = observed[observed.get("platform", platform).eq(platform)].copy() if not observed.empty and "platform" in observed.columns else observed
+    names = load_cluster_names(bundle_key=bundle_key, platform=platform)
+    if not names.empty and "platform" in names.columns:
+        names = names[names["platform"] == platform].copy()
     names["cluster"] = pd.to_numeric(names.get("cluster_id", names.get("cluster")), errors="coerce")
     names = names.drop_duplicates("cluster")
 
-    if catalog.empty:
-        return catalog
+    if catalog.empty and observed.empty:
+        return pd.DataFrame()
 
     # Catalogs use size/share and the naming table uses journey_count/journey_share. Keep
     # one stable shape for both the JSON catalog and older CSV mirrors.
@@ -53,13 +65,27 @@ def build_cluster_table(platform: str) -> pd.DataFrame:
         catalog["size"] = catalog.get("journey_count", 0)
     if "share" not in catalog.columns:
         catalog["share"] = catalog.get("journey_share", 0)
-    catalog["cluster"] = pd.to_numeric(catalog["cluster"], errors="coerce")
-    df = catalog.merge(
-        names[[c for c in ["cluster", "cluster_name", "cluster_name_vi", "business_family",
-                           "business_family_vi", "naming_confidence", "ngrams"] if c in names.columns]],
-        on="cluster", how="left", suffixes=("", "_name"),
-    )
-    audit = load_run_csv("cluster_naming_audit.csv")
+    if not catalog.empty:
+        catalog["cluster"] = pd.to_numeric(catalog["cluster"], errors="coerce")
+    if not observed.empty:
+        observed["cluster"] = pd.to_numeric(observed["cluster"], errors="coerce")
+        observed = observed.rename(columns={"journeys": "observed_journeys", "sessions": "observed_sessions", "customers": "observed_customers", "platform_share": "observed_share", "journey_type": "observed_journey_type"})
+    if catalog.empty:
+        df = observed.copy()
+        df["size"] = df.get("observed_journeys", 0)
+        df["share"] = df.get("observed_share", 0.0)
+    else:
+        df = catalog.copy()
+        if not observed.empty:
+            obs_cols = [c for c in ["cluster", "observed_journeys", "observed_sessions", "observed_customers", "observed_share", "observed_journey_type"] if c in observed.columns]
+            df = df.merge(observed[obs_cols], on="cluster", how="left")
+    if not names.empty:
+        df = df.merge(
+            names[[c for c in ["cluster", "cluster_name", "cluster_name_vi", "business_family",
+                               "business_family_vi", "naming_confidence", "ngrams"] if c in names.columns]],
+            on="cluster", how="left", suffixes=("", "_name"),
+        )
+    audit = load_run_csv("cluster_naming_audit.csv", bundle_key=bundle_key, platform=platform)
     if not audit.empty:
         audit = audit[audit["platform"] == platform].copy()
         audit["cluster"] = pd.to_numeric(audit["cluster"], errors="coerce")
@@ -78,18 +104,43 @@ def build_cluster_table(platform: str) -> pd.DataFrame:
         df["median_length"] = df["medoid_length"]
     if "median_span_s" not in df.columns:
         df["median_span_s"] = 0.0
-    df["business_family"] = df["business_family"].fillna("unknown")
+    defaults = {
+        "n_sessions": 0, "n_devices": 0, "mean_action_ratio": 0.0,
+        "mean_revisit_ratio": 0.0, "loop_journey_share": 0.0,
+        "top_entry_token": "", "top_exit_token": "", "medoid_path": "",
+        "medoid_journey_id": "", "medoid_length": 0,
+    }
+    for col, default in defaults.items():
+        if col not in df.columns:
+            df[col] = default
+    if "cluster_name" not in df.columns:
+        df["cluster_name"] = df.get("journey_type", df.get("observed_journey_type", "Unnamed cluster"))
+    if "cluster_name_vi" not in df.columns:
+        df["cluster_name_vi"] = df["cluster_name"]
+    if "naming_confidence" not in df.columns:
+        df["naming_confidence"] = "inference"
+    df["business_family"] = df.get("business_family", pd.Series("unknown", index=df.index)).fillna("unknown")
     df["cluster_name"] = df["cluster_name"].fillna("Unnamed cluster")
     df["cluster_name_vi"] = df["cluster_name_vi"].fillna(df["cluster_name"])
     df["is_noise"] = df["cluster"] == -1
+    # Primary volume/share are observed inference values when available. Training
+    # values remain visible for comparison instead of being mistaken for this period.
+    if "observed_journeys" in df.columns:
+        df["train_size"] = df["size"]
+        df["train_share"] = df["share"]
+        df["size"] = pd.to_numeric(df["observed_journeys"], errors="coerce").fillna(0)
+        df["share"] = pd.to_numeric(df.get("observed_share", 0), errors="coerce").fillna(0)
+    for col, default in [("observed_journeys", 0), ("observed_sessions", 0), ("observed_customers", 0), ("observed_share", 0.0), ("train_size", 0), ("train_share", 0.0)]:
+        if col not in df.columns:
+            df[col] = default
     return df
 
 
 @st.cache_data(show_spinner=False)
-def readable_steps(platform: str, vi: bool) -> dict:
-    cat = load_shareholder_catalog_vi() if vi else load_shareholder_catalog()
+def readable_steps(platform: str, vi: bool, bundle_key: str | None = None) -> dict:
+    cat = load_shareholder_catalog_vi(bundle_key=bundle_key, platform=platform) if vi else load_shareholder_catalog(bundle_key=bundle_key, platform=platform)
     if not cat:
-        cat = load_shareholder_catalog()
+        cat = load_shareholder_catalog(bundle_key=bundle_key, platform=platform)
     out = {}
     for p in cat.get("platforms", []):
         if p.get("platform") != platform:
@@ -109,33 +160,75 @@ def readable_steps(platform: str, vi: bool) -> dict:
 
 
 def render() -> None:
-    st.title(t("3 · The journey types the model learned", "3 · Các journey type mà model học được"))
+    st.title(t("3 · Learned journeys and current inference", "3 · Journey đã học và inference hiện tại"))
     st.caption(
         t(
             "Clusters are learned unsupervised from token sequences; the names are readable "
             "interpretations of the cluster's medoid path, entry/exit tokens and top n-grams — "
-            "they are not labels that existed anywhere in the source system.",
+            "they are not labels that existed anywhere in the source system. Counts below are joined to the selected inference bundle.",
             "Cluster được học không giám sát từ chuỗi token; tên gọi là cách diễn giải dễ đọc dựa trên "
             "medoid path, token entry/exit và các n-gram đặc trưng của cluster — chúng không phải nhãn "
-            "có sẵn ở bất kỳ đâu trong hệ thống nguồn.",
+            "có sẵn ở bất kỳ đâu trong hệ thống nguồn. Các số đếm bên dưới được nối với bundle inference đang chọn.",
         )
     )
 
-    platform = st.radio(
-        t("Platform model", "Model theo platform"), ["android", "ios"], horizontal=True, format_func=str.title
-    )
-    df = build_cluster_table(platform)
+    bundle, platforms, date_range = render_inference_scope()
+    if bundle is None:
+        return
+    if not platforms:
+        st.warning(t("Select at least one platform.", "Hãy chọn ít nhất một platform."))
+        return
+    platform = st.selectbox(t("Inspect platform", "Platform cần xem"), platforms, format_func=str.title, key=f"clusters_platform_{bundle.key}")
+    df = build_cluster_table(platform, bundle.key)
     if df.empty:
-        st.warning(t("No cluster catalog found for this platform.", "Không tìm thấy cluster catalog cho platform này."))
+        st.warning(t("No learned or inferred cluster catalogue is available for this platform/bundle.", "Không có catalogue cluster học được hoặc inference cho platform/bundle này."))
         return
 
     vi = is_vi()
     name_col = "cluster_name_vi" if vi else "cluster_name"
     df["display_name"] = df[name_col]
 
-    run = load_train_run()
+    run = load_train_run(bundle.key)
     hdb = run["platforms"].get(platform, {}).get("run_config", {}).get("hdbscan", {})
-    steps = readable_steps(platform, vi)
+    steps = readable_steps(platform, vi, bundle.key)
+
+    if date_range is not None:
+        daily = load_summary_csv("daily_cluster_summary.csv", bundle_key=bundle.key)
+        if not daily.empty and "platform" in daily.columns:
+            daily = daily[daily["platform"].eq(platform)].copy()
+        if not daily.empty and "date" in daily.columns:
+            daily["date"] = pd.to_datetime(daily["date"], errors="coerce").dt.date
+            daily = daily[(daily["date"] >= date_range[0]) & (daily["date"] <= date_range[1])]
+            scoped = daily.groupby("cluster", as_index=False).agg(
+                observed_journeys=("journeys", "sum"), observed_sessions=("sessions", "sum"), observed_customers=("customers", "sum")
+            )
+            total_scoped = float(scoped["observed_journeys"].sum()) or 1.0
+            scoped["observed_share"] = scoped["observed_journeys"] / total_scoped
+            df = df.drop(columns=[c for c in ["observed_journeys", "observed_sessions", "observed_customers", "observed_share"] if c in df.columns]).merge(scoped, on="cluster", how="left")
+            for col in ["observed_journeys", "observed_sessions", "observed_customers", "observed_share"]:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+            df["size"] = df["observed_journeys"]
+            df["share"] = df["observed_share"]
+
+    st.caption(
+        t(
+            f"Active scope: {bundle.label} · {platform.title()}" + (f" · {date_range[0]} → {date_range[1]}" if date_range else "."),
+            f"Phạm vi: {bundle.label} · {platform.title()}" + (f" · {date_range[0]} → {date_range[1]}" if date_range else "."),
+        )
+    )
+    st.info(t("Training columns describe the learned catalogue; volume/share describe journeys observed in the selected inference scope.", "Các cột training mô tả catalogue đã học; volume/share mô tả journey quan sát được trong phạm vi inference đang chọn."))
+
+    # Keep a bounded, row-level view here so the learned type can be audited against
+    # actual inferred journeys. Aggregate values above still come from compact summaries.
+    examples = load_inference(platform, bundle_key=bundle.key)
+    if not examples.empty and "cluster" in examples.columns:
+        if date_range is not None and "start_ts" in examples.columns:
+            examples["start_ts"] = pd.to_datetime(examples["start_ts"], errors="coerce", utc=True)
+            examples = examples[(examples["start_ts"].dt.date >= date_range[0]) & (examples["start_ts"].dt.date <= date_range[1])]
+        st.subheader(t("Inferred journey examples in this scope", "Journey inference mẫu trong phạm vi này"))
+        ex_cols = [c for c in ["journey_id", "start_ts", "cluster", "journey_type", "n_events_final", "span_seconds", "assignment_type", "sequence"] if c in examples.columns]
+        st.dataframe(examples[ex_cols].head(200), hide_index=True, width="stretch", height=300)
+        st.caption(t("This is a bounded audit sample; KPI totals above come from the full scored export.", "Đây là mẫu audit có giới hạn; KPI bên trên lấy từ toàn bộ export đã inference."))
 
     named = df[~df["is_noise"]]
     noise = df[df["is_noise"]]
@@ -155,7 +248,7 @@ def render() -> None:
             (t("Business families", "Số business family"), fmt_int(named["business_family"].nunique()), None),
             (t("Journeys in catalog", "Journey trong catalog"), fmt_int(df["size"].sum()), None),
             (t("Largest type", "Type lớn nhất"), fmt_pct(named["share"].max()), t("Share of all training journeys", "Tỷ lệ trên tổng journey khi train")),
-            (t("Unclassified", "Chưa phân loại"), fmt_pct(noise_share), t("Journeys HDBSCAN left as noise while fitting", "Journey bị HDBSCAN để là noise khi fit")),
+            (t("Unclassified in inference", "Chưa phân loại khi inference"), fmt_pct(noise_share), t("Share of journeys assigned to cluster -1 in the selected scope", "Tỷ lệ journey được gán cluster -1 trong phạm vi đang chọn")),
         ]
     )
 
@@ -267,7 +360,9 @@ def render() -> None:
         "naming_confidence": t("confidence", "độ tin cậy"),
         "size": JC,
         "share": SC,
-        "n_sessions": t("sessions", "session"),
+        "observed_sessions": t("inference sessions", "session inference"),
+        "observed_customers": t("inference customers", "customer inference"),
+        "train_size": t("train journeys", "journey train"),
         "n_devices": t("devices", "device"),
         "median_length": t("steps", "số bước"),
         "median_span_s": t("duration (s)", "thời lượng (giây)"),
@@ -347,7 +442,10 @@ def render() -> None:
                 [
                     {mcol: t("journeys", "journey"), vcol: fmt_int(row["size"])},
                     {mcol: t("share of all journeys", "tỷ lệ trên tổng journey"), vcol: fmt_pct(row["share"], 2)},
-                    {mcol: t("sessions", "session"), vcol: fmt_int(row["n_sessions"])},
+                    {mcol: t("inference sessions", "session inference"), vcol: fmt_int(row["observed_sessions"])},
+                    {mcol: t("inference customers", "customer inference"), vcol: fmt_int(row["observed_customers"])},
+                    {mcol: t("training journeys", "journey khi train"), vcol: fmt_int(row["train_size"])},
+                    {mcol: t("training share", "tỷ lệ khi train"), vcol: fmt_pct(row["train_share"], 2)},
                     {mcol: t("devices", "device"), vcol: fmt_int(row["n_devices"])},
                     {mcol: t("median steps", "số bước trung vị"), vcol: f"{row['median_length']:.0f}"},
                     {mcol: t("median duration (s)", "thời lượng trung vị (giây)"), vcol: f"{row['median_span_s']:.1f}"},
@@ -367,7 +465,7 @@ def render() -> None:
     e2.code(row["top_exit_token"], language=None)
     e2.caption(t("Most common last step", "Bước cuối cùng phổ biến nhất"))
 
-    ng = load_run_csv(f"{platform}_cluster_ngrams.csv")
+    ng = load_run_csv(f"{platform}_cluster_ngrams.csv", bundle_key=bundle.key, platform=platform)
     ng = ng[ng["cluster"] == pick].sort_values("rank").head(10)
     if not ng.empty:
         st.markdown(

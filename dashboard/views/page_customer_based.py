@@ -17,7 +17,7 @@ from dashboard.lib import (
 
 
 def _load(name: str) -> pd.DataFrame:
-    return load_customer_analysis_csv(name)
+    return load_customer_analysis_csv(name, bundle_key=st.session_state.get("inference_bundle"))
 
 
 def render() -> None:

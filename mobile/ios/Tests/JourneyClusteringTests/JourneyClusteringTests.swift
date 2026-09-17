@@ -155,6 +155,25 @@ final class JourneyClusteringTests: XCTestCase {
 
     // MARK: - 5. End-to-End JourneyModel Integration Test with Assets
 
+    func testGuestLoginGateClusterRemainsHome() throws {
+        let thisFile = URL(fileURLWithPath: #file)
+        let packageRoot = thisFile
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let mappingURL = packageRoot
+            .appendingPathComponent("resource")
+            .appendingPathComponent("cluster_mapping.json")
+        let mapping = try ClusterMapping(
+            json: String(contentsOf: mappingURL, encoding: .utf8)
+        )
+
+        let guestLogin = try XCTUnwrap(mapping.lookup(clusterId: 531))
+        XCTAssertEqual(guestLogin.clusterName, "Home | Trang chủ")
+        XCTAssertEqual(guestLogin.businessFamily, "Home")
+        XCTAssertEqual(guestLogin.businessSubmodule, "Trang chủ")
+    }
+
     func testJourneyModelWithWorkspaceAssets() throws {
         // Locate resource directory relative to this test file (portable across any machine/environment)
         let thisFile = URL(fileURLWithPath: #file)

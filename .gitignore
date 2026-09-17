@@ -1,24 +1,98 @@
+# Operating-system files
+.DS_Store
+Thumbs.db
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# Environment variables and local configuration
+.env
+.env.*
+!.env.example
+*.local
+
+# Python environments
 .venv/
-outputs/
-output/
-data/
-*.pkl
-docs/pdf/
-docs/overview/
-docs/details
+venv/
+env/
+ENV/
 
-
-
-.cache/
+# Python bytecode and caches
 __pycache__/
 *.py[cod]
 *$py.class
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Python build and package artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Generated datasets, models, reports, and experiment outputs
+data/
+output/
+outputs/
+*.pkl
+docs/pdf/
+docs/overview/
+docs/details/
+scratch/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
 .codex_tmp/
 
-
+# Generated presentation artifacts
 *.pptx
 *.pptx.*
 _ppt_build/
 
-mobile/
+# Android / Gradle build state
+.gradle/
 .gradle-codex/
+**/build/
+mobile/android/local.properties
+mobile/android/captures/
+*.apk
+*.aab
+*.dex
+*.class
+
+# Swift Package Manager / Xcode build state
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+
+# JavaScript package managers (if dashboard tooling is added)
+node_modules/
+.npm/
+.yarn/cache/
+.yarn/unplugged/
+.pnpm-store/

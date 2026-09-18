@@ -1,0 +1,487 @@
+﻿taxonomy_id,business_family,business_submodule,business_detail
+M01.01.01,Truy cập và tài khoản,Đăng nhập,Đăng nhập FPT ID
+M01.01.02,Truy cập và tài khoản,Đăng nhập,Đăng nhập bằng OTP
+M01.01.03,Truy cập và tài khoản,Đăng nhập,Gửi lại OTP đăng nhập
+M01.01.04,Truy cập và tài khoản,Đăng nhập,Đăng nhập bằng PIN
+M01.01.05,Truy cập và tài khoản,Đăng nhập,Đăng nhập bằng sinh trắc học
+M01.01.06,Truy cập và tài khoản,Đăng nhập,Đổi tài khoản đăng nhập
+M01.01.07,Truy cập và tài khoản,Đăng nhập,Chuyển sang OTP khi đăng nhập FPT ID lỗi
+M01.01.08,Truy cập và tài khoản,Đăng nhập,Mở đăng ký tài khoản mới
+M01.02.01,Truy cập và tài khoản,Đăng nhập VNeID,Đăng nhập SSO VNeID
+M01.02.02,Truy cập và tài khoản,Đăng nhập VNeID,Xác nhận liên kết số điện thoại với CCCD
+M01.02.03,Truy cập và tài khoản,Đăng nhập VNeID,Xử lý/gỡ liên kết số điện thoại–CCCD bị xung đột
+M01.03.01,Truy cập và tài khoản,Bảo mật tài khoản,Thiết lập PIN lần đầu
+M01.03.02,Truy cập và tài khoản,Bảo mật tài khoản,Đổi PIN
+M01.03.03,Truy cập và tài khoản,Bảo mật tài khoản,Khôi phục PIN khi quên
+M01.03.04,Truy cập và tài khoản,Bảo mật tài khoản,Thiết lập lưu phiên đăng nhập
+M01.03.05,Truy cập và tài khoản,Bảo mật tài khoản,Đăng xuất
+M01.04.01,Truy cập và tài khoản,Thông tin cá nhân,Xem thông tin tài khoản
+M01.04.02,Truy cập và tài khoản,Thông tin cá nhân,Cập nhật họ tên
+M01.04.03,Truy cập và tài khoản,Thông tin cá nhân,Cập nhật ngày sinh
+M01.04.04,Truy cập và tài khoản,Thông tin cá nhân,Cập nhật danh xưng
+M01.04.05,Truy cập và tài khoản,Thông tin cá nhân,Đổi ảnh đại diện
+M01.05.01,Truy cập và tài khoản,Cài đặt và thông tin ứng dụng,Đổi ngôn ngữ Việt/Anh
+M01.05.02,Truy cập và tài khoản,Cài đặt và thông tin ứng dụng,Xem điều khoản và chính sách bảo mật
+M01.05.03,Truy cập và tài khoản,Cài đặt và thông tin ứng dụng,Xem giới thiệu Hi FPT
+M01.05.04,Truy cập và tài khoản,Cài đặt và thông tin ứng dụng,Khai báo Bạn biết Hi FPT từ đâu
+M02.01.01,Trang chủ và khám phá,Trang chủ,Xem tổng quan dịch vụ trên Home
+M02.01.02,Trang chủ và khám phá,Trang chủ,Khám phá banner/ưu đãi trên Home
+M02.01.03,Trang chủ và khám phá,Trang chủ,Mở block Chỉ có tại Hi FPT
+M02.01.04,Trang chủ và khám phá,Trang chủ,Trải nghiệm Home chưa đăng nhập
+M02.02.01,Trang chủ và khám phá,Tìm kiếm toàn ứng dụng,Tìm kiếm tính năng
+M02.02.02,Trang chủ và khám phá,Tìm kiếm toàn ứng dụng,Tìm kiếm sản phẩm/dịch vụ
+M02.02.03,Trang chủ và khám phá,Tìm kiếm toàn ứng dụng,Mở kết quả tìm kiếm
+M02.02.04,Trang chủ và khám phá,Tìm kiếm toàn ứng dụng,Chọn từ khóa phổ biến/gợi ý
+M02.02.05,Trang chủ và khám phá,Tìm kiếm toàn ứng dụng,Xem và dùng lại lịch sử tìm kiếm
+M02.02.06,Trang chủ và khám phá,Tìm kiếm toàn ứng dụng,Xóa lịch sử tìm kiếm
+M02.03.01,Trang chủ và khám phá,FPT Zone,Khám phá FPT Zone
+M02.03.02,Trang chủ và khám phá,FPT Zone,Xem chuyên mục Esports
+M02.03.03,Trang chủ và khám phá,FPT Zone,Xem chuyên mục thể thao/giải trí
+M02.03.04,Trang chủ và khám phá,FPT Zone,Khám phá danh mục dịch vụ FPT
+M03.01.01,Hợp đồng và thủ tục dịch vụ,Danh sách và liên kết hợp đồng,Xem danh sách hợp đồng
+M03.01.02,Hợp đồng và thủ tục dịch vụ,Danh sách và liên kết hợp đồng,Tìm kiếm hợp đồng đang quản lý
+M03.01.03,Hợp đồng và thủ tục dịch vụ,Danh sách và liên kết hợp đồng,Chọn/đổi hợp đồng đang xem
+M03.01.04,Hợp đồng và thủ tục dịch vụ,Danh sách và liên kết hợp đồng,Bật liên kết hợp đồng
+M03.01.05,Hợp đồng và thủ tục dịch vụ,Danh sách và liên kết hợp đồng,Tắt liên kết hợp đồng
+M03.01.06,Hợp đồng và thủ tục dịch vụ,Danh sách và liên kết hợp đồng,Gửi phản ánh khi tắt liên kết
+M03.02.01,Hợp đồng và thủ tục dịch vụ,Thông tin hợp đồng,Xem thông tin hợp đồng
+M03.02.02,Hợp đồng và thủ tục dịch vụ,Thông tin hợp đồng,Mở phân quyền hợp đồng
+M03.02.03,Hợp đồng và thủ tục dịch vụ,Thông tin hợp đồng,Xem lịch sử thay đổi thông tin hợp đồng
+M03.02.04,Hợp đồng và thủ tục dịch vụ,Thông tin hợp đồng,Mở hóa đơn điện tử
+M03.03.01,Hợp đồng và thủ tục dịch vụ,Thay đổi thông tin khách hàng,Thay đổi số điện thoại chính chủ
+M03.03.02,Hợp đồng và thủ tục dịch vụ,Thay đổi thông tin khách hàng,Thay đổi email hợp đồng
+M03.03.03,Hợp đồng và thủ tục dịch vụ,Thay đổi thông tin khách hàng,Thay đổi loại giấy tờ tùy thân
+M03.03.04,Hợp đồng và thủ tục dịch vụ,Thay đổi thông tin khách hàng,Thay đổi hình thức thanh toán
+M03.03.05,Hợp đồng và thủ tục dịch vụ,Thay đổi thông tin khách hàng,Thay đổi địa chỉ thanh toán
+M03.03.06,Hợp đồng và thủ tục dịch vụ,Thay đổi thông tin khách hàng,Thay đổi địa chỉ xuất hóa đơn
+M03.03.07,Hợp đồng và thủ tục dịch vụ,Thay đổi thông tin khách hàng,Chụp/tải giấy tờ tùy thân theo yêu cầu SR
+M03.03.08,Hợp đồng và thủ tục dịch vụ,Thay đổi thông tin khách hàng,Theo dõi yêu cầu thay đổi thông tin
+M03.04.01,Hợp đồng và thủ tục dịch vụ,Xác thực VNeID và chuyển sở hữu,Cập nhật thông tin hợp đồng qua VNeID sau ký bán thêm
+M03.04.02,Hợp đồng và thủ tục dịch vụ,Xác thực VNeID và chuyển sở hữu,Xác nhận chia sẻ dữ liệu VNeID
+M03.04.03,Hợp đồng và thủ tục dịch vụ,Xác thực VNeID và chuyển sở hữu,Yêu cầu tư vấn chuyển chủ sở hữu
+M03.05.01,Hợp đồng và thủ tục dịch vụ,Chuyển địa điểm,Yêu cầu chuyển địa điểm lắp đặt
+M03.05.02,Hợp đồng và thủ tục dịch vụ,Chuyển địa điểm,Chọn/nhập địa chỉ lắp đặt mới
+M03.05.03,Hợp đồng và thủ tục dịch vụ,Chuyển địa điểm,Xem và xác nhận thông tin chuyển địa điểm
+M03.05.04,Hợp đồng và thủ tục dịch vụ,Chuyển địa điểm,Thanh toán chuyển địa điểm
+M03.05.05,Hợp đồng và thủ tục dịch vụ,Chuyển địa điểm,Theo dõi trạng thái chuyển địa điểm
+M03.06.01,Hợp đồng và thủ tục dịch vụ,Tạm ngưng dịch vụ,Yêu cầu tạm ngưng dịch vụ
+M03.06.02,Hợp đồng và thủ tục dịch vụ,Tạm ngưng dịch vụ,Chọn dịch vụ/lý do/thời hạn tạm ngưng
+M03.06.03,Hợp đồng và thủ tục dịch vụ,Tạm ngưng dịch vụ,Chọn hoàn trả hoặc bồi thường thiết bị
+M03.06.04,Hợp đồng và thủ tục dịch vụ,Tạm ngưng dịch vụ,Chọn lịch thu hồi thiết bị
+M03.06.05,Hợp đồng và thủ tục dịch vụ,Tạm ngưng dịch vụ,Xem và thanh toán chi phí tạm ngưng
+M03.06.06,Hợp đồng và thủ tục dịch vụ,Tạm ngưng dịch vụ,Ký biên bản tạm ngưng
+M03.06.07,Hợp đồng và thủ tục dịch vụ,Tạm ngưng dịch vụ,Theo dõi yêu cầu tạm ngưng
+M03.06.08,Hợp đồng và thủ tục dịch vụ,Tạm ngưng dịch vụ,Yêu cầu tư vấn khi không đủ điều kiện tạm ngưng
+M03.07.01,Hợp đồng và thủ tục dịch vụ,Khôi phục và nâng cấp,Xem hợp đồng đủ điều kiện khôi phục
+M03.07.02,Hợp đồng và thủ tục dịch vụ,Khôi phục và nâng cấp,Xem dịch vụ cần khôi phục
+M03.07.03,Hợp đồng và thủ tục dịch vụ,Khôi phục và nâng cấp,Gửi yêu cầu khôi phục dịch vụ
+M03.07.04,Hợp đồng và thủ tục dịch vụ,Khôi phục và nâng cấp,Yêu cầu nâng cấp dịch vụ
+M04.01.01,Hợp đồng điện tử và nghiệm thu,Hợp đồng/Phụ lục,Xem danh sách hợp đồng/phụ lục quản lý
+M04.01.02,Hợp đồng điện tử và nghiệm thu,Hợp đồng/Phụ lục,Xem danh sách hợp đồng/phụ lục khác
+M04.01.03,Hợp đồng điện tử và nghiệm thu,Hợp đồng/Phụ lục,Xem chi tiết hợp đồng/phụ lục
+M04.01.04,Hợp đồng điện tử và nghiệm thu,Hợp đồng/Phụ lục,Ký hợp đồng/phụ lục bằng OTP
+M04.01.05,Hợp đồng điện tử và nghiệm thu,Hợp đồng/Phụ lục,Xác nhận điều khoản sử dụng
+M04.01.06,Hợp đồng điện tử và nghiệm thu,Hợp đồng/Phụ lục,Ký phụ lục bán thêm
+M04.02.01,Hợp đồng điện tử và nghiệm thu,Ký và cập nhật qua VNeID,Mở luồng ký BBĐT bán mới khi đăng nhập VNeID
+M04.02.02,Hợp đồng điện tử và nghiệm thu,Ký và cập nhật qua VNeID,Xác thực CCCD/VNeID trước ký
+M04.02.03,Hợp đồng điện tử và nghiệm thu,Ký và cập nhật qua VNeID,Xác nhận biên bản bán thêm và mở cập nhật thông tin qua VNeID
+M04.03.01,Hợp đồng điện tử và nghiệm thu,Biên bản nghiệm thu,Xem danh sách BBNT hợp đồng quản lý
+M04.03.02,Hợp đồng điện tử và nghiệm thu,Biên bản nghiệm thu,Xem danh sách BBNT hợp đồng khác
+M04.03.03,Hợp đồng điện tử và nghiệm thu,Biên bản nghiệm thu,Xem BBNT triển khai
+M04.03.04,Hợp đồng điện tử và nghiệm thu,Biên bản nghiệm thu,Xem BBNT bảo trì
+M04.03.05,Hợp đồng điện tử và nghiệm thu,Biên bản nghiệm thu,Ký xác nhận BBNT
+M04.04.01,Hợp đồng điện tử và nghiệm thu,Ký thanh lý trên web,Mở web ký biên bản thanh lý trước sử dụng
+M04.04.02,Hợp đồng điện tử và nghiệm thu,Ký thanh lý trên web,Ký OTP biên bản thanh lý trước sử dụng
+M05.01.01,"Internet, Wi-Fi và thiết bị mạng",Modem,Xem thông tin/trạng thái modem
+M05.01.02,"Internet, Wi-Fi và thiết bị mạng",Modem,Đổi tên gợi nhớ modem
+M05.01.03,"Internet, Wi-Fi và thiết bị mạng",Modem,Khởi động lại modem
+M05.01.04,"Internet, Wi-Fi và thiết bị mạng",Modem,Đặt lịch khởi động modem
+M05.02.01,"Internet, Wi-Fi và thiết bị mạng",Wi-Fi chính/khách,Xem danh sách và trạng thái Wi-Fi
+M05.02.02,"Internet, Wi-Fi và thiết bị mạng",Wi-Fi chính/khách,Đổi tên Wi-Fi
+M05.02.03,"Internet, Wi-Fi và thiết bị mạng",Wi-Fi chính/khách,Đổi mật khẩu Wi-Fi
+M05.02.04,"Internet, Wi-Fi và thiết bị mạng",Wi-Fi chính/khách,Sao chép mật khẩu Wi-Fi
+M05.02.05,"Internet, Wi-Fi và thiết bị mạng",Wi-Fi chính/khách,Chia sẻ Wi-Fi bằng QR
+M05.02.06,"Internet, Wi-Fi và thiết bị mạng",Wi-Fi chính/khách,Bật Wi-Fi
+M05.02.07,"Internet, Wi-Fi và thiết bị mạng",Wi-Fi chính/khách,Tắt Wi-Fi
+M05.02.08,"Internet, Wi-Fi và thiết bị mạng",Wi-Fi chính/khách,Đặt lịch bật/tắt Wi-Fi
+M05.02.09,"Internet, Wi-Fi và thiết bị mạng",Wi-Fi chính/khách,Cập nhật lịch bật/tắt Wi-Fi
+M05.03.01,"Internet, Wi-Fi và thiết bị mạng",Wi-Fi IoT,Xem Wi-Fi IoT theo băng tần
+M05.03.02,"Internet, Wi-Fi và thiết bị mạng",Wi-Fi IoT,Bật Wi-Fi IoT
+M05.03.03,"Internet, Wi-Fi và thiết bị mạng",Wi-Fi IoT,Tắt Wi-Fi IoT
+M05.03.04,"Internet, Wi-Fi và thiết bị mạng",Wi-Fi IoT,Đổi tên Wi-Fi IoT
+M05.03.05,"Internet, Wi-Fi và thiết bị mạng",Wi-Fi IoT,Đổi mật khẩu Wi-Fi IoT
+M05.03.06,"Internet, Wi-Fi và thiết bị mạng",Wi-Fi IoT,Sao chép mật khẩu Wi-Fi IoT
+M05.03.07,"Internet, Wi-Fi và thiết bị mạng",Wi-Fi IoT,Chia sẻ QR Wi-Fi IoT
+M05.04.01,"Internet, Wi-Fi và thiết bị mạng",Mô hình mạng và lưu lượng,Xem mô hình mạng Modem/AP/Mesh
+M05.04.02,"Internet, Wi-Fi và thiết bị mạng",Mô hình mạng và lưu lượng,Làm mới mô hình mạng
+M05.04.03,"Internet, Wi-Fi và thiết bị mạng",Mô hình mạng và lưu lượng,Xem chi tiết Modem/AP từ mô hình
+M05.04.04,"Internet, Wi-Fi và thiết bị mạng",Mô hình mạng và lưu lượng,Xem báo cáo upload/download
+M05.04.05,"Internet, Wi-Fi và thiết bị mạng",Mô hình mạng và lưu lượng,Xem báo cáo số lượng thiết bị truy cập
+M05.04.06,"Internet, Wi-Fi và thiết bị mạng",Mô hình mạng và lưu lượng,Xem báo cáo mạng theo ngày
+M05.05.01,"Internet, Wi-Fi và thiết bị mạng",Thiết bị kết nối,Xem tất cả thiết bị
+M05.05.02,"Internet, Wi-Fi và thiết bị mạng",Thiết bị kết nối,Xem thiết bị đang kết nối
+M05.05.03,"Internet, Wi-Fi và thiết bị mạng",Thiết bị kết nối,Xem thiết bị bị chặn
+M05.05.04,"Internet, Wi-Fi và thiết bị mạng",Thiết bị kết nối,Tìm thiết bị theo tên/MAC
+M05.05.05,"Internet, Wi-Fi và thiết bị mạng",Thiết bị kết nối,Lọc thiết bị theo Modem/AP
+M05.05.06,"Internet, Wi-Fi và thiết bị mạng",Thiết bị kết nối,Xem chi tiết thiết bị
+M05.05.07,"Internet, Wi-Fi và thiết bị mạng",Thiết bị kết nối,Đổi tên gợi nhớ thiết bị
+M05.05.08,"Internet, Wi-Fi và thiết bị mạng",Thiết bị kết nối,Đổi hình ảnh nhận diện thiết bị
+M05.05.09,"Internet, Wi-Fi và thiết bị mạng",Thiết bị kết nối,Chặn truy cập Internet thiết bị
+M05.05.10,"Internet, Wi-Fi và thiết bị mạng",Thiết bị kết nối,Bỏ chặn truy cập Internet thiết bị
+M05.05.11,"Internet, Wi-Fi và thiết bị mạng",Thiết bị kết nối,Xóa thiết bị và các rule liên quan
+M05.06.01,"Internet, Wi-Fi và thiết bị mạng",Nhận diện và lịch sử thiết bị,Bật nhận diện thiết bị mới
+M05.06.02,"Internet, Wi-Fi và thiết bị mạng",Nhận diện và lịch sử thiết bị,Tắt nhận diện thiết bị mới
+M05.06.03,"Internet, Wi-Fi và thiết bị mạng",Nhận diện và lịch sử thiết bị,Xem thiết bị mới/thiết bị lạ
+M05.06.04,"Internet, Wi-Fi và thiết bị mạng",Nhận diện và lịch sử thiết bị,Đánh dấu thiết bị tin cậy
+M05.06.05,"Internet, Wi-Fi và thiết bị mạng",Nhận diện và lịch sử thiết bị,Xem lịch sử thiết bị vào/rời mạng
+M05.07.01,"Internet, Wi-Fi và thiết bị mạng",AP ngoại mạng/Gaming Wi-Fi,Thêm AP bằng nhập/scan MAC và CODE
+M05.07.02,"Internet, Wi-Fi và thiết bị mạng",AP ngoại mạng/Gaming Wi-Fi,Xem danh sách AP ngoại mạng
+M05.07.03,"Internet, Wi-Fi và thiết bị mạng",AP ngoại mạng/Gaming Wi-Fi,Xem chi tiết bộ phát
+M05.07.04,"Internet, Wi-Fi và thiết bị mạng",AP ngoại mạng/Gaming Wi-Fi,Đổi tên gợi nhớ AP
+M05.07.05,"Internet, Wi-Fi và thiết bị mạng",AP ngoại mạng/Gaming Wi-Fi,Khởi động lại AP
+M05.07.06,"Internet, Wi-Fi và thiết bị mạng",AP ngoại mạng/Gaming Wi-Fi,Quản lý Wi-Fi của AP
+M05.07.07,"Internet, Wi-Fi và thiết bị mạng",AP ngoại mạng/Gaming Wi-Fi,Quản lý thiết bị kết nối AP
+M05.07.08,"Internet, Wi-Fi và thiết bị mạng",AP ngoại mạng/Gaming Wi-Fi,Xem lịch sử vùng phủ của AP
+M06.01.01,Bảo vệ Internet,Gói FSafe,Xem thông tin/trạng thái gói FSafe
+M06.01.02,Bảo vệ Internet,Gói FSafe,Mở luồng đăng ký FSafe
+M06.01.03,Bảo vệ Internet,Gói FSafe,Mở quản lý/cài đặt FSafe
+M06.01.04,Bảo vệ Internet,Gói FSafe,Đánh giá dịch vụ FSafe
+M06.01.05,Bảo vệ Internet,Gói FSafe,Hủy FSafe trả sau
+M06.01.06,Bảo vệ Internet,Gói FSafe,Yêu cầu hỗ trợ hủy FSafe trả trước
+M06.01.07,Bảo vệ Internet,Gói FSafe,Đăng ký lại FSafe đã hủy
+M06.01.08,Bảo vệ Internet,Gói FSafe,Xem hướng dẫn sử dụng FSafe
+M06.02.01,Bảo vệ Internet,Hồ sơ người dùng,Xem hồ sơ người dùng và thiết bị
+M06.02.02,Bảo vệ Internet,Hồ sơ người dùng,Tạo hồ sơ người dùng
+M06.02.03,Bảo vệ Internet,Hồ sơ người dùng,Sửa tên/avatar hồ sơ
+M06.02.04,Bảo vệ Internet,Hồ sơ người dùng,Gán thiết bị vào hồ sơ
+M06.02.05,Bảo vệ Internet,Hồ sơ người dùng,Bỏ gán thiết bị khỏi hồ sơ
+M06.03.01,Bảo vệ Internet,Kiểm soát truy cập,Bật/tắt quản lý thiết bị và bảo vệ trẻ em
+M06.03.02,Bảo vệ Internet,Kiểm soát truy cập,Cài đặt lọc nội dung theo hồ sơ/thiết bị
+M06.03.03,Bảo vệ Internet,Kiểm soát truy cập,Tạo khung giờ chặn Internet
+M06.03.04,Bảo vệ Internet,Kiểm soát truy cập,Sửa khung giờ chặn Internet
+M06.03.05,Bảo vệ Internet,Kiểm soát truy cập,Xóa khung giờ chặn Internet
+M06.03.06,Bảo vệ Internet,Kiểm soát truy cập,Bật/tắt khung giờ chặn Internet
+M06.04.01,Bảo vệ Internet,Bảo vệ mạng và duyệt web,Bật/tắt chặn quảng cáo
+M06.04.02,Bảo vệ Internet,Bảo vệ mạng và duyệt web,Bật/tắt bảo vệ duyệt web
+M06.04.03,Bảo vệ Internet,Bảo vệ mạng và duyệt web,Bật/tắt ngăn chặn theo dõi
+M06.04.04,Bảo vệ Internet,Bảo vệ mạng và duyệt web,Bật/tắt bảo vệ thiết bị IoT
+M06.04.05,Bảo vệ Internet,Bảo vệ mạng và duyệt web,Bật/tắt Safe Search
+M06.04.06,Bảo vệ Internet,Bảo vệ mạng và duyệt web,Bật/tắt lọc nội dung độc hại
+M06.05.01,Bảo vệ Internet,Website và cảnh báo,Xem danh sách website ưu tiên
+M06.05.02,Bảo vệ Internet,Website và cảnh báo,Thêm website ưu tiên
+M06.05.03,Bảo vệ Internet,Website và cảnh báo,Xóa website ưu tiên
+M06.05.04,Bảo vệ Internet,Website và cảnh báo,Xem danh sách website bị chặn
+M06.05.05,Bảo vệ Internet,Website và cảnh báo,Thêm website bị chặn
+M06.05.06,Bảo vệ Internet,Website và cảnh báo,Xóa website bị chặn
+M06.05.07,Bảo vệ Internet,Website và cảnh báo,Xem báo cáo website vi phạm
+M06.05.08,Bảo vệ Internet,Website và cảnh báo,Xem thiết bị/hồ sơ truy cập website vi phạm
+M06.05.09,Bảo vệ Internet,Website và cảnh báo,Xem cảnh báo mối đe dọa
+M07.01.01,Sức khỏe và chất lượng mạng,Internet Health Check,Xem tổng quan sức khỏe mạng
+M07.01.02,Sức khỏe và chất lượng mạng,Internet Health Check,Xem trạng thái kết nối
+M07.01.03,Sức khỏe và chất lượng mạng,Internet Health Check,Xem mức độ phủ sóng
+M07.01.04,Sức khỏe và chất lượng mạng,Internet Health Check,Xem mức độ nhiễu sóng
+M07.01.05,Sức khỏe và chất lượng mạng,Internet Health Check,Xem tình trạng modem
+M07.01.06,Sức khỏe và chất lượng mạng,Internet Health Check,Làm mới chỉ số sức khỏe mạng
+M07.01.07,Sức khỏe và chất lượng mạng,Internet Health Check,Xem giờ cao điểm sử dụng mạng
+M07.01.08,Sức khỏe và chất lượng mạng,Internet Health Check,Xem lưu lượng mạng 7 ngày
+M07.01.09,Sức khỏe và chất lượng mạng,Internet Health Check,Xem thiết bị sử dụng mạng nhiều nhất
+M07.01.10,Sức khỏe và chất lượng mạng,Internet Health Check,Tối ưu lỗi modem
+M07.01.11,Sức khỏe và chất lượng mạng,Internet Health Check,Mở kiểm tra toàn diện
+M07.01.12,Sức khỏe và chất lượng mạng,Internet Health Check,Tạo hỗ trợ từ kết quả tối ưu thất bại
+M07.02.01,Sức khỏe và chất lượng mạng,Kiểm tra toàn diện Dr.Smart,Quét lỗi mạng bằng Dr.Smart
+M07.02.02,Sức khỏe và chất lượng mạng,Kiểm tra toàn diện Dr.Smart,Hủy quét lỗi mạng
+M07.02.03,Sức khỏe và chất lượng mạng,Kiểm tra toàn diện Dr.Smart,Xem kết quả kiểm tra mạng
+M07.02.04,Sức khỏe và chất lượng mạng,Kiểm tra toàn diện Dr.Smart,Xem hướng dẫn tự xử lý lỗi
+M07.02.05,Sức khỏe và chất lượng mạng,Kiểm tra toàn diện Dr.Smart,Khởi động modem theo gợi ý kiểm tra
+M07.02.06,Sức khỏe và chất lượng mạng,Kiểm tra toàn diện Dr.Smart,Xem trạng thái tự động sửa lỗi
+M07.02.07,Sức khỏe và chất lượng mạng,Kiểm tra toàn diện Dr.Smart,Tạo hỗ trợ kỹ thuật từ kết quả kiểm tra
+M07.03.01,Sức khỏe và chất lượng mạng,Speedtest,Đo tốc độ mạng
+M07.03.02,Sức khỏe và chất lượng mạng,Speedtest,Xem download/upload/độ trễ
+M07.03.03,Sức khỏe và chất lượng mạng,Speedtest,Mở Q&A giải thích kết quả Speedtest
+M07.04.01,Sức khỏe và chất lượng mạng,Vùng phủ Wi-Fi,Xem đánh giá vùng phủ Wi-Fi nội mạng
+M07.04.02,Sức khỏe và chất lượng mạng,Vùng phủ Wi-Fi,Xem đánh giá vùng phủ Wi-Fi AP ngoại mạng
+M07.04.03,Sức khỏe và chất lượng mạng,Vùng phủ Wi-Fi,Đồng ý kết quả đánh giá vùng phủ
+M07.04.04,Sức khỏe và chất lượng mạng,Vùng phủ Wi-Fi,Yêu cầu hỗ trợ thêm về vùng phủ
+M07.04.05,Sức khỏe và chất lượng mạng,Vùng phủ Wi-Fi,Xem lịch sử đánh giá vùng phủ
+M07.04.06,Sức khỏe và chất lượng mạng,Vùng phủ Wi-Fi,Mở chi tiết yêu cầu hỗ trợ từ lịch sử vùng phủ
+M07.05.01,Sức khỏe và chất lượng mạng,Cảnh báo lỗi chủ động Mirrorcle,Xem cảnh báo tình trạng dịch vụ trên Home
+M07.05.02,Sức khỏe và chất lượng mạng,Cảnh báo lỗi chủ động Mirrorcle,Bỏ qua cảnh báo lỗi
+M07.05.03,Sức khỏe và chất lượng mạng,Cảnh báo lỗi chủ động Mirrorcle,Khởi động modem từ cảnh báo lỗi
+M07.05.04,Sức khỏe và chất lượng mạng,Cảnh báo lỗi chủ động Mirrorcle,Yêu cầu hỗ trợ từ cảnh báo lỗi
+M08.01.01,"Camera, truyền hình và dịch vụ mở rộng",Camera,Xem danh sách/trạng thái camera
+M08.01.02,"Camera, truyền hình và dịch vụ mở rộng",Camera,Xem chi tiết camera và gói dịch vụ
+M08.01.03,"Camera, truyền hình và dịch vụ mở rộng",Camera,Sao chép S/N camera
+M08.01.04,"Camera, truyền hình và dịch vụ mở rộng",Camera,Sao chép phiên bản firmware camera
+M08.02.01,"Camera, truyền hình và dịch vụ mở rộng",Cloud Camera OTT,Chọn camera cần gia hạn Cloud
+M08.02.02,"Camera, truyền hình và dịch vụ mở rộng",Cloud Camera OTT,Chọn thời gian lưu trữ Cloud
+M08.02.03,"Camera, truyền hình và dịch vụ mở rộng",Cloud Camera OTT,Chọn thời hạn đóng cước Cloud
+M08.02.04,"Camera, truyền hình và dịch vụ mở rộng",Cloud Camera OTT,Thanh toán gia hạn Cloud Camera OTT
+M08.02.05,"Camera, truyền hình và dịch vụ mở rộng",Cloud Camera OTT,Xem đơn hàng/trạng thái kích hoạt Cloud
+M08.03.01,"Camera, truyền hình và dịch vụ mở rộng",Cloud hợp đồng Combo,Xem thông tin gia hạn Cloud Combo
+M08.03.02,"Camera, truyền hình và dịch vụ mở rộng",Cloud hợp đồng Combo,Chọn gói thời hạn gia hạn Cloud Combo
+M08.03.03,"Camera, truyền hình và dịch vụ mở rộng",Cloud hợp đồng Combo,Thanh toán gia hạn Cloud Combo
+M08.04.01,"Camera, truyền hình và dịch vụ mở rộng",Truyền hình/FPT Play,Mở quản lý dịch vụ truyền hình
+M08.04.02,"Camera, truyền hình và dịch vụ mở rộng",Truyền hình/FPT Play,Mở luồng nâng cấp FPlay
+M08.04.03,"Camera, truyền hình và dịch vụ mở rộng",Truyền hình/FPT Play,Đăng ký/nhận ưu đãi dùng thử FPT Play
+M08.04.04,"Camera, truyền hình và dịch vụ mở rộng",Truyền hình/FPT Play,Dùng ưu đãi và mở ứng dụng FPT Play
+M08.05.01,"Camera, truyền hình và dịch vụ mở rộng",Ultra Fast,Kích hoạt Ultra Fast bằng MAC và CODE
+M08.05.02,"Camera, truyền hình và dịch vụ mở rộng",Ultra Fast,Kích hoạt Ultra Fast bằng EVC FGold
+M08.05.03,"Camera, truyền hình và dịch vụ mở rộng",Ultra Fast,Chọn hợp đồng kích hoạt Ultra Fast
+M08.05.04,"Camera, truyền hình và dịch vụ mở rộng",Ultra Fast,Xem kết quả/trạng thái kích hoạt Ultra Fast
+M08.05.05,"Camera, truyền hình và dịch vụ mở rộng",Ultra Fast,Bật/tắt Ultra Fast Advance
+M08.05.06,"Camera, truyền hình và dịch vụ mở rộng",Ultra Fast,Xem danh sách thiết bị được tối ưu
+M08.05.07,"Camera, truyền hình và dịch vụ mở rộng",Ultra Fast,Xem danh sách game được tối ưu
+M08.06.01,"Camera, truyền hình và dịch vụ mở rộng",FSafe Go,Mở giới thiệu/đăng ký FSafe Go
+M08.06.02,"Camera, truyền hình và dịch vụ mở rộng",FSafe Go,Đăng ký dùng thử FSafe Go
+M08.06.03,"Camera, truyền hình và dịch vụ mở rộng",FSafe Go,Dùng EVC kích hoạt dùng thử FSafe Go
+M08.06.04,"Camera, truyền hình và dịch vụ mở rộng",FSafe Go,Xem thông tin gói FSafe Go dùng thử
+M08.07.01,"Camera, truyền hình và dịch vụ mở rộng",FPT Wi-Fi/Pay Wi-Fi,Mua gói FPT Wi-Fi
+M08.07.02,"Camera, truyền hình và dịch vụ mở rộng",FPT Wi-Fi/Pay Wi-Fi,Gia hạn gói FPT Wi-Fi
+M08.07.03,"Camera, truyền hình và dịch vụ mở rộng",FPT Wi-Fi/Pay Wi-Fi,Xem lịch sử mua/hoạt động FPT Wi-Fi
+M08.07.04,"Camera, truyền hình và dịch vụ mở rộng",FPT Wi-Fi/Pay Wi-Fi,Xem thông tin và trạng thái gói FPT Wi-Fi
+M08.07.05,"Camera, truyền hình và dịch vụ mở rộng",FPT Wi-Fi/Pay Wi-Fi,Mua prepaid Wi-Fi bằng QR
+M09.01.01,Yêu cầu hỗ trợ và chăm sóc khách hàng,Tạo yêu cầu,Tạo yêu cầu hỗ trợ kỹ thuật
+M09.01.02,Yêu cầu hỗ trợ và chăm sóc khách hàng,Tạo yêu cầu,Tạo yêu cầu hỗ trợ thủ tục
+M09.01.03,Yêu cầu hỗ trợ và chăm sóc khách hàng,Tạo yêu cầu,Tạo yêu cầu hỗ trợ cước phí
+M09.01.04,Yêu cầu hỗ trợ và chăm sóc khách hàng,Tạo yêu cầu,Tạo yêu cầu hỗ trợ sử dụng ứng dụng
+M09.01.05,Yêu cầu hỗ trợ và chăm sóc khách hàng,Tạo yêu cầu,Đính kèm ảnh/video hỗ trợ
+M09.01.06,Yêu cầu hỗ trợ và chăm sóc khách hàng,Tạo yêu cầu,Cập nhật người liên hệ hỗ trợ
+M09.02.01,Yêu cầu hỗ trợ và chăm sóc khách hàng,Yêu cầu 1 chạm,Nhập nội dung hỗ trợ tự do
+M09.02.02,Yêu cầu hỗ trợ và chăm sóc khách hàng,Yêu cầu 1 chạm,Chọn quick action hỗ trợ
+M09.02.03,Yêu cầu hỗ trợ và chăm sóc khách hàng,Yêu cầu 1 chạm,Nhập yêu cầu bằng voice-to-text
+M09.02.04,Yêu cầu hỗ trợ và chăm sóc khách hàng,Yêu cầu 1 chạm,Mở tính năng tự phục vụ từ intent hỗ trợ
+M09.02.05,Yêu cầu hỗ trợ và chăm sóc khách hàng,Yêu cầu 1 chạm,Tạo yêu cầu thủ công khi không nhận diện intent
+M09.03.01,Yêu cầu hỗ trợ và chăm sóc khách hàng,Lịch sử và tiến trình,Xem lịch sử yêu cầu hỗ trợ
+M09.03.02,Yêu cầu hỗ trợ và chăm sóc khách hàng,Lịch sử và tiến trình,Xem yêu cầu đang xử lý
+M09.03.03,Yêu cầu hỗ trợ và chăm sóc khách hàng,Lịch sử và tiến trình,Xem yêu cầu hoàn tất
+M09.03.04,Yêu cầu hỗ trợ và chăm sóc khách hàng,Lịch sử và tiến trình,Xem chi tiết/trạng thái yêu cầu
+M09.03.05,Yêu cầu hỗ trợ và chăm sóc khách hàng,Lịch sử và tiến trình,Xem thông tin kỹ thuật viên
+M09.03.06,Yêu cầu hỗ trợ và chăm sóc khách hàng,Lịch sử và tiến trình,Gọi kỹ thuật viên
+M09.03.07,Yêu cầu hỗ trợ và chăm sóc khách hàng,Lịch sử và tiến trình,Hủy yêu cầu hỗ trợ chưa đóng
+M09.04.01,Yêu cầu hỗ trợ và chăm sóc khách hàng,Lịch hẹn kỹ thuật,Chọn ngày/khung giờ hẹn kỹ thuật
+M09.04.02,Yêu cầu hỗ trợ và chăm sóc khách hàng,Lịch hẹn kỹ thuật,Áp dụng lịch hẹn kỹ thuật
+M09.04.03,Yêu cầu hỗ trợ và chăm sóc khách hàng,Lịch hẹn kỹ thuật,Đổi lịch hẹn kỹ thuật
+M09.04.04,Yêu cầu hỗ trợ và chăm sóc khách hàng,Lịch hẹn kỹ thuật,Gửi phản ánh lịch hẹn bị thay đổi
+M09.05.01,Yêu cầu hỗ trợ và chăm sóc khách hàng,Xác nhận sau hỗ trợ,Xác nhận SR-HTKT đã hoàn tất
+M09.05.02,Yêu cầu hỗ trợ và chăm sóc khách hàng,Xác nhận sau hỗ trợ,Phản hồi SR-HTKT chưa hoàn tất
+M09.05.03,Yêu cầu hỗ trợ và chăm sóc khách hàng,Xác nhận sau hỗ trợ,Đánh giá sau SR-HTKT
+M09.06.01,Yêu cầu hỗ trợ và chăm sóc khách hàng,"Chat, FAQ và điểm giao dịch",Chat với CSKH/FPT Telecom
+M09.06.02,Yêu cầu hỗ trợ và chăm sóc khách hàng,"Chat, FAQ và điểm giao dịch",Hỏi đáp ChatBot
+M09.06.03,Yêu cầu hỗ trợ và chăm sóc khách hàng,"Chat, FAQ và điểm giao dịch",Xem câu hỏi thường gặp
+M09.06.04,Yêu cầu hỗ trợ và chăm sóc khách hàng,"Chat, FAQ và điểm giao dịch",Xem điểm giao dịch
+M09.07.01,Yêu cầu hỗ trợ và chăm sóc khách hàng,Hỗ trợ chủ động,Mở hỗ trợ theo ngữ cảnh từ icon nổi
+M09.07.02,Yêu cầu hỗ trợ và chăm sóc khách hàng,Hỗ trợ chủ động,Gửi yêu cầu có thông tin điền sẵn
+M09.07.03,Yêu cầu hỗ trợ và chăm sóc khách hàng,Hỗ trợ chủ động,Mở gợi ý hỗ trợ sau chụp màn hình
+M09.07.04,Yêu cầu hỗ trợ và chăm sóc khách hàng,Hỗ trợ chủ động,Chat sau chụp màn hình khi không có hợp đồng
+M09.07.05,Yêu cầu hỗ trợ và chăm sóc khách hàng,Hỗ trợ chủ động,Ẩn gợi ý hỗ trợ chủ động
+M09.08.01,Yêu cầu hỗ trợ và chăm sóc khách hàng,Hi FPT Lite,Yêu cầu hỗ trợ khi không đăng nhập được
+M09.08.02,Yêu cầu hỗ trợ và chăm sóc khách hàng,Hi FPT Lite,Tạo hỗ trợ khi Hi FPT lỗi hệ thống
+M09.08.03,Yêu cầu hỗ trợ và chăm sóc khách hàng,Hi FPT Lite,Tạo hỗ trợ khi Inside lỗi
+M09.08.04,Yêu cầu hỗ trợ và chăm sóc khách hàng,Hi FPT Lite,Mở web ký biên bản khi Hi FPT lỗi
+M10.01.01,Hóa đơn và thanh toán,Hóa đơn/khoản thu,Xem danh sách hóa đơn/khoản thu
+M10.01.02,Hóa đơn và thanh toán,Hóa đơn/khoản thu,Chọn hóa đơn/khoản thu cần thanh toán
+M10.01.03,Hóa đơn và thanh toán,Hóa đơn/khoản thu,Xem thông tin/tổng tiền thanh toán
+M10.01.04,Hóa đơn và thanh toán,Hóa đơn/khoản thu,Thanh toán hóa đơn/khoản thu
+M10.01.05,Hóa đơn và thanh toán,Hóa đơn/khoản thu,Mở QR thanh toán theo hợp đồng
+M10.02.01,Hóa đơn và thanh toán,Trả hộ và chưa đăng nhập,Tra cứu hợp đồng để trả hộ
+M10.02.02,Hóa đơn và thanh toán,Trả hộ và chưa đăng nhập,Thanh toán hóa đơn trả hộ
+M10.02.03,Hóa đơn và thanh toán,Trả hộ và chưa đăng nhập,Tra cứu hóa đơn khi chưa đăng nhập
+M10.02.04,Hóa đơn và thanh toán,Trả hộ và chưa đăng nhập,Thanh toán hóa đơn khi chưa đăng nhập
+M10.02.05,Hóa đơn và thanh toán,Trả hộ và chưa đăng nhập,Tra cứu lịch sử thanh toán khi chưa đăng nhập
+M10.03.01,Hóa đơn và thanh toán,Trả trước,Mở đăng ký trả trước
+M10.03.02,Hóa đơn và thanh toán,Trả trước,Chọn hợp đồng trả trước
+M10.03.03,Hóa đơn và thanh toán,Trả trước,Xem báo giá/gói trả trước
+M10.03.04,Hóa đơn và thanh toán,Trả trước,Chọn gói/thời hạn trả trước
+M10.03.05,Hóa đơn và thanh toán,Trả trước,Sửa khoản thu trả trước
+M10.03.06,Hóa đơn và thanh toán,Trả trước,Xóa khoản thu trả trước
+M10.03.07,Hóa đơn và thanh toán,Trả trước,Thanh toán trả trước
+M10.04.01,Hóa đơn và thanh toán,Trả tự động,Đăng ký trả tự động
+M10.04.02,Hóa đơn và thanh toán,Trả tự động,Chọn thẻ/phương thức trả tự động
+M10.04.03,Hóa đơn và thanh toán,Trả tự động,Đổi phương thức trả tự động
+M10.04.04,Hóa đơn và thanh toán,Trả tự động,Hủy trả tự động
+M10.04.05,Hóa đơn và thanh toán,Trả tự động,Thiết lập ngày trả tự động
+M10.05.01,Hóa đơn và thanh toán,Ví/thẻ liên kết,Xem danh sách ví/thẻ
+M10.05.02,Hóa đơn và thanh toán,Ví/thẻ liên kết,Xem chi tiết ví/thẻ liên kết
+M10.05.03,Hóa đơn và thanh toán,Ví/thẻ liên kết,Liên kết thẻ nội địa
+M10.05.04,Hóa đơn và thanh toán,Ví/thẻ liên kết,Liên kết thẻ quốc tế
+M10.05.05,Hóa đơn và thanh toán,Ví/thẻ liên kết,Liên kết phương thức thanh toán hỗ trợ token
+M10.05.06,Hóa đơn và thanh toán,Ví/thẻ liên kết,Hủy liên kết ví/thẻ
+M10.05.07,Hóa đơn và thanh toán,Ví/thẻ liên kết,Xác thực OTP hủy liên kết khi đối tác yêu cầu
+M10.05.08,Hóa đơn và thanh toán,Ví/thẻ liên kết,Đổi trả tự động trước hủy thẻ đang sử dụng
+M10.06.01,Hóa đơn và thanh toán,Phương thức thanh toán,Thanh toán VietQR
+M10.06.02,Hóa đơn và thanh toán,Phương thức thanh toán,Thanh toán Apple Pay
+M10.06.03,Hóa đơn và thanh toán,Phương thức thanh toán,Thanh toán Google Pay
+M10.06.04,Hóa đơn và thanh toán,Phương thức thanh toán,Thanh toán chuyển khoản nhanh
+M10.06.05,Hóa đơn và thanh toán,Phương thức thanh toán,Thanh toán MoMo
+M10.06.06,Hóa đơn và thanh toán,Phương thức thanh toán,Thanh toán ZaloPay
+M10.06.07,Hóa đơn và thanh toán,Phương thức thanh toán,Thanh toán ShopeePay
+M10.06.08,Hóa đơn và thanh toán,Phương thức thanh toán,Thanh toán thẻ quốc tế
+M10.06.09,Hóa đơn và thanh toán,Phương thức thanh toán,Thanh toán thẻ nội địa
+M10.06.10,Hóa đơn và thanh toán,Phương thức thanh toán,Thanh toán bằng thẻ đã liên kết
+M10.06.11,Hóa đơn và thanh toán,Phương thức thanh toán,Mở thanh toán COD khi sản phẩm hỗ trợ
+M10.07.01,Hóa đơn và thanh toán,Ưu đãi khi thanh toán,Xem danh sách ưu đãi thanh toán
+M10.07.02,Hóa đơn và thanh toán,Ưu đãi khi thanh toán,Nhập/kiểm tra mã ưu đãi
+M10.07.03,Hóa đơn và thanh toán,Ưu đãi khi thanh toán,Áp dụng mã ưu đãi
+M10.07.04,Hóa đơn và thanh toán,Ưu đãi khi thanh toán,Áp dụng mã giới thiệu
+M10.07.05,Hóa đơn và thanh toán,Ưu đãi khi thanh toán,Áp dụng voucher EVC FGold vào hóa đơn
+M10.07.06,Hóa đơn và thanh toán,Ưu đãi khi thanh toán,Hủy áp dụng EVC FGold trước thanh toán
+M10.07.07,Hóa đơn và thanh toán,Ưu đãi khi thanh toán,Áp dụng ưu đãi theo phương thức thanh toán
+M10.07.08,Hóa đơn và thanh toán,Ưu đãi khi thanh toán,Áp dụng voucher Napas
+M10.07.09,Hóa đơn và thanh toán,Ưu đãi khi thanh toán,Mở thanh toán Visa có ưu đãi
+M10.07.10,Hóa đơn và thanh toán,Ưu đãi khi thanh toán,Mở thanh toán từ deeplink điền sẵn voucher
+M10.08.01,Hóa đơn và thanh toán,Lịch sử và kết quả,Xem lịch sử thanh toán
+M10.08.02,Hóa đơn và thanh toán,Lịch sử và kết quả,Tìm lịch sử theo tên hóa đơn
+M10.08.03,Hóa đơn và thanh toán,Lịch sử và kết quả,Lọc lịch sử theo hợp đồng/Trả hộ
+M10.08.04,Hóa đơn và thanh toán,Lịch sử và kết quả,Xem chi tiết giao dịch
+M10.08.05,Hóa đơn và thanh toán,Lịch sử và kết quả,Xem kết quả thanh toán thành công/thất bại/chờ xử lý
+M10.09.01,Hóa đơn và thanh toán,Tiện ích/cài đặt thanh toán,Mở quản lý/cài đặt thanh toán
+M10.09.02,Hóa đơn và thanh toán,Tiện ích/cài đặt thanh toán,Thiết lập kênh nhận thông báo cước
+M10.09.03,Hóa đơn và thanh toán,Tiện ích/cài đặt thanh toán,Thiết lập lịch nhắc thanh toán
+M10.09.04,Hóa đơn và thanh toán,Tiện ích/cài đặt thanh toán,Mở gia hạn thanh toán
+M10.10.01,Hóa đơn và thanh toán,BNPL/FPT Paylater lịch sử,Đăng ký ví trả sau
+M10.10.02,Hóa đơn và thanh toán,BNPL/FPT Paylater lịch sử,Ký hợp đồng ví trả sau
+M10.10.03,Hóa đơn và thanh toán,BNPL/FPT Paylater lịch sử,Xem hồ sơ/hạn mức ví trả sau
+M10.10.04,Hóa đơn và thanh toán,BNPL/FPT Paylater lịch sử,Thanh toán dư nợ để mở khóa ví trả sau
+M10.10.05,Hóa đơn và thanh toán,BNPL/FPT Paylater lịch sử,Thanh toán bằng FPT Paylater
+M11.01.01,Hi FPT Shop và đăng ký sản phẩm,Khám phá Shop,Xem Home đăng ký dịch vụ
+M11.01.02,Hi FPT Shop và đăng ký sản phẩm,Khám phá Shop,Xem danh mục sản phẩm
+M11.01.03,Hi FPT Shop và đăng ký sản phẩm,Khám phá Shop,Xem sản phẩm nổi bật
+M11.01.04,Hi FPT Shop và đăng ký sản phẩm,Khám phá Shop,Xem chi tiết sản phẩm
+M11.01.05,Hi FPT Shop và đăng ký sản phẩm,Khám phá Shop,Xem sản phẩm Hi Sale
+M11.01.06,Hi FPT Shop và đăng ký sản phẩm,Khám phá Shop,Xem voucher/campaign Shop
+M11.01.07,Hi FPT Shop và đăng ký sản phẩm,Khám phá Shop,Cập nhật địa chỉ để xem chính sách giá
+M11.01.08,Hi FPT Shop và đăng ký sản phẩm,Khám phá Shop,Bắt đầu luồng mua/đăng ký sản phẩm
+M11.02.01,Hi FPT Shop và đăng ký sản phẩm,Danh mục đăng ký/mua,Mở đăng ký Internet only
+M11.02.02,Hi FPT Shop và đăng ký sản phẩm,Danh mục đăng ký/mua,Mở đăng ký Combo Net/Net Play/Net Camera
+M11.02.03,Hi FPT Shop và đăng ký sản phẩm,Danh mục đăng ký/mua,Mở mua router/AP
+M11.02.04,Hi FPT Shop và đăng ký sản phẩm,Danh mục đăng ký/mua,Mở đăng ký Camera/Camera OTT
+M11.02.05,Hi FPT Shop và đăng ký sản phẩm,Danh mục đăng ký/mua,Mở đăng ký FPT Play thuê bao
+M11.02.06,Hi FPT Shop và đăng ký sản phẩm,Danh mục đăng ký/mua,Mở mua gói FPT Play giải trí
+M11.02.07,Hi FPT Shop và đăng ký sản phẩm,Danh mục đăng ký/mua,Mở mua giải pháp/thiết bị Smart Home
+M11.02.08,Hi FPT Shop và đăng ký sản phẩm,Danh mục đăng ký/mua,Mở mua Smart TV
+M11.02.09,Hi FPT Shop và đăng ký sản phẩm,Danh mục đăng ký/mua,Mở mua thiết bị đo đường huyết
+M11.02.10,Hi FPT Shop và đăng ký sản phẩm,Danh mục đăng ký/mua,Mở đăng ký FSafe/FSafe Go
+M11.02.11,Hi FPT Shop và đăng ký sản phẩm,Danh mục đăng ký/mua,Mở đăng ký Ultra Fast
+M11.02.12,Hi FPT Shop và đăng ký sản phẩm,Danh mục đăng ký/mua,Mở giới thiệu/đăng ký Vioedu
+M11.02.13,Hi FPT Shop và đăng ký sản phẩm,Danh mục đăng ký/mua,Mở danh mục/gói FShare
+M11.03.01,Hi FPT Shop và đăng ký sản phẩm,Địa chỉ Shop,Xem danh sách địa chỉ Shop
+M11.03.02,Hi FPT Shop và đăng ký sản phẩm,Địa chỉ Shop,Thêm địa chỉ Shop
+M11.03.03,Hi FPT Shop và đăng ký sản phẩm,Địa chỉ Shop,Sửa địa chỉ Shop
+M11.03.04,Hi FPT Shop và đăng ký sản phẩm,Địa chỉ Shop,Xóa địa chỉ Shop
+M11.03.05,Hi FPT Shop và đăng ký sản phẩm,Địa chỉ Shop,Chọn địa chỉ mặc định Shop
+M11.03.06,Hi FPT Shop và đăng ký sản phẩm,Địa chỉ Shop,Chọn địa chỉ giao hàng/đăng ký dịch vụ
+M11.04.01,Hi FPT Shop và đăng ký sản phẩm,Đơn hàng,Xem lịch sử đơn hàng
+M11.04.02,Hi FPT Shop và đăng ký sản phẩm,Đơn hàng,Xem đơn hàng theo danh mục
+M11.04.03,Hi FPT Shop và đăng ký sản phẩm,Đơn hàng,Xem chi tiết/trạng thái đơn hàng
+M11.04.04,Hi FPT Shop và đăng ký sản phẩm,Đơn hàng,Thanh toán đơn hàng chưa thanh toán
+M11.04.05,Hi FPT Shop và đăng ký sản phẩm,Đơn hàng,Xem đơn hàng chờ ký xác nhận
+M11.05.01,Hi FPT Shop và đăng ký sản phẩm,Thanh toán tiện ích đối tác,Mở thanh toán điện
+M11.05.02,Hi FPT Shop và đăng ký sản phẩm,Thanh toán tiện ích đối tác,Mở thanh toán nước
+M11.05.03,Hi FPT Shop và đăng ký sản phẩm,Thanh toán tiện ích đối tác,Mở thanh toán điện thoại cố định
+M11.05.04,Hi FPT Shop và đăng ký sản phẩm,Thanh toán tiện ích đối tác,Mở thanh toán di động trả sau
+M12.01.01,Khách hàng thân thiết và ưu đãi,Hội viên và điểm,Mở đăng ký hội viên KHTT
+M12.01.02,Khách hàng thân thiết và ưu đãi,Hội viên và điểm,Xem thông tin/hạng hội viên
+M12.01.03,Khách hàng thân thiết và ưu đãi,Hội viên và điểm,Xem số dư điểm FGold
+M12.01.04,Khách hàng thân thiết và ưu đãi,Hội viên và điểm,Mở SDK Loyalty cho tài khoản Non-FTEL
+M12.01.05,Khách hàng thân thiết và ưu đãi,Hội viên và điểm,Xem thông báo được tặng điểm FGold
+M12.02.01,Khách hàng thân thiết và ưu đãi,Khám phá ưu đãi,Mở Ưu đãi/SDK Loyalty khi đã đăng nhập
+M12.02.02,Khách hàng thân thiết và ưu đãi,Khám phá ưu đãi,Xem ưu đãi Hi FPT khi chưa đăng nhập
+M12.02.03,Khách hàng thân thiết và ưu đãi,Khám phá ưu đãi,Xem Ưu đãi của tôi
+M12.02.04,Khách hàng thân thiết và ưu đãi,Khám phá ưu đãi,Xem chi tiết chương trình ưu đãi
+M12.02.05,Khách hàng thân thiết và ưu đãi,Khám phá ưu đãi,Mở ưu đãi sắp hết hạn
+M12.03.01,Khách hàng thân thiết và ưu đãi,Đổi và tiêu điểm,Mở đổi điểm FGold tại Loyalty
+M12.03.02,Khách hàng thân thiết và ưu đãi,Đổi và tiêu điểm,Bật tiêu điểm FGold khi mua hàng
+M12.03.03,Khách hàng thân thiết và ưu đãi,Đổi và tiêu điểm,Nhập/chỉnh số điểm FGold muốn đổi
+M12.03.04,Khách hàng thân thiết và ưu đãi,Đổi và tiêu điểm,Xác nhận đổi điểm thành EVC mua hàng
+M12.03.05,Khách hàng thân thiết và ưu đãi,Đổi và tiêu điểm,Áp dụng EVC giảm giá đơn hàng
+M13.01.01,Giới thiệu bạn bè và lan tỏa,Giới thiệu đăng ký dịch vụ,Chọn hợp đồng để lấy mã giới thiệu
+M13.01.02,Giới thiệu bạn bè và lan tỏa,Giới thiệu đăng ký dịch vụ,Sao chép mã giới thiệu dịch vụ
+M13.01.03,Giới thiệu bạn bè và lan tỏa,Giới thiệu đăng ký dịch vụ,Sao chép link giới thiệu dịch vụ
+M13.01.04,Giới thiệu bạn bè và lan tỏa,Giới thiệu đăng ký dịch vụ,Xem QR giới thiệu dịch vụ
+M13.01.05,Giới thiệu bạn bè và lan tỏa,Giới thiệu đăng ký dịch vụ,Chia sẻ link/mã giới thiệu dịch vụ
+M13.01.06,Giới thiệu bạn bè và lan tỏa,Giới thiệu đăng ký dịch vụ,Xem hướng dẫn giới thiệu
+M13.01.07,Giới thiệu bạn bè và lan tỏa,Giới thiệu đăng ký dịch vụ,Xem chính sách/quà tặng giới thiệu
+M13.01.08,Giới thiệu bạn bè và lan tỏa,Giới thiệu đăng ký dịch vụ,Xem lịch sử giới thiệu dịch vụ
+M13.01.09,Giới thiệu bạn bè và lan tỏa,Giới thiệu đăng ký dịch vụ,Xem trạng thái giới thiệu/nhận thưởng
+M13.02.01,Giới thiệu bạn bè và lan tỏa,Giới thiệu tải ứng dụng,Xem QR của tôi
+M13.02.02,Giới thiệu bạn bè và lan tỏa,Giới thiệu tải ứng dụng,Sao chép mã giới thiệu tải app
+M13.02.03,Giới thiệu bạn bè và lan tỏa,Giới thiệu tải ứng dụng,Tải QR giới thiệu tải app
+M13.02.04,Giới thiệu bạn bè và lan tỏa,Giới thiệu tải ứng dụng,Chia sẻ QR/link mời dùng Hi FPT
+M13.02.05,Giới thiệu bạn bè và lan tỏa,Giới thiệu tải ứng dụng,Xem danh sách bạn bè đã giới thiệu tải app
+M13.02.06,Giới thiệu bạn bè và lan tỏa,Giới thiệu tải ứng dụng,Lọc người được giới thiệu theo thời gian
+M13.02.07,Giới thiệu bạn bè và lan tỏa,Giới thiệu tải ứng dụng,Xem quà tặng giới thiệu tải app
+M14.01.01,Tiện ích và trải nghiệm,Quét QR,Quét QR bằng camera
+M14.01.02,Tiện ích và trải nghiệm,Quét QR,Đọc QR từ ảnh tải lên
+M14.01.03,Tiện ích và trải nghiệm,Quét QR,Check-in sự kiện bằng QR
+M14.01.04,Tiện ích và trải nghiệm,Quét QR,Nhận ưu đãi bằng QR
+M14.01.05,Tiện ích và trải nghiệm,Quét QR,Mở liên kết web từ QR hợp lệ
+M14.02.01,Tiện ích và trải nghiệm,Thẻ nhân viên,Xác thực nhân viên bằng email/OTP
+M14.02.02,Tiện ích và trải nghiệm,Thẻ nhân viên,Xem/làm mới QR nhân viên
+M14.02.03,Tiện ích và trải nghiệm,Thẻ nhân viên,Quét QR nhân viên
+M14.02.04,Tiện ích và trải nghiệm,Thẻ nhân viên,Xem thông tin nhân viên FPT
+M14.03.01,Tiện ích và trải nghiệm,Mở thẻ tín dụng VPBank,Mở luồng mở thẻ VPBank
+M14.03.02,Tiện ích và trải nghiệm,Mở thẻ tín dụng VPBank,Nhập thông tin và eKYC trên web-in-app
+M14.03.03,Tiện ích và trải nghiệm,Mở thẻ tín dụng VPBank,Xem kết quả/trạng thái mở thẻ
+M14.03.04,Tiện ích và trải nghiệm,Mở thẻ tín dụng VPBank,Mở voucher ưu đãi được cấp sau mở thẻ
+M14.04.01,Tiện ích và trải nghiệm,Sao May/Tarot,Mở Sao May
+M14.04.02,Tiện ích và trải nghiệm,Sao May/Tarot,Chọn chủ đề Tarot
+M14.04.03,Tiện ích và trải nghiệm,Sao May/Tarot,Xem kết quả chủ đề Tarot
+M14.04.04,Tiện ích và trải nghiệm,Sao May/Tarot,Xem lại lịch sử chủ đề đã xem
+M14.04.05,Tiện ích và trải nghiệm,Sao May/Tarot,Mở chủ đề khác/toàn bộ lịch sử qua đăng nhập
+M14.05.01,Tiện ích và trải nghiệm,Nhà trọ thông minh,Mở trải nghiệm Nhà trọ thông minh
+M14.05.02,Tiện ích và trải nghiệm,Nhà trọ thông minh,Xem tourguide Nhà trọ
+M14.05.03,Tiện ích và trải nghiệm,Nhà trọ thông minh,Mở chuyển vai trò người dùng Nhà trọ
+M14.05.04,Tiện ích và trải nghiệm,Nhà trọ thông minh,Mở thông báo Nhà trọ
+M14.05.05,Tiện ích và trải nghiệm,Nhà trọ thông minh,Mở Thêm nhà trọ
+M14.05.06,Tiện ích và trải nghiệm,Nhà trọ thông minh,Mở Tổng phòng
+M14.05.07,Tiện ích và trải nghiệm,Nhà trọ thông minh,Mở Phiếu thu
+M14.05.08,Tiện ích và trải nghiệm,Nhà trọ thông minh,Mở Người thuê
+M14.05.09,Tiện ích và trải nghiệm,Nhà trọ thông minh,Mở Phòng trống
+M14.05.10,Tiện ích và trải nghiệm,Nhà trọ thông minh,Mở Chờ xác nhận
+M14.06.01,Tiện ích và trải nghiệm,Game và sandbox,Mở Game theo campaign
+M14.06.02,Tiện ích và trải nghiệm,Game và sandbox,Mở điểm chạm Sổ chi tiêu
+M15.01.01,"Thông báo, lời nhắc và truy cập nhanh",Hộp thông báo,Xem danh sách thông báo
+M15.01.02,"Thông báo, lời nhắc và truy cập nhanh",Hộp thông báo,Lọc thông báo Tất cả/Thanh toán/Dịch vụ/Ưu đãi/Ứng dụng
+M15.01.03,"Thông báo, lời nhắc và truy cập nhanh",Hộp thông báo,Xem chi tiết thông báo
+M15.01.04,"Thông báo, lời nhắc và truy cập nhanh",Hộp thông báo,Mở CTA/deeplink từ thông báo
+M15.01.05,"Thông báo, lời nhắc và truy cập nhanh",Hộp thông báo,Đánh dấu tất cả đã đọc
+M15.01.06,"Thông báo, lời nhắc và truy cập nhanh",Hộp thông báo,Xóa thông báo
+M15.01.07,"Thông báo, lời nhắc và truy cập nhanh",Hộp thông báo,Chọn/xóa nhiều thông báo
+M15.01.08,"Thông báo, lời nhắc và truy cập nhanh",Hộp thông báo,Xóa thông báo đã đọc
+M15.02.01,"Thông báo, lời nhắc và truy cập nhanh",Cài đặt thông báo,Bật/tắt nhóm thông báo
+M15.02.02,"Thông báo, lời nhắc và truy cập nhanh",Cài đặt thông báo,Mở yêu cầu cấp quyền nhận push notification
+M15.02.03,"Thông báo, lời nhắc và truy cập nhanh",Cài đặt thông báo,Mở thông báo khi chưa đăng nhập
+M15.02.04,"Thông báo, lời nhắc và truy cập nhanh",Cài đặt thông báo,Đăng nhập từ CTA thông báo cần xác thực
+M15.03.01,"Thông báo, lời nhắc và truy cập nhanh",Smart Assistant lời nhắc,Mở lời nhắc thanh toán/gia hạn thanh toán
+M15.03.02,"Thông báo, lời nhắc và truy cập nhanh",Smart Assistant lời nhắc,Mở lời nhắc gia hạn dịch vụ
+M15.03.03,"Thông báo, lời nhắc và truy cập nhanh",Smart Assistant lời nhắc,Mở lời nhắc đăng ký trả trước
+M15.03.04,"Thông báo, lời nhắc và truy cập nhanh",Smart Assistant lời nhắc,Mở lời nhắc gián đoạn/bảo trì/sự cố
+M15.03.05,"Thông báo, lời nhắc và truy cập nhanh",Smart Assistant lời nhắc,Mở lời nhắc khởi động modem
+M15.03.06,"Thông báo, lời nhắc và truy cập nhanh",Smart Assistant lời nhắc,Mở lời nhắc đặt lịch khởi động modem
+M15.03.07,"Thông báo, lời nhắc và truy cập nhanh",Smart Assistant lời nhắc,Mở lời nhắc ký biên bản
+M15.03.08,"Thông báo, lời nhắc và truy cập nhanh",Smart Assistant lời nhắc,Mở lời nhắc đánh giá dịch vụ
+M15.03.09,"Thông báo, lời nhắc và truy cập nhanh",Smart Assistant lời nhắc,Mở lời nhắc ưu đãi/marketing
+M15.03.10,"Thông báo, lời nhắc và truy cập nhanh",Smart Assistant lời nhắc,Đóng/ẩn Smart Assistant
+M15.04.01,"Thông báo, lời nhắc và truy cập nhanh",Widget,Thêm tiện ích Hi FPT trên màn hình điện thoại
+M15.04.02,"Thông báo, lời nhắc và truy cập nhanh",Widget,Mở tính năng từ Widget
+M15.04.03,"Thông báo, lời nhắc và truy cập nhanh",Widget,Mở đăng nhập/Home từ Widget khi chưa đăng nhập
+M16.01.01,"Đánh giá, góp ý và khảo sát",CSAT dịch vụ,Đánh giá triển khai dịch vụ
+M16.01.02,"Đánh giá, góp ý và khảo sát",CSAT dịch vụ,Đánh giá bảo trì/hỗ trợ
+M16.01.03,"Đánh giá, góp ý và khảo sát",CSAT dịch vụ,Đánh giá nâng cấp/SWAP Wi-Fi
+M16.01.04,"Đánh giá, góp ý và khảo sát",CSAT dịch vụ,Đánh giá chất lượng đường truyền sau 24h
+M16.01.05,"Đánh giá, góp ý và khảo sát",CSAT dịch vụ,Chọn lý do chưa hài lòng
+M16.01.06,"Đánh giá, góp ý và khảo sát",CSAT dịch vụ,Gửi ghi chú đánh giá
+M16.01.07,"Đánh giá, góp ý và khảo sát",CSAT dịch vụ,Xem lại chi tiết đánh giá đã gửi
+M16.02.01,"Đánh giá, góp ý và khảo sát",NPS,Đánh giá mức sẵn sàng giới thiệu dịch vụ (NPS)
+M16.03.01,"Đánh giá, góp ý và khảo sát",Ứng dụng và góp ý,Chọn số sao đánh giá ứng dụng
+M16.03.02,"Đánh giá, góp ý và khảo sát",Ứng dụng và góp ý,Mở đánh giá Hi FPT trên App Store/Google Play
+M16.03.03,"Đánh giá, góp ý và khảo sát",Ứng dụng và góp ý,Chọn lý do góp ý
+M16.03.04,"Đánh giá, góp ý và khảo sát",Ứng dụng và góp ý,Nhập và gửi góp ý
+M16.03.05,"Đánh giá, góp ý và khảo sát",Ứng dụng và góp ý,Xem lịch sử góp ý
+M16.03.06,"Đánh giá, góp ý và khảo sát",Ứng dụng và góp ý,Xem chi tiết/trạng thái xử lý góp ý
+M16.04.01,"Đánh giá, góp ý và khảo sát",Khảo sát FLI,Mở khảo sát FLI
+M16.04.02,"Đánh giá, góp ý và khảo sát",Khảo sát FLI,Trả lời khảo sát một đáp án
+M16.04.03,"Đánh giá, góp ý và khảo sát",Khảo sát FLI,Trả lời khảo sát nhiều đáp án
+M16.04.04,"Đánh giá, góp ý và khảo sát",Khảo sát FLI,Nhập câu trả lời khảo sát
+M16.04.05,"Đánh giá, góp ý và khảo sát",Khảo sát FLI,Hoàn thành khảo sát FLI
+M16.04.06,"Đánh giá, góp ý và khảo sát",Khảo sát FLI,Xác nhận thoát khảo sát chưa hoàn thành

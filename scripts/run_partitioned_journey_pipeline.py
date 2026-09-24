@@ -110,7 +110,16 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="optional log file; relative paths are resolved from the repository root",
     )
-    parser.add_argument("--max-training-journeys", type=int, help="deterministic reservoir cap; default uses all")
+    parser.add_argument("--max-training-journeys", type=int, help="deterministic sampling cap; default uses all")
+    parser.add_argument(
+        "--sampling-strategy",
+        choices=["customer_stratified", "journey_reservoir"],
+        default="customer_stratified",
+        help=(
+            "sampling under the cap: preserve every customer and proportional "
+            "journeys/customer (default), or legacy uniform journey reservoir"
+        ),
+    )
     parser.add_argument("--sample-seed", type=int, default=42)
     parser.add_argument("--test-size", type=float, default=0.2, help="latest complete-session holdout share; 0 disables holdout")
     parser.add_argument("--level", default="EXACT", choices=["EXACT", "L3", "L2", "L1"])
@@ -298,6 +307,7 @@ def train(args: argparse.Namespace, cfg: PipelineConfig) -> None:
             platform=platform,
             max_journeys=args.max_training_journeys,
             seed=args.sample_seed,
+            sampling_strategy=args.sampling_strategy,
         )
         LOGGER.info(
             "%s: loaded %d eligible journeys from %d partitions",
@@ -324,6 +334,7 @@ def train(args: argparse.Namespace, cfg: PipelineConfig) -> None:
             "holdout_journeys": len(holdout) if holdout is not None else 0,
             "max_training_journeys": args.max_training_journeys,
             "sample_seed": args.sample_seed,
+            "sampling_strategy": args.sampling_strategy,
             "split": split_report,
         }
         LOGGER.info(

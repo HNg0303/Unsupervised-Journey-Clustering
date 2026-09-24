@@ -34,13 +34,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input",
         type=Path,
-        default=Path("data/giga_data"),
+        default=Path("data/giga_data/678"),
         help="CSV file or directory containing CSV files (default: data/giga_data)",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("data/lake/raw_events"),
+        default=Path("data/lake/raw_events/678"),
         help="new parquet dataset directory (default: data/lake/raw_events)",
     )
     parser.add_argument("--chunksize", type=int, default=250_000)

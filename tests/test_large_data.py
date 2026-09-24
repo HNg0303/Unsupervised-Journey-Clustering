@@ -120,6 +120,47 @@ class LargeDataHelpersTest(unittest.TestCase):
             loaded = read_journey_partitions([path], platform="android")
         self.assertEqual(loaded["journey_id"].tolist(), ["p::j1"])
 
+    def test_customer_stratified_sampling_preserves_customer_coverage(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "journey_id": [f"j{i}" for i in range(12)],
+                "platform": ["android"] * 12,
+                "customer_id": ["large"] * 8 + ["medium"] * 3 + ["small"],
+                "model_eligible": [True] * 12,
+                "n_events_final": [4] * 12,
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "part.parquet"
+            write_parquet(frame, path)
+            loaded = read_journey_partitions(
+                [path], platform="android", max_journeys=6, seed=7
+            )
+        self.assertEqual(len(loaded), 6)
+        self.assertEqual(set(loaded["customer_id"]), {"large", "medium", "small"})
+        self.assertEqual(
+            loaded["customer_id"].value_counts().to_dict(),
+            {"large": 3, "medium": 2, "small": 1},
+        )
+
+    def test_customer_stratified_sampling_rejects_too_small_cap(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "journey_id": ["j1", "j2", "j3"],
+                "platform": ["android"] * 3,
+                "customer_id": ["a", "b", "c"],
+                "model_eligible": [True] * 3,
+                "n_events_final": [4] * 3,
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "part.parquet"
+            write_parquet(frame, path)
+            with self.assertRaisesRegex(ValueError, "cannot preserve all customers"):
+                read_journey_partitions(
+                    [path], platform="android", max_journeys=2
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

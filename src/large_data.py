@@ -239,13 +239,38 @@ def read_journey_partitions(
     platform: str,
     max_journeys: int | None = None,
     seed: int = 42,
+    sampling_strategy: str = "customer_stratified",
 ) -> pd.DataFrame:
-    """Load eligible journeys, optionally using deterministic reservoir sampling."""
+    """Load eligible journeys with an optional deterministic size cap.
+
+    ``customer_stratified`` guarantees at least one journey for every distinct
+    customer (missing customer IDs form one anonymous stratum), then allocates
+    the remaining capacity proportionally to each customer's journey count.
+    This preserves customer coverage and the journeys-per-customer distribution
+    much better than a global reservoir.  It requires two bounded-memory passes
+    over the parquet files.
+
+    ``journey_reservoir`` retains the legacy uniform journey-level sampler.
+    """
+    strategies = {"customer_stratified", "journey_reservoir"}
+    if sampling_strategy not in strategies:
+        raise ValueError(
+            f"sampling_strategy must be one of {sorted(strategies)}, got "
+            f"{sampling_strategy!r}"
+        )
+    if max_journeys is not None and max_journeys < 1:
+        raise ValueError("max_journeys must be positive")
+
+    paths = list(paths)
+    if max_journeys is not None and sampling_strategy == "customer_stratified":
+        return _read_customer_stratified_journeys(
+            paths, platform=platform, max_journeys=max_journeys, seed=seed
+        )
+
     rng = np.random.default_rng(seed)
     candidates: list[pd.DataFrame] = []
     reservoir: list[dict[str, object]] = []
     seen = 0
-    paths = list(paths)
     total_paths = len(paths)
     for path_number, path in enumerate(paths, start=1):
         frame = pd.read_parquet(path)
@@ -284,6 +309,122 @@ def read_journey_partitions(
             return pd.DataFrame()
         return pd.concat(candidates, ignore_index=True)
     return pd.DataFrame(reservoir)
+
+
+def _eligible_platform_journeys(path: Path, platform: str) -> pd.DataFrame:
+    """Read the eligible rows for one platform from a journey partition."""
+    frame = pd.read_parquet(path)
+    if "platform" in frame:
+        frame = frame.loc[
+            frame["platform"].astype(str).str.lower().eq(platform.lower())
+        ]
+    if "model_eligible" in frame:
+        return frame.loc[frame["model_eligible"].astype(bool)].copy()
+    return frame.loc[frame["n_events_final"].astype(int) >= 4].copy()
+
+
+def _customer_strata(frame: pd.DataFrame) -> pd.Series:
+    """Return stable customer strata, treating all missing IDs as anonymous."""
+    if "customer_id" not in frame:
+        raise ValueError(
+            "customer_stratified sampling requires a customer_id column; "
+            "use sampling_strategy='journey_reservoir' for legacy data"
+        )
+    customer = frame["customer_id"].astype("string").str.strip()
+    missing = customer.isna() | customer.eq("")
+    return customer.mask(missing, "__anonymous__").astype(str)
+
+
+def _proportional_customer_quotas(
+    counts: dict[str, int], max_journeys: int
+) -> dict[str, int]:
+    """Allocate an exact cap proportionally, with one row per customer."""
+    if not counts:
+        return {}
+    if max_journeys < len(counts):
+        raise ValueError(
+            "max_journeys cannot preserve all customers: "
+            f"cap={max_journeys:,}, customer_strata={len(counts):,}. "
+            "Increase the cap or use sampling_strategy='journey_reservoir'."
+        )
+    total = sum(counts.values())
+    if max_journeys >= total:
+        return counts.copy()
+
+    quotas = {customer: 1 for customer in counts}
+    remaining = max_journeys - len(counts)
+    extra_capacity = {customer: count - 1 for customer, count in counts.items()}
+    capacity_total = sum(extra_capacity.values())
+    exact = {
+        customer: remaining * capacity / capacity_total
+        for customer, capacity in extra_capacity.items()
+    }
+    for customer, value in exact.items():
+        quotas[customer] += int(np.floor(value))
+    unassigned = max_journeys - sum(quotas.values())
+    ranked = sorted(
+        counts,
+        key=lambda customer: (
+            -(exact[customer] - np.floor(exact[customer])),
+            customer,
+        ),
+    )
+    for customer in ranked:
+        if unassigned == 0:
+            break
+        if quotas[customer] < counts[customer]:
+            quotas[customer] += 1
+            unassigned -= 1
+    return quotas
+
+
+def _read_customer_stratified_journeys(
+    paths: list[Path], *, platform: str, max_journeys: int, seed: int
+) -> pd.DataFrame:
+    """Two-pass, bounded-memory customer-stratified reservoir sampling."""
+    counts: dict[str, int] = {}
+    for path in paths:
+        eligible = _eligible_platform_journeys(path, platform)
+        if eligible.empty:
+            continue
+        for customer, count in _customer_strata(eligible).value_counts().items():
+            counts[customer] = counts.get(customer, 0) + int(count)
+
+    quotas = _proportional_customer_quotas(counts, max_journeys)
+    if not quotas:
+        return pd.DataFrame()
+
+    rng = np.random.default_rng(seed)
+    seen = {customer: 0 for customer in quotas}
+    samples: dict[str, list[dict[str, object]]] = {
+        customer: [] for customer in quotas
+    }
+    for path_number, path in enumerate(paths, start=1):
+        eligible = _eligible_platform_journeys(path, platform)
+        if eligible.empty:
+            continue
+        LOGGER.info(
+            "%s: customer-stratified pass 2, partition %d: %s eligible=%d",
+            platform,
+            path_number,
+            path.name,
+            len(eligible),
+        )
+        strata = _customer_strata(eligible)
+        for customer, row in zip(strata, eligible.to_dict(orient="records")):
+            seen[customer] += 1
+            reservoir = samples[customer]
+            quota = quotas[customer]
+            if len(reservoir) < quota:
+                reservoir.append(row)
+            else:
+                position = int(rng.integers(0, seen[customer]))
+                if position < quota:
+                    reservoir[position] = row
+
+    rows = [row for customer in sorted(samples) for row in samples[customer]]
+    rng.shuffle(rows)
+    return pd.DataFrame(rows)
 
 
 def _json_default(value: object) -> object:

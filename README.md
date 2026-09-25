@@ -20,14 +20,12 @@
   - [Stage 5: Sequence Normalisation & Postprocessing (`postprocess.py`)](#stage-5-sequence-normalisation--postprocessing-postprocesspy)
   - [Stage 6: Multi-Channel Journey Representation (`features.py`)](#stage-6-multi-channel-journey-representation-featurespy)
   - [Stage 7: Density Clustering & Markov Companion (`cluster.py`, `prefixspan.py`)](#stage-7-density-clustering--markov-companion-clusterpy-prefixspanpy)
-  - [Stage 8: Inference & Dual-Channel Anomaly Scoring (`score.py`, `hierarchical_score.py`)](#stage-8-inference--dual-channel-anomaly-scoring-scorepy-hierarchical_scorepy)
-  - [Infrastructure: Out-of-Core Large Data Handling (`large_data.py`, `production.py`)](#infrastructure-out-of-core-large-data-handling-large_datapy-productionpy)
+  - [Stage 8: Inference & Dual-Channel Anomaly Scoring (`score.py`)](#stage-8-inference--dual-channel-anomaly-scoring-scorepy)
+  - [Aggregate Pipelines and Storage (`pipelines.py`, `storage.py`)](#aggregate-pipelines-and-storage-pipelinespy-storagepy)
 - [4. Repository Structure & Component Meaning](#4-repository-structure--component-meaning)
   - [Root Files](#root-files)
   - [`src/` — Core Engine & Machine Learning Pipeline](#src--core-engine--machine-learning-pipeline)
   - [`scripts/` — Pipeline Orchestration, ETL & Scoring](#scripts--pipeline-orchestration-etl--scoring)
-  - [`scripts/post_analysis/` — Out-of-Core Customer & Business Analytics](#scriptspost_analysis--out-of-core-customer--business-analytics)
-  - [`scripts/prepare_data_for_post_analysis/` — Presentation Preparation](#scriptsprepare_data_for_post_analysis--presentation-preparation)
   - [`dashboard/` — Interactive Streamlit Presentation Layer](#dashboard--interactive-streamlit-presentation-layer)
   - [`mobile/android/` — On-Device Kotlin & ONNX Clickstream Simulator](#mobileandroid--on-device-kotlin--onnx-clickstream-simulator)
   - [`docs/` — Business & Technical Documentation](#docs--business--technical-documentation)
@@ -41,11 +39,8 @@
   - [1. Partition Large Raw Clickstream CSVs](#1-partition-large-raw-clickstream-csvs)
   - [2. Train Models & Evaluate Holdout](#2-train-models--evaluate-holdout)
   - [3. Batch Score Full-Data or Run Smoke Tests](#3-batch-score-full-data-or-run-smoke-tests)
-  - [4. Apply Authoritative Business Naming Mapping](#4-apply-authoritative-business-naming-mapping)
-  - [5. Run Independent Customer & Business Post-Analyses](#5-run-independent-customer--business-post-analyses)
-  - [6. Prepare Presentation Summaries & Launch Streamlit Dashboard](#6-prepare-presentation-summaries--launch-streamlit-dashboard)
-  - [7. Generate Interactive Process Flow & Sankey Diagrams](#7-generate-interactive-process-flow--sankey-diagrams)
-  - [8. Deploy & Simulate On-Device Mobile Inference (Android)](#8-deploy--simulate-on-device-mobile-inference-android)
+  - [4. Name Clusters with the Business Taxonomy](#4-name-clusters-with-the-business-taxonomy)
+  - [5. Deploy & Simulate On-Device Mobile Inference (Android)](#5-deploy--simulate-on-device-mobile-inference-android)
 - [6. Data Contracts & Output Schemas](#6-data-contracts--output-schemas)
 - [7. Core Design Philosophy & Engineering Principles](#7-core-design-philosophy--engineering-principles)
 
@@ -130,26 +125,15 @@ flowchart TD
         LAKE_EVENTS --> SCORE_SCRIPT --> SCORED_PARQUET
     end
 
-    subgraph S3["3. Authoritative Business Naming"]
-        NAMING_CSV["Cluster_naming.csv<br>Reviewed Business Labels (Platform + Cluster)"]
-        APPLY_NAME["scripts/apply_mapping_name.py"]
-        ALL_NAMED["*_all_named.csv<br>Immutable Ground-Truth Anchor"]
-        
-        SCORED_PARQUET --> APPLY_NAME
-        NAMING_CSV --> APPLY_NAME --> ALL_NAMED
-    end
+    subgraph S3["3. Taxonomy Naming"]
+        NGRAMS["Training cluster n-grams"]
+        TAXONOMY["Three-level business taxonomy"]
+        NAMING["scripts/taxonomy_cluster_naming_pipeline.py"]
+        NAMED["Named score CSV + mapping + audit"]
 
-    subgraph S4["4. Analytics & Presentation"]
-        DUCK_POST["scripts/post_analysis/<br>DuckDB Customer, Loyalty, VNeID, Focus"]
-        PREP_DASH["scripts/prepare_data_for_post_analysis/<br>EDA, Inference Summaries, KPI Tables"]
-        STREAMLIT["dashboard/app.py<br>Multi-Page Streamlit Presentation"]
-        SANKEY["visualize/pm4py_visualize.py<br>Interactive Journey Paths & Sankey HTML"]
-        
-        ALL_NAMED --> DUCK_POST
-        ALL_NAMED --> PREP_DASH
-        PREP_DASH --> STREAMLIT
-        DUCK_POST --> STREAMLIT
-        ALL_NAMED --> SANKEY
+        NGRAMS --> NAMING
+        TAXONOMY --> NAMING
+        SCORED_PARQUET --> NAMING --> NAMED
     end
 
     subgraph S5["5. Mobile Edge Deployment"]
@@ -174,7 +158,7 @@ The codebase enforces strict isolation between raw data, fitted model artifacts,
 
 ## 3. Core Machine Learning & Algorithmic Pipeline (`src/`)
 
-### Stage 1: Asymmetric Canonicalisation ([`src/canonize.py`](file:///Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/src/canonize.py))
+### Stage 1: Asymmetric Canonicalisation (`src/journey_clustering/canonize.py`)
 
 Clickstream logging formats frequently invert column meanings depending on the event type:
 - When `event_type == "View"`: `segment_name` contains the screen name, while `screen_name` is `NULL`.
@@ -190,7 +174,7 @@ If concatenated naively, `View` and `Action` events reside in disjoint token spa
 
 ---
 
-### Stage 2 & 3: Multi-Resolution Semantics & Tokenisation ([`src/tokens.py`](file:///Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/src/tokens.py), [`src/semantics.py`](file:///Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/src/semantics.py), [`src/taxonomy.py`](file:///Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/src/taxonomy.py))
+### Stage 2 & 3: Multi-Resolution Semantics & Tokenisation (`src/journey_clustering/tokens.py`, `src/journey_clustering/semantics.py`, `src/journey_clustering/taxonomy.py`)
 
 A single user action is mapped across a 5-level semantic ladder:
 
@@ -207,7 +191,7 @@ A single user action is mapped across a 5-level semantic ladder:
 
 ---
 
-### Stage 4: Journey Segmentation ([`src/segment.py`](file:///Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/src/segment.py))
+### Stage 4: Journey Segmentation (`src/journey_clustering/segment.py`)
 
 Raw telemetry `session_id`s do not represent single user goals (spans reach 30+ hours). `segment.py` divides sessions into cohesive journeys using two complementary methodologies:
 
@@ -237,7 +221,7 @@ graph TD
 
 ---
 
-### Stage 5: Sequence Normalisation & Postprocessing ([`src/postprocess.py`](file:///Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/src/postprocess.py))
+### Stage 5: Sequence Normalisation & Postprocessing (`src/journey_clustering/postprocess.py`)
 
 Before vectorisation, sequence noise is reduced while retaining behavioural signals:
 - **Consecutive Deduplication**: Collapses repeated taps on identical tokens (e.g., $A \to A \to A \to A$), recording the count in `n_dedup_removed`.
@@ -246,7 +230,7 @@ Before vectorisation, sequence noise is reduced while retaining behavioural sign
 
 ---
 
-### Stage 6: Multi-Channel Journey Representation ([`src/features.py`](file:///Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/src/features.py))
+### Stage 6: Multi-Channel Journey Representation (`src/journey_clustering/features.py`)
 
 Journeys are converted into a rich vector space fusing sequence order, semantic intent, and behavioural metrics:
 
@@ -280,7 +264,7 @@ graph LR
 
 ---
 
-### Stage 7: Density Clustering & Markov Companion ([`src/cluster.py`](file:///Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/src/cluster.py), [`src/prefixspan.py`](file:///Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/src/prefixspan.py))
+### Stage 7: Density Clustering & Markov Companion (`src/journey_clustering/cluster.py`, `src/journey_clustering/prefixspan.py`)
 
 Two companion models are fitted to answer distinct analytical questions:
 
@@ -300,7 +284,7 @@ Two companion models are fitted to answer distinct analytical questions:
 
 ---
 
-### Stage 8: Inference & Dual-Channel Anomaly Scoring ([`src/score.py`](file:///Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/src/score.py), [`src/hierarchical_score.py`](file:///Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/src/hierarchical_score.py))
+### Stage 8: Inference & Dual-Channel Anomaly Scoring (`src/journey_clustering/score.py`)
 
 The `JourneyScorer` scores new journeys across multiple independent dimensions:
 
@@ -330,7 +314,12 @@ graph TD
 
 ---
 
-### Infrastructure: Out-of-Core Large Data Handling ([`src/large_data.py`](file:///Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/src/large_data.py), [`src/production.py`](file:///Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/src/production.py))
+### Aggregate Pipelines and Storage (`src/journey_clustering/pipelines.py`, `src/journey_clustering/storage.py`)
+
+`pipelines.py` is the application-facing orchestration boundary. Its two main
+entry points are `prepare_event_partition` for raw events → journeys and
+`fit_global_journey_model` for prepared journeys → fitted model artifacts.
+Low-level Parquet and partition-identity helpers live separately in `storage.py`.
 
 - **Session-Safe Partitioning**: Uses deterministic hashing `stable_session_bucket(platform, session_id)` ensuring that events belonging to the same session are **never split across partition boundaries**.
 - **Chronological Holdout Split**: Partitions whole sessions chronologically into train ($80\%$) and holdout ($20\%$) sets, guaranteeing zero data leakage across train/test splits.
@@ -405,64 +394,39 @@ Unsupervised-Journey-Clustering/
 │   ├── partition_raw_events.py # Chunks raw CSVs into session-safe Parquet partitions
 │   ├── run_partitioned_journey_pipeline.py # Trains and validates platform models
 │   ├── score_partitioned_events.py # High-throughput batch scoring on full data
-│   ├── apply_mapping_name.py   # Joins business naming to produce immutable anchors
-│   ├── build_cluster_naming.py # Extracts cluster profiles for LLM/expert naming
-│   ├── build_cluster_business_mapping.py # Builds cluster-to-business mappings
-│   ├── build_cluster_mapping_csv.py # Compiles human-readable naming CSVs
-│   ├── build_customer_journey_sequences.py # Builds customer journey path sequences
-│   ├── build_inference_html_dashboard.py # Generates standalone HTML dashboards
-│   ├── build_platform_cluster_business_mappings.py # Multi-platform mapping builder
-│   ├── extract_inference_dashboard_summaries.py # DuckDB summary metric extractor
-│   ├── postprocess_cluster_runs.py # Cluster noise refinement & postprocessing
-│   ├── apply_cluster_business.py # Applies business taxonomy to scored runs
-│   │
-│   ├── post_analysis/          # Independent DuckDB customer/business post-analyses
-│   │   ├── common.py           # Reusable DuckDB session setup & query helpers
-│   │   ├── analyze_customer_metrics.py # Customer footprint, monthly activity & journey mix
-│   │   ├── analyze_focus_journeys.py # Deep dives into VNeID, Support, Payment, Device
-│   │   ├── analyze_post_vneid_econtract.py # E-Contract & VNeID post-signing behavior
-│   │   ├── analyze_loyalty.py  # Loyalty cohort analysis & downstream impact
-│   │   ├── run_all.py          # Orchestrator for all post-analysis jobs
-│   │   └── README.md           # Post-analysis architecture & documentation
-│   │
-│   └── prepare_data_for_post_analysis/ # Presentation preparation layer
-│       ├── eda_raw.py          # Profiles raw CSVs and outputs eda_summary.json
-│       ├── train_output.py     # Extracts metadata from training runs
-│       ├── inference_summary.py # Canonical out-of-core DuckDB inference summarizer
-│       ├── html_dashboard.py   # Static HTML dashboard generator
-│       ├── build_all.py        # All-in-one preparation orchestrator
-│       └── README.md           # Data preparation contracts & guidelines
+│   └── taxonomy_cluster_naming_pipeline.py # Taxonomy mapping, audit, and score naming
 │
-├── src/                        # Core algorithmic package (Re-usable library)
-│   ├── __init__.py             # Package declaration
-│   ├── config.py               # Central dataclass configuration (Pipeline, Features, Cluster)
-│   ├── canonize.py             # Role-correct event canonicalisation & parameter masking
-│   ├── tokens.py               # Multi-resolution token ladder & rare-token backoff
-│   ├── semantics.py            # Structural path parsing into family/module/intent
-│   ├── taxonomy.py             # Business taxonomy definitions & screen classifications
-│   ├── segment.py              # Journey segmentation (L0 rules & L1 branching entropy)
-│   ├── postprocess.py          # Consecutive deduplication & cycle/loop collapsing
-│   ├── features.py             # Multi-channel TF-IDF + Truncated SVD vectorizer
-│   ├── cluster.py              # HDBSCAN clustering, Markov companion bank & quality metrics
-│   ├── prefixspan.py           # PrefixSpan sequential pattern mining implementation
-│   ├── score.py                # JourneyScorer inference engine & anomaly thresholds
-│   ├── hierarchical_score.py   # Multi-tier hierarchical scoring & cluster refinement
-│   ├── large_data.py           # Parquet I/O, session-safe hashing & dataset loaders
-│   ├── production.py           # Production schema adapter & streaming journey boundaries
-│   ├── cluster_mapping.py      # Business mapping data structures & naming resolvers
-│   ├── cluster_postprocess.py  # Post-cluster noise reassignment & refinement logic
-│   ├── experiment.py           # Parameter sweep & clustering experiment runners
-│   └── timing.py               # Execution time measurement context managers
+├── src/
+│   └── journey_clustering/     # Installable reusable domain package
+│       ├── config.py           # Central dataclass configuration
+│       ├── preprocessing.py    # Production schema normalization
+│       ├── canonize.py         # Canonicalisation and parameter masking
+│       ├── semantics.py        # Structural paths to business semantics
+│       ├── taxonomy.py         # Controlled business taxonomy
+│       ├── tokens.py           # Multi-resolution token construction
+│       ├── segment.py          # Session-to-journey boundaries
+│       ├── postprocess.py      # Sequence cleanup and aggregation
+│       ├── features.py         # Multi-channel feature representation
+│       ├── cluster.py          # Clustering and Markov companion models
+│       ├── prefixspan.py       # Sequential-pattern mining
+│       ├── score.py            # Frozen-model inference
+│       ├── hierarchical_score.py # Hierarchical inference
+│       ├── pipelines.py        # Aggregate prepare-partition and fit-model flows
+│       ├── storage.py          # Parquet and partition-identity primitives
+│       ├── experiment.py       # Experiment identity and safe splitting
+│       ├── cluster_mapping.py  # Business-name mapping
+│       ├── cluster_postprocess.py # Noise reassignment and refinement
+│       ├── naming.py           # Evidence-based taxonomy naming logic
+│       ├── export_mobile.py    # Mobile artifact export
+│       └── timing.py           # Observable stage helpers
 │
 ├── tests/                      # Unit, integration, and parity test suite
-│   ├── test_apply_cluster_business.py # Tests for business mapping application
-│   ├── test_build_cluster_mapping_csv.py # Tests for CSV mapping builders
 │   ├── test_cluster_mapping.py # Tests for cluster mapping resolvers
 │   ├── test_cluster_postprocess.py # Tests for noise postprocessing
 │   ├── test_hierarchical_score.py # Tests for hierarchical scoring engine
-│   ├── test_large_data.py      # Tests for Parquet partitioning & session bucketing
+│   ├── test_pipelines.py       # Tests for aggregate flows and storage helpers
 │   ├── test_production_pipeline.py # Tests for production schema adapters
-│   ├── test_reasoned_cluster_naming_pipeline.py # Tests for naming pipelines
+│   ├── test_taxonomy_cluster_naming_pipeline.py # Tests for taxonomy naming
 │   ├── test_run_journey_pipeline.py # Integration test for end-to-end pipeline
 │   ├── test_semantics.py       # Tests for semantic annotation & taxonomy rules
 │   └── test_tokens_and_features.py # Tests for tokenization, SVD & feature vectorizers
@@ -559,130 +523,44 @@ Score millions of raw events or a single CSV smoke test using the trained model:
 python scripts/score_partitioned_events.py \
   --input data/lake/raw_events \
   --platform android \
-  --single-run output/partitioned_runs/latest/android \
+  --model-run output/partitioned_runs/latest/android \
   --output-root output/scores/pca48_ngrams12_500
 
 # Direct CSV Smoke Test (Exports scored Parquet/CSV directly)
 python scripts/score_partitioned_events.py \
   --input data/giga_data/android_events_t3-2026.csv \
   --platform android \
-  --single-run output/partitioned_runs/latest/android \
+  --model-run output/partitioned_runs/latest/android \
   --output-root output/scores/pca48_ngrams12_500 \
   --parquet
 ```
 
 ---
 
-### 4. Apply Authoritative Business Naming Mapping
+### 4. Name Clusters with the Business Taxonomy
 
-Join the human/LLM-reviewed `Cluster_naming.csv` with the scored partition outputs to create the immutable `*_all_named.csv` analytical anchors:
+Run the canonical naming entry point against the cluster n-grams emitted by
+training. The reusable implementation lives in
+`journey_clustering.naming`; the script only provides the CLI.
 
 ```bash
-# Android Named Anchor
-python scripts/apply_mapping_name.py \
-  --input output/scores/pca48_ngrams12_500/android/model_version=latest/platform=android \
-  --platform android \
-  --mapping output/scores/pca48_ngrams12_500/Cluster_naming.csv \
-  --output output/scores/pca48_ngrams12_500/shareholder_analysis/android_all_named.csv
-
-# iOS Named Anchor
-python scripts/apply_mapping_name.py \
-  --input output/scores/pca48_ngrams12_500/ios/model_version=latest/platform=ios \
-  --platform ios \
-  --mapping output/scores/pca48_ngrams12_500/Cluster_naming.csv \
-  --output output/scores/pca48_ngrams12_500/shareholder_analysis/ios_all_named.csv
+python scripts/taxonomy_cluster_naming_pipeline.py \
+  --taxonomy path/to/hifpt_journey_taxonomy_3_levels.csv \
+  --android-ngrams output/partitioned_runs/latest/android/android_cluster_ngrams.csv \
+  --ios-ngrams output/partitioned_runs/latest/ios/ios_cluster_ngrams.csv \
+  --output-dir output/scores/taxonomy_naming \
+  --android-input output/scores/android_scores.csv \
+  --android-output output/scores/android_scores_taxonomy_named.csv \
+  --ios-input output/scores/ios_scores.csv \
+  --ios-output output/scores/ios_scores_taxonomy_named.csv
 ```
+
+The command writes the taxonomy audit, cluster mapping, optional named score
+CSVs, shareholder catalogs, unresolved-cluster review queue, and run summary.
 
 ---
 
-### 5. Run Independent Customer & Business Post-Analyses
-
-Execute out-of-core DuckDB customer and business analysis scripts against the named anchors:
-
-```bash
-# Run all post-analyses at once
-python scripts/post_analysis/run_all.py \
-  --android output/scores/pca48_ngrams12_500/shareholder_analysis/android_all_named.csv \
-  --ios output/scores/pca48_ngrams12_500/shareholder_analysis/ios_all_named.csv \
-  --output-dir output/scores/pca48_ngrams12_500/shareholder_analysis
-
-# Or run individual modules independently:
-# 1. Customer Footprint & Journey Mix
-python scripts/post_analysis/analyze_customer_metrics.py \
-  --android output/scores/pca48_ngrams12_500/shareholder_analysis/android_all_named.csv \
-  --ios output/scores/pca48_ngrams12_500/shareholder_analysis/ios_all_named.csv \
-  --output-dir output/scores/pca48_ngrams12_500/shareholder_analysis
-
-# 2. Focus Journeys Deep Dive (VNeID, Support, Payment, Device, Notifications)
-python scripts/post_analysis/analyze_focus_journeys.py \
-  --android output/scores/pca48_ngrams12_500/shareholder_analysis/android_all_named.csv \
-  --ios output/scores/pca48_ngrams12_500/shareholder_analysis/ios_all_named.csv \
-  --output-dir output/scores/pca48_ngrams12_500/shareholder_analysis
-
-# 3. Loyalty Cohort & Downstream Actions
-python scripts/post_analysis/analyze_loyalty.py \
-  --android output/scores/pca48_ngrams12_500/shareholder_analysis/android_all_named.csv \
-  --ios output/scores/pca48_ngrams12_500/shareholder_analysis/ios_all_named.csv \
-  --output-dir output/scores/pca48_ngrams12_500/shareholder_analysis
-
-# 4. Post-VNeID & E-Contract Signing Behavior
-python scripts/post_analysis/analyze_post_vneid_econtract.py \
-  --input output/scores/pca48_ngrams12_500/shareholder_analysis/android_all_named.csv \
-  --output-dir output/scores/pca48_ngrams12_500/shareholder_analysis
-```
-
----
-
-### 6. Prepare Presentation Summaries & Launch Streamlit Dashboard
-
-Extract compact summary tables for the UI layer and start the interactive Streamlit dashboard:
-
-```bash
-# 1. Extract raw event EDA metrics
-python scripts/prepare_data_for_post_analysis/eda_raw.py \
-  --input-root data/giga_data \
-  --output-dir output/scores/pca48_ngrams12_500/post_analysis/eda
-
-# 2. Extract full inference summary aggregates
-python scripts/prepare_data_for_post_analysis/inference_summary.py \
-  --android output/scores/pca48_ngrams12_500/shareholder_analysis/android_all_named.csv \
-  --ios output/scores/pca48_ngrams12_500/shareholder_analysis/ios_all_named.csv \
-  --naming output/scores/pca48_ngrams12_500/Cluster_naming.csv \
-  --output-dir output/scores/pca48_ngrams12_500/html_dashboard_summary
-
-# 3. Register and cache dashboard data
-python dashboard/prepare_dashboard_data.py
-
-# 4. Launch the Streamlit web application
-streamlit run dashboard/app.py
-```
-
-*The dashboard will be accessible at `http://localhost:8501`.*
-
----
-
-### 7. Generate Interactive Process Flow & Sankey Diagrams
-
-Build chronological customer journey sequences and render interactive, browser-based Sankey path HTML reports:
-
-```bash
-# 1. Build customer journey sequences
-python scripts/build_customer_journey_sequences.py \
-  --android output/scores/pca48_ngrams12_500/shareholder_analysis/android_all_named.csv \
-  --ios output/scores/pca48_ngrams12_500/shareholder_analysis/ios_all_named.csv \
-  --output-dir output/scores/pca48_ngrams12_500/customer_journey_sequences \
-  --top-sessions 200
-
-# 2. Generate interactive visual HTML
-python visualize/pm4py_visualize.py \
-  --input output/scores/pca48_ngrams12_500/customer_journey_sequences/journey_path_detail.csv \
-  --output output/scores/pca48_ngrams12_500/customer_journey_sequences/journey_paths.html \
-  --level business_submodule
-```
-
----
-
-### 8. Deploy & Simulate On-Device Mobile Inference (Android)
+### 5. Deploy & Simulate On-Device Mobile Inference (Android)
 
 The repository provides a complete Android Studio clickstream simulator and Kotlin edge inference runner in `mobile/android/`:
 
@@ -724,7 +602,7 @@ Every scored journey produced by `JourneyScorer` conforms to a standardized sche
 3. **Decoupled Architecture**:
    Raw event logs, trained models, batch inference outputs, business mappings, and presentation layers are strictly isolated. Any layer can be re-run or updated without triggering end-to-end recomputation.
 4. **Reproducibility & Traceability**:
-   Pipeline parameters are centralized in dataclasses (`src/config.py`). Scored rows retain their `model_version` and `source_partition` provenance.
+   Pipeline parameters are centralized in dataclasses (`src/journey_clustering/config.py`). Scored rows retain their `model_version` and `source_partition` provenance.
 5. **Production & Edge Parity**:
    The Python feature extraction pipeline and the Kotlin Android mobile runner share identical tokenization rules, parameter masking algorithms, and model formats (ONNX + JSON contracts).
 

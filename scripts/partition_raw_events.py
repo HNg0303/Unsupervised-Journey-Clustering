@@ -23,10 +23,10 @@ from pathlib import Path
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from src.large_data import require_pyarrow, stable_session_bucket  # noqa: E402
-from src.production import normalize_platform, normalize_production_columns  # noqa: E402
+from journey_clustering.storage import require_pyarrow, stable_session_bucket  # noqa: E402
+from journey_clustering.preprocessing import normalize_platform, normalize_production_columns  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

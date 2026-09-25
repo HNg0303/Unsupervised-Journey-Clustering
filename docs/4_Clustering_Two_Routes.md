@@ -382,14 +382,10 @@ navigation changes or when `matched a known archetype` on fresh data drops below
 
 ### Current visualisation contract
 
-```bash
-python scripts/prepare_data_for_post_analysis/html_dashboard.py \
-  --input-dir output/scores/<bundle>/html_dashboard_summary
-```
-
-The current HTML is built from compact full-inference summaries and bounded journey
-examples. The Streamlit dashboard uses the same summaries; it does not scan the
-multi-GB inference partitions at page load.
+The dashboard consumes optional, precomputed compact inference summaries and
+bounded journey examples. Dashboard summary generation is intentionally outside
+the four core pipeline entry points; the UI does not scan multi-GB inference
+partitions at page load.
 
 The hover matters more than the plot. The useful question is never "where are the
 clusters" but "what is *in* that blob", and that needs the sequence attached to

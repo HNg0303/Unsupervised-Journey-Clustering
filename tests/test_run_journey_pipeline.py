@@ -8,9 +8,10 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
-from src.config import PipelineConfig
-from src.experiment import (
+from journey_clustering.config import PipelineConfig
+from journey_clustering.experiment import (
     build_prepared_data_slug,
     build_run_slug,
     split_sessions_chronologically,

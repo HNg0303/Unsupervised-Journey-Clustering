@@ -134,14 +134,16 @@ single-action guard, and a short summary of name/family counts.
 
 ## Repository command
 
-For the current B/C runs, the repository applies this policy with:
+The repository applies the current taxonomy policy with:
 
-```powershell
-python scripts/apply_mapping_name.py `
-  --postprocess-run output/journey_runs/L2_ng1-3_C-mcs100-ms5_B-mcs50-ms3_postprocessed `
-  --reference-catalog output/clusters_with_screen/shareholder_cluster_catalog_vi.json
+```bash
+python scripts/taxonomy_cluster_naming_pipeline.py \
+  --taxonomy path/to/taxonomy.csv \
+  --android-ngrams output/partitioned_runs/latest/android/android_cluster_ngrams.csv \
+  --ios-ngrams output/partitioned_runs/latest/ios/ios_cluster_ngrams.csv \
+  --output-dir output/scores/taxonomy_naming
 ```
 
-This writes named catalogs into the B run (`min_cluster_size=50`), the C run
-(`min_cluster_size=100`), and the hierarchical post-processing folder used by
-inference.
+This writes the taxonomy validation audit, cluster mapping, review queue, and
+summary. Optional score input/output pairs also produce named score CSVs and
+shareholder catalogs.

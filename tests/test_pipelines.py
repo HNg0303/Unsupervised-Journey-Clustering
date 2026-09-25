@@ -9,18 +9,21 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
-from src.journey_clustering.config import PipelineConfig  # noqa: E402
-from src.large_data import (  # noqa: E402
+from journey_clustering.config import PipelineConfig  # noqa: E402
+from journey_clustering.pipelines import (  # noqa: E402
     prepare_event_partition,
     read_journey_partitions,
     sequence_value,
+)
+from journey_clustering.storage import (  # noqa: E402
     stable_session_bucket,
     write_parquet,
 )
 
 
-class LargeDataHelpersTest(unittest.TestCase):
+class PipelineTest(unittest.TestCase):
     def test_session_bucket_is_stable_and_platform_scoped(self) -> None:
         first = stable_session_bucket("Android", "session-1", 128)
         second = stable_session_bucket("android", "session-1", 128)

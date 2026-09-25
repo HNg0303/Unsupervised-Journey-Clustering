@@ -9,8 +9,9 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
-from src.cluster_mapping import apply_cluster_name_mapping, load_cluster_name_mapping
+from journey_clustering.cluster_mapping import apply_cluster_name_mapping, load_cluster_name_mapping
 
 
 class ClusterNameMappingTest(unittest.TestCase):

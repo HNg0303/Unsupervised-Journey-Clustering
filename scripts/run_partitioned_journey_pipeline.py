@@ -32,19 +32,17 @@ from pathlib import Path
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from src.config import PipelineConfig  # noqa: E402
-from src.experiment import split_sessions_chronologically  # noqa: E402
-from src.large_data import (  # noqa: E402
+from journey_clustering.config import PipelineConfig  # noqa: E402
+from journey_clustering.experiment import split_sessions_chronologically  # noqa: E402
+from journey_clustering.pipelines import (  # noqa: E402
     fit_global_journey_model,
-    parquet_files,
     prepare_event_partition,
     read_journey_partitions,
-    safe_partition_id,
-    write_parquet,
 )
-from src import tokens as T  # noqa: E402
+from journey_clustering.storage import parquet_files, safe_partition_id, write_parquet  # noqa: E402
+from journey_clustering import tokens as T  # noqa: E402
 
 LOGGER = logging.getLogger("partitioned_journey_pipeline")
 

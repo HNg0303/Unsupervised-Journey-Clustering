@@ -14,10 +14,9 @@ from dashboard.lib import (
     render_inference_scope, t,
 )
 
-# Import through the `src` package because production modules use package-relative
-# imports (for example, `src.segment` imports `.config`).
-from src.config import SegmentConfig  # noqa: E402
-from src.segment import assign_journeys  # noqa: E402
+# Import the reusable package; its modules use package-relative dependencies.
+from journey_clustering.config import SegmentConfig  # noqa: E402
+from journey_clustering.segment import assign_journeys  # noqa: E402
 
 # Colour per boundary rule, reused by the timeline and the cut-reason chart so the two
 # read as one picture.
@@ -182,8 +181,7 @@ def render() -> None:
             )
         )
         st.code(
-            "python scripts/prepare_data_for_post_analysis/eda_raw.py "
-            f"--output-dir {bundle.root / 'post_analysis' / 'eda'}",
+            f"Provide a precomputed raw-EDA artifact under {bundle.root / 'post_analysis' / 'eda'}",
             language="bash",
         )
         st.caption(

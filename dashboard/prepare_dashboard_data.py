@@ -1,8 +1,8 @@
 """Register the selected train/inference/post-analysis products for Streamlit.
 
-This script is intentionally lightweight.  It does not scan raw events or
-materialise the full inference bundle.  Raw EDA belongs to
-``scripts/prepare_data_for_post_analysis/eda_raw.py`` and is opt-in.
+This script is intentionally lightweight. It only registers already-produced
+dashboard artifacts; raw EDA and presentation aggregation are outside the core
+training/inference command set.
 """
 
 from __future__ import annotations
@@ -16,6 +16,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
 
 BUNDLE_DIR = ROOT / "output" / "scores" / "pca48_ngrams12_500"
 TRAIN_RUN_DIR = ROOT / "output" / "partitioned_runs" / "pca48_svd48_ngrams12_500k" / "latest"
@@ -43,7 +45,7 @@ def build_train_cache() -> dict:
 
 def build_threshold_cache() -> dict:
     try:
-        from src.score import JourneyScorer
+        from journey_clustering.score import JourneyScorer
     except Exception as exc:  # noqa: BLE001 - optional runtime dependency for registration
         return {"error": f"scorer dependencies unavailable: {exc}"}
     thresholds = {}
@@ -84,7 +86,7 @@ def build_bundle_cache() -> None:
             for platform in ("android", "ios")
         },
         "contract": {
-            "raw_eda": "scripts/prepare_data_for_post_analysis/eda_raw.py -> post_analysis/eda/eda_summary.json",
+            "raw_eda": "optional precomputed post_analysis/eda/eda_summary.json",
             "training": "one row per modelled journey plus *_scored_holdout.csv",
             "inference": "one row per scored journey in partitioned output",
             "named_anchor": "*_all_named.csv",
@@ -96,7 +98,7 @@ def build_bundle_cache() -> None:
     }
     (CACHE_DIR / "bundle_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"registered dashboard bundle -> {BUNDLE_DIR}")
-    print("raw EDA is not run by this command; use scripts/prepare_data_for_post_analysis/eda_raw.py explicitly")
+    print("raw EDA is optional and must be supplied as a precomputed artifact")
 
 
 if __name__ == "__main__":

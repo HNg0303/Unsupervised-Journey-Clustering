@@ -14,26 +14,16 @@ large raw-event or inference scans itself.
 | Production results | discoverable `output/scores/<run>/html_dashboard_summary/*.csv` | full-data scored journey; selectable run/platform/timeframe |
 | Customer results | `shareholder_analysis/*.csv` | customer / action record |
 
-## Preparation order
+## Launch
 
 ```bash
-python scripts/prepare_data_for_post_analysis/eda_raw.py --input-root data/giga_data --max-rows 1000 \
-  --output-dir output/scores/pca48_ngrams12_500/post_analysis/eda  # smoke test
-
-python scripts/prepare_data_for_post_analysis/inference_summary.py \
-  --android output/.../android_all_named.csv \
-  --ios output/.../ios_all_named.csv \
-  --naming output/scores/pca48_ngrams12_500/Cluster_naming.csv \
-  --output-dir output/scores/pca48_ngrams12_500/html_dashboard_summary
-
 python dashboard/prepare_dashboard_data.py
 python -m streamlit run dashboard/app.py
 ```
 
-Omit `--max-rows` when running the full raw EDA. If that file is absent, the EDA page
-shows current journey-level EDA from the selected inference bundle, then clearly marks
-the raw-event scan as “not prepared”; it does not display prepared-Parquet footer counts
-as raw-event statistics.
+Dashboard summaries and raw-EDA files are optional precomputed artifacts, not
+core pipeline scripts. If raw EDA is absent, the page shows journey-level EDA
+and clearly marks the raw-event scan as unavailable.
 
 The Details pages share the inference bundle, available platform and timeframe controls.
 Monthly bundles can contain only one platform (for example July iOS); unavailable

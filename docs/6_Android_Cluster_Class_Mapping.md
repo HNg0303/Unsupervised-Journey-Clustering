@@ -24,12 +24,15 @@ dashboard và post-analysis:
 
 ```bash
 python scripts/score_partitioned_events.py --input data/giga_data/android_events_t3-2026.csv --platform android \
-  --single-run output/partitioned_runs/latest/android --output-root output/scores/current
-python scripts/apply_mapping_name.py \
-  --input output/scores/current/android/model_version=latest/platform=android \
-  --platform android \
-  --mapping output/scores/current/Cluster_naming.csv \
-  --output output/scores/current/android_all_named.csv
+  --model-run output/partitioned_runs/latest/android \
+  --output output/scores/current/android_scores.csv
+python scripts/taxonomy_cluster_naming_pipeline.py \
+  --taxonomy path/to/taxonomy.csv \
+  --android-ngrams output/partitioned_runs/latest/android/android_cluster_ngrams.csv \
+  --ios-ngrams output/partitioned_runs/latest/ios/ios_cluster_ngrams.csv \
+  --output-dir output/scores/current/taxonomy_naming \
+  --android-input output/scores/current/android_scores.csv \
+  --android-output output/scores/current/android_scores_taxonomy_named.csv
 ```
 
 The mapping is joined on `(platform, cluster_id)`. Cluster `-1` is required for

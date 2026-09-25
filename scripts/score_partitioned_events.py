@@ -5,19 +5,13 @@ Examples:
     python scripts/score_partitioned_events.py \
         --input data/lake/raw_events \
         --platform android \
-        --single-run output/partitioned_runs/latest/android \
-        --output-root output/scores
-
-    python scripts/score_partitioned_events.py \
-        --input data/lake/raw_events \
-        --platform ios \
-        --postprocess-run output/journey_runs/<hierarchical-run> \
+        --model-run output/partitioned_runs/latest/android \
         --output-root output/scores
 
     python scripts/score_partitioned_events.py \
         --input data/giga_data/android_events_t3-2026.csv \
         --platform android \
-        --single-run output/partitioned_runs/latest/android \
+        --model-run output/partitioned_runs/latest/android \
         --output-root output/scores
 """
 
@@ -32,12 +26,11 @@ import numpy as np
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from src.hierarchical_score import HierarchicalJourneyScorer  # noqa: E402
-from src.large_data import parquet_files, safe_partition_id, write_parquet  # noqa: E402
-from src.production import normalize_platform, normalize_production_columns  # noqa: E402
-from src.score import JourneyScorer  # noqa: E402
+from journey_clustering.storage import parquet_files, safe_partition_id, write_parquet  # noqa: E402
+from journey_clustering.preprocessing import normalize_platform, normalize_production_columns  # noqa: E402
+from journey_clustering.score import JourneyScorer  # noqa: E402
 
 
 UNKNOWN_NAME = {
@@ -63,16 +56,16 @@ def parse_args() -> argparse.Namespace:
         help="also write direct CSV scores as parquet; large parquet inputs always stay parquet",
     )
     parser.add_argument("--platform", required=True, choices=["android", "ios"])
-    parser.add_argument("--single-run", type=Path, help="run folder containing <platform>_journey_scorer.pkl")
-    parser.add_argument("--postprocess-run", type=Path, help="hierarchical C/B postprocess folder")
+    parser.add_argument(
+        "--model-run", required=True, type=Path,
+        help="training output folder containing <platform>_journey_scorer.pkl",
+    )
     parser.add_argument("--model-version", help="default: fitted run folder name")
     parser.add_argument("--output-root", type=Path, default=Path("output/scores"))
     parser.add_argument("--output", type=Path, help="direct output file for CSV input; overrides --output-root")
     parser.add_argument("--resume", action="store_true", help="skip result partitions that already exist")
     parser.add_argument("--max-files", type=int, help="optional smoke-test limit")
     args = parser.parse_args()
-    if bool(args.single_run) == bool(args.postprocess_run):
-        parser.error("provide exactly one of --single-run or --postprocess-run")
     if args.max_files is not None and args.max_files < 1:
         parser.error("--max-files must be positive")
     if args.output and args.max_files:
@@ -109,18 +102,16 @@ def read_csv_input(path: Path, platform: str) -> pd.DataFrame:
 def score_raw_partition(
     raw: pd.DataFrame,
     *,
-    scorer: JourneyScorer | HierarchicalJourneyScorer,
-    base: JourneyScorer,
+    scorer: JourneyScorer,
     names: dict[int, dict[str, str]],
     platform: str,
     model_version: str,
     partition_id: str,
 ) -> pd.DataFrame:
     """Prepare and score one raw input while keeping partition metadata aligned."""
-    journeys, sequences, channels = base.prepare(raw)
+    journeys, sequences, channels = scorer.prepare(raw)
     scored = scorer.score_prepared(journeys, sequences, channels=channels)
-    if isinstance(scorer, JourneyScorer):
-        scored = decorate_single(scored, names)
+    scored = decorate_single(scored, names)
     if not scored.empty:
         prefix = safe_partition_id(partition_id)
         scored["journey_id"] = [f"{prefix}::{value}" for value in scored["journey_id"]]
@@ -169,21 +160,11 @@ def main() -> int:
     args = parse_args()
     input_root = resolve(args.input)
     output_root = resolve(args.output_root)
-    if args.single_run:
-        run_dir = resolve(args.single_run)
-        scorer: JourneyScorer | HierarchicalJourneyScorer = JourneyScorer.load(
-            run_dir / f"{args.platform}_journey_scorer.pkl"
-        )
-        names = load_names(run_dir, args.platform)
-        base = scorer
-        default_version = run_dir.parent.name if run_dir.name == args.platform else run_dir.name
-        model_version = args.model_version or default_version
-    else:
-        postprocess_dir = resolve(args.postprocess_run)
-        scorer = HierarchicalJourneyScorer.load(postprocess_dir, args.platform)
-        names = {}
-        base = scorer.c_scorer
-        model_version = args.model_version or postprocess_dir.name
+    run_dir = resolve(args.model_run)
+    scorer = JourneyScorer.load(run_dir / f"{args.platform}_journey_scorer.pkl")
+    names = load_names(run_dir, args.platform)
+    default_version = run_dir.parent.name if run_dir.name == args.platform else run_dir.name
+    model_version = args.model_version or default_version
 
     model_version = safe_partition_id(model_version)
     # Keep inference grouped by platform first, matching the canonical bundle layout:
@@ -212,7 +193,6 @@ def main() -> int:
         scored = score_raw_partition(
             raw,
             scorer=scorer,
-            base=base,
             names=names,
             platform=args.platform,
             model_version=model_version,
@@ -274,7 +254,6 @@ def main() -> int:
         scored = score_raw_partition(
             raw,
             scorer=scorer,
-            base=base,
             names=names,
             platform=args.platform,
             model_version=model_version,

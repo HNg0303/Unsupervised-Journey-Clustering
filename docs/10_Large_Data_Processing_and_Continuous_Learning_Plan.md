@@ -113,7 +113,7 @@ rerun must not duplicate an already completed source.
 
 ### 4.2 Canonical events
 
-Reuse the contract in `src/production.py`, then add operational fields:
+Reuse the contract in `src/journey_clustering/preprocessing.py`, then add operational fields:
 
 ```text
 event_date, session_bucket, ingestion_run_id, schema_version
@@ -217,8 +217,10 @@ last processed source identity
 Initially this can be pending-session Parquet. A future real-time system could
 use Redis, RocksDB, or a streaming engine's state store.
 
-Reuse the business logic in `src/production.py`, `src/canonize.py`,
-`src/semantics.py`, `src/tokens.py`, `src/segment.py`, and `src/postprocess.py`.
+Reuse the business logic in `src/journey_clustering/preprocessing.py`,
+`src/journey_clustering/canonize.py`, `src/journey_clustering/semantics.py`,
+`src/journey_clustering/tokens.py`, `src/journey_clustering/segment.py`, and
+`src/journey_clustering/postprocess.py`.
 If APIs need changing, add support for already-sorted complete-session batches
 without changing journey semantics.
 
@@ -392,7 +394,7 @@ ingestion failure.
 Keep modeling rules in `src/` and introduce orchestration separately:
 
 ```text
-src/large_data/
+src/journey_clustering/operations/
   schemas.py              schema/version definitions
   manifests.py            idempotent run and partition manifests
   storage.py              Parquet staging, commit, and batch readers

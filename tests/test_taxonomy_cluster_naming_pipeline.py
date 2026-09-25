@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-import importlib.util
 import sys
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / "output/scores/taxonomy_cluster_naming_pipeline.py"
-SPEC = importlib.util.spec_from_file_location("taxonomy_cluster_naming_pipeline", MODULE_PATH)
-assert SPEC and SPEC.loader
-MODULE = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = MODULE
-SPEC.loader.exec_module(MODULE)
+sys.path.insert(0, str(ROOT / "src"))
+
+from journey_clustering import naming as MODULE  # noqa: E402
 
 
 class TaxonomyParserTest(unittest.TestCase):

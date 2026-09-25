@@ -16,9 +16,10 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
-from src import semantics as S
-from src.taxonomy import GENERAL, UNKNOWN
+from journey_clustering import semantics as S
+from journey_clustering.taxonomy import GENERAL, UNKNOWN
 
 
 def label(event_type: str, screen: str, target: str = "") -> S.SemanticLabel:

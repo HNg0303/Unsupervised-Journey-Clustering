@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hifpt-journey-clustering"
+version = "0.1.0"
+description = "Unsupervised clickstream journey clustering and inference"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "scipy",
+    "pyarrow",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+pipeline = ["duckdb", "tqdm"]
+dashboard = ["streamlit", "plotly", "matplotlib", "seaborn"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["journey_clustering*"]

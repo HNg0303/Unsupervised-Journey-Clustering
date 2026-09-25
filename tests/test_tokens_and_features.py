@@ -11,11 +11,12 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
-from src import tokens as T
-from src.config import CanonizeConfig, FeatureConfig, TokenConfig
-from src.features import JourneyVectorizer
-from src.production import canonicalize_frame
+from journey_clustering import tokens as T
+from journey_clustering.config import CanonizeConfig, FeatureConfig, TokenConfig
+from journey_clustering.features import JourneyVectorizer
+from journey_clustering.preprocessing import canonicalize_frame
 
 
 def canonical_fixture() -> pd.DataFrame:

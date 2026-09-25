@@ -155,9 +155,9 @@ vocabulary needed to reproduce the catalog's exact n-gram lift values.
 
 ## Source of definitions
 
-- Journey construction and behavioural fields: `src/postprocess.py`.
-- Cluster assignment, anomaly, friction, and next-action fields: `src/score.py`.
+- Journey construction and behavioural fields: `src/journey_clustering/postprocess.py`.
+- Cluster assignment, anomaly, friction, and next-action fields: `src/journey_clustering/score.py`.
 - Partitioned inference metadata: `scripts/score_partitioned_events.py`.
-- Training catalog aggregation: `src/cluster.py`.
-- Vietnamese/English cluster naming: manually reviewed `Cluster_naming.csv`, applied by
-  `scripts/apply_mapping_name.py`.
+- Training catalog aggregation: `src/journey_clustering/cluster.py`.
+- Taxonomy naming and score decoration: `src/journey_clustering/naming.py`, exposed by
+  `scripts/taxonomy_cluster_naming_pipeline.py`.

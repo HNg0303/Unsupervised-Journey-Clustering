@@ -59,8 +59,8 @@ def render() -> None:
     if customers.empty:
         st.warning(
             t(
-                "Customer analysis is not available. Run the independent scripts under scripts/post_analysis/ first.",
-                "Chưa có customer analysis. Hãy chạy các script độc lập trong scripts/post_analysis/ trước.",
+                "Customer analysis is not available. Supply precomputed shareholder_analysis artifacts.",
+                "Chưa có customer analysis. Hãy cung cấp artifact shareholder_analysis đã tính sẵn.",
             )
         )
         return

@@ -12,12 +12,13 @@ import pandas as pd
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = ROOT / "src"
 
 # The dashboard reuses the *production* segmentation code rather than restating its rules,
 # so the EDA walkthrough can never drift from what the pipeline actually does. Keep the
-# repository root on the path so package imports such as `src.segment` resolve correctly.
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+# source directory on the path so `journey_clustering` imports resolve correctly.
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 CACHE_DIR = ROOT / "output" / "dashboard_cache"
 SCORES_DIR = ROOT / "output" / "scores"
 # The dashboard deliberately keeps the three data products separate:

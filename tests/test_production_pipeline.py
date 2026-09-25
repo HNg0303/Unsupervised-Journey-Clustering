@@ -8,10 +8,11 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
-from src.config import PipelineConfig
-from src.production import canonicalize_frame
-from src import segment, tokens
+from journey_clustering.config import PipelineConfig
+from journey_clustering.preprocessing import canonicalize_frame
+from journey_clustering import segment, tokens
 
 
 class ProductionPipelineTest(unittest.TestCase):

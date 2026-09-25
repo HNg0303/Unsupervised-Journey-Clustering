@@ -1,17 +1,23 @@
-"""Out-of-core storage helpers for the journey pipeline.
+"""Aggregate preparation and model-fitting pipelines.
 
-This module deliberately keeps the journey rules in the existing modules.  It
-only adds bounded parquet I/O, stable partition identifiers, and a small
-adapter that lets the existing vectorizer/cluster/scorer fit on a materialised
-journey dataset.
+This is the orchestration boundary for the reusable package.  It composes the
+smaller preprocessing, segmentation, feature, clustering, and scoring modules
+into the two operations used by application code:
+
+``prepare_event_partition``
+    Convert one session-safe raw-event partition into journey-level data.
+
+``fit_global_journey_model``
+    Fit and persist one platform model from prepared journey partitions.
+
+Storage mechanics live in :mod:`journey_clustering.storage`; individual model
+stages remain in their focused modules.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,66 +26,13 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
-from .journey_clustering.config import PipelineConfig
-from .journey_clustering.timing import timed_stage
+from .config import PipelineConfig
+from .storage import parquet_dataset, safe_partition_id
+from .timing import timed_stage
 
 LOGGER = logging.getLogger(__name__)
 
-
-def require_pyarrow() -> tuple[Any, Any, Any]:
-    """Import parquet dependencies lazily with an actionable error."""
-    try:
-        import pyarrow as pa
-        import pyarrow.dataset as ds
-        import pyarrow.parquet as pq
-    except ImportError as exc:  # pragma: no cover - depends on the environment
-        raise RuntimeError(
-            "Parquet support requires pyarrow. Install project requirements with "
-            "`pip install -r requirements.txt`."
-        ) from exc
-    return pa, ds, pq
-
-
-def stable_session_bucket(platform: object, session_id: object, bucket_count: int) -> int:
-    """Return a deterministic bucket for one logical production session."""
-    if bucket_count < 1:
-        raise ValueError("bucket_count must be positive")
-    material = f"{str(platform).strip().lower()}\x1f{str(session_id).strip()}".encode()
-    digest = hashlib.sha1(material).digest()
-    return int.from_bytes(digest[:8], "big") % bucket_count
-
-
-def safe_partition_id(value: str) -> str:
-    """Make a stable, filesystem- and ID-friendly partition name."""
-    cleaned = re.sub(r"[^A-Za-z0-9_.=-]+", "_", str(value))
-    return cleaned.strip("_") or "partition"
-
-
-def parquet_files(root: Path) -> list[Path]:
-    """Find parquet files below a file or directory in deterministic order."""
-    root = Path(root)
-    if root.is_file():
-        return [root] if root.suffix.lower() == ".parquet" else []
-    if not root.exists():
-        raise FileNotFoundError(root)
-    return sorted(path for path in root.rglob("*.parquet") if path.is_file())
-
-
-def write_parquet(frame: pd.DataFrame, path: Path) -> None:
-    """Write one dataframe without relying on pandas' optional engine lookup."""
-    pa, _, pq = require_pyarrow()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    table = pa.Table.from_pandas(frame, preserve_index=False)
-    pq.write_table(table, path, compression="zstd")
-
-
-def parquet_dataset(root: Path) -> Any:
-    """Return a pyarrow dataset for a parquet file or directory."""
-    _, ds, _ = require_pyarrow()
-    paths = parquet_files(root)
-    if not paths:
-        raise FileNotFoundError(f"no parquet files found below {root}")
-    return ds.dataset([str(path) for path in paths], format="parquet")
+__all__ = ["prepare_event_partition", "fit_global_journey_model"]
 
 
 @dataclass
@@ -122,11 +75,11 @@ def prepare_event_partition(
     # Keep storage-only callers (for example raw CSV -> Parquet partitioning)
     # independent from the optional model stack.  The heavy pipeline modules
     # are loaded only when a journey partition is actually prepared.
-    from .journey_clustering import canonize as C
-    from .journey_clustering import postprocess as P
-    from .journey_clustering import segment as S
-    from .journey_clustering import semantics as SEM
-    from .journey_clustering import tokens as T
+    from . import canonize as C
+    from . import postprocess as P
+    from . import segment as S
+    from . import semantics as SEM
+    from . import tokens as T
 
     if {"_source_file", "_source_row_number"}.issubset(raw.columns):
         # `canonicalize_frame` creates deterministic tie-breaker positions from
@@ -216,7 +169,7 @@ def extract_journey_payload(
     journeys: pd.DataFrame, cfg: PipelineConfig
 ) -> tuple[pd.DataFrame, list[list[str]], dict[str, list[list[str]]]]:
     """Read journey rows plus aligned primary/semantic sequence channels."""
-    from .journey_clustering import tokens as T
+    from . import tokens as T
 
     frame = journeys.reset_index(drop=True).copy()
     sequence_column = "sequence_tokens" if "sequence_tokens" in frame else "sequence"
@@ -449,10 +402,10 @@ def fit_global_journey_model(
     training_manifest: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Fit the unchanged current model logic on a journey-level dataset."""
-    from .journey_clustering import cluster as CL
-    from .journey_clustering import features as F
-    from .journey_clustering import tokens as T
-    from .journey_clustering.score import JourneyScorer
+    from . import cluster as CL
+    from . import features as F
+    from . import tokens as T
+    from .score import JourneyScorer
 
     if journeys.empty:
         raise ValueError(f"{platform}: no eligible journeys available for training")

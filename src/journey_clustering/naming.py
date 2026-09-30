@@ -11,7 +11,7 @@ CSV with the columns ``taxonomy_id``, ``business_family``,
 ``business_submodule`` and ``business_detail``.
 
 Example:
-  python scripts/taxonomy_cluster_naming_pipeline.py \
+  journey-name \
     --taxonomy /path/to/hifpt-journey-taxonomy.md \
     --android-ngrams /path/to/android_cluster_ngrams.csv \
     --ios-ngrams /path/to/ios_cluster_ngrams.csv \

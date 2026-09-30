@@ -20,8 +20,8 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
-from .journey_clustering.config import PipelineConfig
-from .journey_clustering.timing import timed_stage
+from .config import PipelineConfig
+from .timing import timed_stage
 
 LOGGER = logging.getLogger(__name__)
 
@@ -122,11 +122,11 @@ def prepare_event_partition(
     # Keep storage-only callers (for example raw CSV -> Parquet partitioning)
     # independent from the optional model stack.  The heavy pipeline modules
     # are loaded only when a journey partition is actually prepared.
-    from .journey_clustering import canonize as C
-    from .journey_clustering import postprocess as P
-    from .journey_clustering import segment as S
-    from .journey_clustering import semantics as SEM
-    from .journey_clustering import tokens as T
+    from . import canonize as C
+    from . import postprocess as P
+    from . import segment as S
+    from . import semantics as SEM
+    from . import tokens as T
 
     if {"_source_file", "_source_row_number"}.issubset(raw.columns):
         # `canonicalize_frame` creates deterministic tie-breaker positions from
@@ -216,7 +216,7 @@ def extract_journey_payload(
     journeys: pd.DataFrame, cfg: PipelineConfig
 ) -> tuple[pd.DataFrame, list[list[str]], dict[str, list[list[str]]]]:
     """Read journey rows plus aligned primary/semantic sequence channels."""
-    from .journey_clustering import tokens as T
+    from . import tokens as T
 
     frame = journeys.reset_index(drop=True).copy()
     sequence_column = "sequence_tokens" if "sequence_tokens" in frame else "sequence"
@@ -449,10 +449,10 @@ def fit_global_journey_model(
     training_manifest: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Fit the unchanged current model logic on a journey-level dataset."""
-    from .journey_clustering import cluster as CL
-    from .journey_clustering import features as F
-    from .journey_clustering import tokens as T
-    from .journey_clustering.score import JourneyScorer
+    from . import cluster as CL
+    from . import features as F
+    from . import tokens as T
+    from .score import JourneyScorer
 
     if journeys.empty:
         raise ValueError(f"{platform}: no eligible journeys available for training")

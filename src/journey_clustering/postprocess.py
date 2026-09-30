@@ -31,7 +31,7 @@ import re
 import numpy as np
 import pandas as pd
 
-from .journey_clustering import canonize as C
+from . import canonize as C
 from .config import BACK_ACTION_MARKERS, PostProcessConfig
 
 

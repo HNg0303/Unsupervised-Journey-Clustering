@@ -16,6 +16,12 @@ dependencies = [
     "pyarrow",
 ]
 
+[project.scripts]
+journey-partition = "journey_clustering.cli.partition:main"
+journey-train = "journey_clustering.cli.train:main"
+journey-infer = "journey_clustering.cli.infer:main"
+journey-name = "journey_clustering.naming:main"
+
 [project.optional-dependencies]
 dev = ["pytest"]
 pipeline = ["duckdb", "tqdm"]

@@ -109,9 +109,61 @@ def load_evidence() -> dict[str, object]:
     }
 
 
+@st.cache_resource(show_spinner="Đang khởi tạo database…")
+def initialize_database_once() -> None:
+    database_api.initialize_database(DATABASE_TARGET, ASSET_DIR)
+
+
+# Every widget interaction reruns the script, so reads are cached instead of hitting the
+# database each time. Writes clear the cache; the TTL picks up other reviewers' edits.
+READ_CACHE_TTL_SECONDS = 30
+
+
+@st.cache_data(ttl=READ_CACHE_TTL_SECONDS, show_spinner=False)
+def cached_stats() -> dict[str, int]:
+    return database_api.database_stats(DATABASE_TARGET)
+
+
+@st.cache_data(ttl=READ_CACHE_TTL_SECONDS, show_spinner=False)
+def cached_taxonomy() -> pd.DataFrame:
+    return database_api.load_taxonomy(DATABASE_TARGET)
+
+
+@st.cache_data(ttl=READ_CACHE_TTL_SECONDS, show_spinner=False)
+def cached_taxonomy_choices() -> dict[str, object]:
+    return taxonomy_choices(cached_taxonomy())
+
+
+@st.cache_data(ttl=READ_CACHE_TTL_SECONDS, show_spinner=False)
+def cached_named_clusters(platform: str) -> pd.DataFrame:
+    return database_api.load_named_clusters(DATABASE_TARGET, platform)
+
+
+@st.cache_data(ttl=READ_CACHE_TTL_SECONDS, show_spinner=False)
+def cached_named_clusters_csv(platform: str) -> bytes:
+    return export_named_clusters_csv(cached_named_clusters(platform))
+
+
+@st.cache_data(ttl=READ_CACHE_TTL_SECONDS, show_spinner=False)
+def cached_recent_audit(limit: int) -> pd.DataFrame:
+    return database_api.load_recent_audit(DATABASE_TARGET, limit=limit)
+
+
+def invalidate_reads() -> None:
+    for cached in (
+        cached_stats,
+        cached_taxonomy,
+        cached_taxonomy_choices,
+        cached_named_clusters,
+        cached_named_clusters_csv,
+        cached_recent_audit,
+    ):
+        cached.clear()
+
+
 try:
     EVIDENCE = load_evidence()
-    DB_STATS = database_api.initialize_database(DATABASE_TARGET, ASSET_DIR)
+    initialize_database_once()
 except Exception as error:  # pragma: no cover - deployment diagnostics
     st.error(f"Không thể khởi tạo dữ liệu ứng dụng: {error}")
     st.stop()
@@ -202,18 +254,21 @@ def render_ngram_table(ngrams: pd.DataFrame) -> None:
     st.markdown(f'<div class="ngram-table">{"".join(rows)}</div>', unsafe_allow_html=True)
 
 
+@st.fragment
 def render_cluster_card(
     platform: str,
     row: pd.Series,
     taxonomy: pd.DataFrame,
+    choices: dict[str, object],
 ) -> None:
+    """Render one card as a fragment: editing its dropdowns reruns only this card."""
+
     cluster_id = int(row["cluster_id"])
     raw = catalog_row(EVIDENCE[platform].catalog, cluster_id)
-    choices = taxonomy_choices(taxonomy)
     family = str(row["business_family"] or "")
     submodule = str(row["business_submodule"] or "")
     detail = str(row["business_detail"] or "")
-    valid, validation_message = assignment_status(taxonomy, family, submodule, detail)
+    valid, validation_message = assignment_status(taxonomy, family, submodule, detail, choices)
 
     with st.container(border=True):
         title_col, state_col = st.columns([5, 1.3], vertical_alignment="center")
@@ -384,6 +439,7 @@ def render_cluster_card(
             except ValueError as error:
                 st.error(str(error))
             else:
+                invalidate_reads()
                 st.session_state["mapping_flash"] = (
                     f"Đã lưu {PLATFORM_LABELS[platform]} cluster {cluster_id} vào {DATABASE_LABEL}."
                 )
@@ -399,7 +455,7 @@ st.markdown(
 with st.sidebar:
     st.header(DATABASE_LABEL)
     st.code(DATABASE_LOCATION, language=None)
-    stats = database_api.database_stats(DATABASE_TARGET)
+    stats = cached_stats()
     st.caption(
         f"{stats['taxonomy_features']:,} taxonomy details\n\n"
         f"{stats['android_clusters']:,} Android clusters\n\n"
@@ -458,7 +514,7 @@ with info_tab:
         )
 
     st.subheader("Thay đổi gần đây")
-    audit = database_api.load_recent_audit(DATABASE_TARGET, limit=10)
+    audit = cached_recent_audit(10)
     if audit.empty:
         st.caption("Chưa có thay đổi nghiệp vụ.")
     else:
@@ -472,7 +528,7 @@ with taxonomy_tab:
     )
     if "taxonomy_flash" in st.session_state:
         st.success(st.session_state.pop("taxonomy_flash"))
-    taxonomy_db = database_api.load_taxonomy(DATABASE_TARGET)
+    taxonomy_db = cached_taxonomy()
     edited_taxonomy = st.data_editor(
         taxonomy_db,
         num_rows="dynamic",
@@ -499,6 +555,7 @@ with taxonomy_tab:
         except ValueError as error:
             st.error(str(error))
         else:
+            invalidate_reads()
             st.session_state["taxonomy_flash"] = (
                 f"Đã lưu taxonomy vào {DATABASE_LABEL}: "
                 f"{result['inserted']} thêm, {result['updated']} sửa, "
@@ -536,8 +593,9 @@ with review_tab:
         horizontal=True,
         key="review_platform",
     )
-    taxonomy = database_api.load_taxonomy(DATABASE_TARGET)
-    mapping = database_api.load_named_clusters(DATABASE_TARGET, platform)
+    taxonomy = cached_taxonomy()
+    choices = cached_taxonomy_choices()
+    mapping = cached_named_clusters(platform)
     confidence_options = ordered_confidences(mapping)
     filter_a, filter_b, filter_c, filter_d = st.columns([1.1, 1.5, 2.3, .8])
     with filter_a:
@@ -608,17 +666,16 @@ with review_tab:
     else:
         start = current_page * page_size
         for _, cluster_row in filtered.iloc[start : start + page_size].iterrows():
-            render_cluster_card(platform, cluster_row, taxonomy)
+            render_cluster_card(platform, cluster_row, taxonomy, choices)
 
     st.divider()
     st.subheader(f"Xuất named clusters từ {DATABASE_LABEL}")
     export_columns = st.columns(2)
     for index, export_platform in enumerate(PLATFORMS):
-        export_frame = database_api.load_named_clusters(DATABASE_TARGET, export_platform)
         with export_columns[index]:
             st.download_button(
                 f"Tải {PLATFORM_LABELS[export_platform]} named clusters",
-                data=export_named_clusters_csv(export_frame),
+                data=cached_named_clusters_csv(export_platform),
                 file_name=f"{export_platform}_named_clusters.csv",
                 mime="text/csv",
                 type="primary" if export_platform == platform else "secondary",

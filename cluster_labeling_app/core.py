@@ -62,7 +62,7 @@ def normalize_taxonomy(frame: pd.DataFrame) -> pd.DataFrame:
             out[column] = ""
         out[column] = out[column].map(clean_text)
     out = out.loc[:, list(TAXONOMY_COLUMNS)]
-    populated = out.apply(lambda row: any(row[column] for column in TAXONOMY_COLUMNS), axis=1)
+    populated = out.ne("").any(axis=1)
     return out.loc[populated].reset_index(drop=True)
 
 
@@ -134,12 +134,14 @@ def assignment_status(
     family: str,
     submodule: str,
     detail: str,
+    choices: dict[str, object] | None = None,
 ) -> tuple[bool, str]:
     """Check a cluster assignment against the active taxonomy."""
 
     if family == "Chưa phân loại":
         return True, ""
-    choices = taxonomy_choices(frame)
+    if choices is None:
+        choices = taxonomy_choices(frame)
     if family not in choices["families"]:
         return False, "Business Family hiện tại không còn trong taxonomy."
     if (family, submodule) not in choices["pairs"]:

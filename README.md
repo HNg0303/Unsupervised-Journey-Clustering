@@ -451,7 +451,7 @@ Unsupervised-Journey-Clustering/
 
 ### 0. Installation & Prerequisites
 
-Ensure Python 3.10+ is installed. Clone the repository and install dependencies:
+Ensure Python 3.11+ is installed. Clone the repository and install the package:
 
 ```bash
 # Clone the repository
@@ -462,8 +462,8 @@ cd Unsupervised-Journey-Clustering
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install core dependencies (PyArrow, DuckDB, scikit-learn, Streamlit, etc.)
-pip install -r requirements.txt
+# Install the package, pipeline dependencies, dashboard, and test tools
+pip install -e ".[pipeline,dashboard,dev]"
 
 # (Optional) Install ONNX dependencies for edge export
 pip install -r requirements-onnx.txt
@@ -476,9 +476,9 @@ pip install -r requirements-onnx.txt
 Large raw CSV log exports in `data/giga_data/` should be partitioned into session-safe Parquet files. This reads CSVs in chunks and guarantees that all events for a given session reside in the same partition:
 
 ```bash
-python scripts/partition_raw_events.py \
-  --input-root data/giga_data \
-  --output-root data/lake/raw_events \
+journey-partition \
+  --input data/giga_data \
+  --output data/lake/raw_events \
   --chunk-size 200000 \
   --partitions-per-platform 16
 ```
@@ -490,7 +490,7 @@ python scripts/partition_raw_events.py \
 Fit the vectorizers, Truncated SVD, HDBSCAN clusterer, and Markov companion chains per platform using partitioned data:
 
 ```bash
-python scripts/run_partitioned_journey_pipeline.py \
+journey-train \
   --input data/lake/raw_events \
   --journeys-root data/lake/journeys \
   --output-root output/partitioned_runs \
@@ -500,8 +500,8 @@ python scripts/run_partitioned_journey_pipeline.py \
   --test-size 0.2 \
   --min-cluster-size 100 \
   --min-samples 5 \
-  --svd-components 48 \
-  --global-pca 48 \
+  --svd-dim 48 \
+  --global-pca-components 48 \
   --idle-gap 90.0
 ```
 
@@ -520,14 +520,14 @@ Score millions of raw events or a single CSV smoke test using the trained model:
 
 ```bash
 # Full dataset batch scoring (Partitioned Parquet)
-python scripts/score_partitioned_events.py \
+journey-infer \
   --input data/lake/raw_events \
   --platform android \
   --model-run output/partitioned_runs/latest/android \
   --output-root output/scores/pca48_ngrams12_500
 
 # Direct CSV Smoke Test (Exports scored Parquet/CSV directly)
-python scripts/score_partitioned_events.py \
+journey-infer \
   --input data/giga_data/android_events_t3-2026.csv \
   --platform android \
   --model-run output/partitioned_runs/latest/android \
@@ -544,7 +544,7 @@ training. The reusable implementation lives in
 `journey_clustering.naming`; the script only provides the CLI.
 
 ```bash
-python scripts/taxonomy_cluster_naming_pipeline.py \
+journey-name \
   --taxonomy path/to/hifpt_journey_taxonomy_3_levels.csv \
   --android-ngrams output/partitioned_runs/latest/android/android_cluster_ngrams.csv \
   --ios-ngrams output/partitioned_runs/latest/ios/ios_cluster_ngrams.csv \

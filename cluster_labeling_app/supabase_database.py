@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -24,7 +25,9 @@ class SupabaseTarget:
         return self.url
 
 
+@lru_cache(maxsize=4)
 def _client(target: SupabaseTarget) -> Client:
+    # One client per target keeps the HTTP connection pool (and TLS session) warm.
     return create_client(target.url, target.key)
 
 
@@ -57,6 +60,13 @@ def _fetch_all(
         start += page_size
 
 
+def _count(client: Client, table: str, filters: Iterable[tuple[str, object]] = ()) -> int:
+    query = client.table(table).select("*", count="exact", head=True)
+    for column, value in filters:
+        query = query.eq(column, value)
+    return int(query.execute().count or 0)
+
+
 def _chunks(rows: list[dict[str, Any]], size: int = 250):
     for start in range(0, len(rows), size):
         yield rows[start : start + size]
@@ -67,8 +77,12 @@ def initialize_database(target: SupabaseTarget, asset_dir: Path) -> dict[str, in
 
     client = _client(target)
     try:
-        taxonomy_ids = _fetch_all(client, "taxonomy_features", "taxonomy_id")
-        cluster_ids = _fetch_all(client, "named_clusters", "platform,cluster_id")
+        taxonomy_ids = _rows(
+            client.table("taxonomy_features").select("taxonomy_id").limit(1).execute()
+        )
+        cluster_ids = _rows(
+            client.table("named_clusters").select("cluster_id").limit(1).execute()
+        )
     except Exception as error:
         raise ValueError(
             "Không đọc được schema Supabase. Hãy chạy supabase_schema.sql trong SQL Editor "
@@ -156,16 +170,11 @@ def _seed_database(client: Client, asset_dir: Path) -> None:
 
 def database_stats(target: SupabaseTarget) -> dict[str, int]:
     client = _client(target)
-    taxonomy = _fetch_all(
-        client, "taxonomy_features", "taxonomy_id", filters=(("is_active", True),)
-    )
-    clusters = _fetch_all(client, "named_clusters", "platform,cluster_id")
-    audits = _fetch_all(client, "change_audit", "audit_id")
     return {
-        "taxonomy_features": len(taxonomy),
-        "android_clusters": sum(row["platform"] == "android" for row in clusters),
-        "ios_clusters": sum(row["platform"] == "ios" for row in clusters),
-        "audit_events": len(audits),
+        "taxonomy_features": _count(client, "taxonomy_features", (("is_active", True),)),
+        "android_clusters": _count(client, "named_clusters", (("platform", "android"),)),
+        "ios_clusters": _count(client, "named_clusters", (("platform", "ios"),)),
+        "audit_events": _count(client, "change_audit"),
     }
 
 

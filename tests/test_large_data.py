@@ -10,8 +10,8 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.journey_clustering.config import PipelineConfig  # noqa: E402
-from src.large_data import (  # noqa: E402
+from journey_clustering.config import PipelineConfig  # noqa: E402
+from journey_clustering.large_data import (  # noqa: E402
     prepare_event_partition,
     read_journey_partitions,
     sequence_value,

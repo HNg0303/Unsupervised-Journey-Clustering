@@ -1,0 +1,11 @@
+# Keep the build context restricted to the installable ML package and CLI
+# wrappers. Data, outputs, notebooks, dashboards, mobile apps, and Git metadata
+# are excluded by default.
+**
+!pyproject.toml
+!README.md
+!LICENSE
+!src/
+!src/**
+!scripts/
+!scripts/**

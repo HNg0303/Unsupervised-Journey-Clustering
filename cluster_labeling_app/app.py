@@ -101,8 +101,19 @@ st.markdown(
 )
 
 
-@st.cache_data(show_spinner="Đang đọc catalog và n-grams…")
-def load_evidence() -> dict[str, object]:
+def asset_signature() -> str:
+    """Changes whenever refresh_clusters.py swaps in a new model's assets."""
+
+    names = ["cluster_mapping.csv"] + [
+        f"{platform}_{kind}"
+        for platform in PLATFORMS
+        for kind in ("cluster_catalog.json", "cluster_ngrams.csv", "shareholder_catalog.json")
+    ]
+    return "-".join(str((ASSET_DIR / name).stat().st_mtime_ns) for name in names)
+
+
+@st.cache_data(show_spinner="Đang đọc catalog và n-grams…", max_entries=1)
+def load_evidence(signature: str) -> dict[str, object]:
     return {
         platform: load_platform_evidence(ASSET_DIR, platform)
         for platform in PLATFORMS
@@ -161,8 +172,24 @@ def invalidate_reads() -> None:
         cached.clear()
 
 
+@st.cache_resource
+def last_asset_signature() -> dict[str, str]:
+    return {}
+
+
 try:
-    EVIDENCE = load_evidence()
+    ASSET_SIGNATURE = asset_signature()
+    seen = last_asset_signature()
+    if seen.get("value") not in (None, ASSET_SIGNATURE):
+        # New model: cached rows still hold the old cluster IDs.
+        invalidate_reads()
+    seen["value"] = ASSET_SIGNATURE
+    if st.session_state.get("asset_signature") != ASSET_SIGNATURE:
+        # Drafts are keyed by cluster ID, which means nothing across models.
+        for key in [key for key in st.session_state if str(key).startswith("map::")]:
+            del st.session_state[key]
+        st.session_state["asset_signature"] = ASSET_SIGNATURE
+    EVIDENCE = load_evidence(ASSET_SIGNATURE)
     initialize_database_once()
 except Exception as error:  # pragma: no cover - deployment diagnostics
     st.error(f"Không thể khởi tạo dữ liệu ứng dụng: {error}")

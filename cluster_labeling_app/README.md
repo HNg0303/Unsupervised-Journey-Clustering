@@ -53,12 +53,29 @@ khi không có secrets.
 ## Source of truth
 
 - `assets/taxonomy_features.csv`: 486 taxonomy details, 16 families, 85 submodules.
-- `assets/cluster_mapping.csv`: taxonomy mapping cho 1.374 Android và 1.440 iOS clusters.
+- `assets/cluster_mapping.csv`: taxonomy mapping cho 1.364 Android và 1.404 iOS clusters (model 678_20260929_090904).
 - `assets/*_shareholder_catalog.json`: size/share từ full July score outputs.
 - `assets/*_cluster_catalog.json` và `assets/*_cluster_ngrams.csv`: metrics, medoid và top n-grams.
 
 Các file taxonomy/mapping được lấy từ `output/scores/taxonomy_naming`, tức pipeline taxonomy mới,
 không dùng mapping legacy của app cũ.
+
+## Cập nhật clusters khi train model mới
+
+App chỉ tự seed khi database rỗng. Khi có model mới, chạy:
+
+```bash
+python refresh_clusters.py \
+    --training-run ../output/partitioned_runs/678/678_20260929_090904 \
+    --scores-run ../output/scores/678/678_20260929_090904
+```
+
+Script kiểm tra catalog/n-grams/mapping cùng cluster_id và taxonomy_id khớp taxonomy active, backup
+`named_clusters` hiện tại vào `backups/`, thay `named_clusters` trong backend đang cấu hình
+(Supabase nếu có secrets, ngược lại SQLite) rồi mới chép file mới vào `assets/`. Taxonomy và
+`change_audit` được giữ nguyên; một record `cluster_refresh` và `app_metadata.model_version` ghi lại
+model đang dùng. Nhãn người review của model cũ không tự chuyển sang model mới vì cluster_id không
+tương ứng giữa các lần train.
 
 ## Database tables
 

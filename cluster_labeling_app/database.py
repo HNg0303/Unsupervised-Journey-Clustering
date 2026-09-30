@@ -148,16 +148,156 @@ def initialize_database(db_path: Path, asset_dir: Path) -> dict[str, int]:
     return database_stats(db_path)
 
 
-def _seed_database(connection: sqlite3.Connection, asset_dir: Path) -> None:
-    timestamp = utc_now()
-    taxonomy_rows = _read_csv(asset_dir / "taxonomy_features.csv")
+NAMED_CLUSTER_COLUMNS = (
+    "platform",
+    "cluster_id",
+    "taxonomy_id",
+    "cluster_name",
+    "business_family",
+    "business_submodule",
+    "business_detail",
+    "naming_confidence",
+    "naming_source",
+    "needs_review",
+    "score_share",
+    "evidence_mass_coverage",
+    "evidence_row_coverage",
+    "supporting_evidence",
+    "top_ngrams",
+    "size",
+    "share",
+    "row_count_in_input",
+    "updated_at",
+)
+
+
+def read_named_cluster_assets(asset_dir: Path, timestamp: str) -> list[dict[str, Any]]:
+    """Join cluster_mapping.csv with the shareholder catalogs into named_clusters rows."""
+
     mapping_rows = _read_csv(asset_dir / "cluster_mapping.csv")
+    if not mapping_rows:
+        raise ValueError("cluster mapping nguồn đang rỗng")
     catalogs = {
         platform: _read_catalog(asset_dir / f"{platform}_shareholder_catalog.json")
         for platform in PLATFORMS
     }
-    if not taxonomy_rows or not mapping_rows:
-        raise ValueError("taxonomy hoặc cluster mapping nguồn đang rỗng")
+    rows: list[dict[str, Any]] = []
+    for row in mapping_rows:
+        platform = clean_text(row["platform"]).lower()
+        cluster_id = int(row["cluster_id"])
+        catalog = catalogs[platform].get(cluster_id)
+        if catalog is None:
+            raise ValueError(f"catalog thiếu cluster {(platform, cluster_id)}")
+        rows.append(
+            {
+                "platform": platform,
+                "cluster_id": cluster_id,
+                "taxonomy_id": clean_text(row.get("taxonomy_id", "")) or None,
+                "cluster_name": clean_text(row["cluster_name"]),
+                "business_family": clean_text(row["business_family"]),
+                "business_submodule": clean_text(row["business_submodule"]),
+                "business_detail": clean_text(row.get("business_detail", "")),
+                "naming_confidence": clean_text(row["naming_confidence"]),
+                "naming_source": clean_text(row["naming_source"]),
+                "needs_review": as_bool(row["needs_review"]),
+                "score_share": _float_or_none(row.get("score_share")),
+                "evidence_mass_coverage": _float_or_none(row.get("evidence_mass_coverage")),
+                "evidence_row_coverage": _float_or_none(row.get("evidence_row_coverage")),
+                "supporting_evidence": clean_text(row.get("supporting_evidence", "")),
+                "top_ngrams": clean_text(row.get("top_ngrams", "")),
+                "size": int(catalog.get("size", 0)),
+                "share": float(catalog.get("share", 0) or 0),
+                "row_count_in_input": int(
+                    catalog.get("row_count_in_input", catalog.get("size", 0))
+                ),
+                "updated_at": timestamp,
+            }
+        )
+    return rows
+
+
+def check_cluster_taxonomy(
+    rows: list[dict[str, Any]], taxonomy: pd.DataFrame
+) -> list[str]:
+    """Report mapping rows whose taxonomy_id is missing or renamed in the active taxonomy."""
+
+    paths = {
+        row.taxonomy_id: (row.business_family, row.business_submodule, row.business_detail)
+        for row in taxonomy.itertuples(index=False)
+    }
+    problems = []
+    for row in rows:
+        taxonomy_id = row["taxonomy_id"]
+        if not taxonomy_id:
+            continue
+        path = (row["business_family"], row["business_submodule"], row["business_detail"])
+        if paths.get(taxonomy_id) != path:
+            problems.append(f"{row['platform']}:{row['cluster_id']} → {taxonomy_id}")
+    return problems
+
+
+def _insert_named_clusters(connection: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
+    placeholders = ", ".join("?" for _ in NAMED_CLUSTER_COLUMNS)
+    connection.executemany(
+        f"INSERT INTO named_clusters({', '.join(NAMED_CLUSTER_COLUMNS)}) VALUES ({placeholders})",
+        [
+            tuple(
+                int(row[column]) if column == "needs_review" else row[column]
+                for column in NAMED_CLUSTER_COLUMNS
+            )
+            for row in rows
+        ],
+    )
+
+
+def replace_named_clusters(
+    db_path: Path, asset_dir: Path, model_version: str
+) -> dict[str, int]:
+    """Swap named_clusters for a newly trained model; taxonomy and audit history are kept."""
+
+    timestamp = utc_now()
+    rows = read_named_cluster_assets(asset_dir, timestamp)
+    problems = check_cluster_taxonomy(rows, load_taxonomy(db_path))
+    if problems:
+        raise ValueError(
+            f"{len(problems)} cluster tham chiếu taxonomy_id không khớp taxonomy active: "
+            + ", ".join(problems[:10])
+        )
+    with connect(db_path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        previous = connection.execute(
+            "SELECT value FROM app_metadata WHERE key = 'model_version'"
+        ).fetchone()
+        old_counts = dict(
+            connection.execute(
+                "SELECT platform, COUNT(*) FROM named_clusters GROUP BY platform"
+            ).fetchall()
+        )
+        connection.execute("DELETE FROM named_clusters")
+        _insert_named_clusters(connection, rows)
+        new_counts = {
+            platform: sum(row["platform"] == platform for row in rows) for platform in PLATFORMS
+        }
+        connection.execute(
+            "INSERT OR REPLACE INTO app_metadata(key, value) VALUES('model_version', ?)",
+            (model_version,),
+        )
+        _audit(
+            connection,
+            "cluster_refresh",
+            model_version,
+            {"model_version": previous[0] if previous else "", **old_counts},
+            {"model_version": model_version, **new_counts},
+            timestamp,
+        )
+    return new_counts
+
+
+def _seed_database(connection: sqlite3.Connection, asset_dir: Path) -> None:
+    timestamp = utc_now()
+    taxonomy_rows = _read_csv(asset_dir / "taxonomy_features.csv")
+    if not taxonomy_rows:
+        raise ValueError("taxonomy nguồn đang rỗng")
     connection.executemany(
         """
         INSERT INTO taxonomy_features(
@@ -178,50 +318,7 @@ def _seed_database(connection: sqlite3.Connection, asset_dir: Path) -> None:
             for index, row in enumerate(taxonomy_rows)
         ],
     )
-    cluster_values = []
-    for row in mapping_rows:
-        platform = clean_text(row["platform"]).lower()
-        cluster_id = int(row["cluster_id"])
-        catalog = catalogs[platform].get(cluster_id)
-        if catalog is None:
-            raise ValueError(f"catalog thiếu cluster {(platform, cluster_id)}")
-        taxonomy_id = clean_text(row.get("taxonomy_id", "")) or None
-        cluster_values.append(
-            (
-                platform,
-                cluster_id,
-                taxonomy_id,
-                clean_text(row["cluster_name"]),
-                clean_text(row["business_family"]),
-                clean_text(row["business_submodule"]),
-                clean_text(row.get("business_detail", "")),
-                clean_text(row["naming_confidence"]),
-                clean_text(row["naming_source"]),
-                int(as_bool(row["needs_review"])),
-                _float_or_none(row.get("score_share")),
-                _float_or_none(row.get("evidence_mass_coverage")),
-                _float_or_none(row.get("evidence_row_coverage")),
-                clean_text(row.get("supporting_evidence", "")),
-                clean_text(row.get("top_ngrams", "")),
-                int(catalog.get("size", 0)),
-                float(catalog.get("share", 0) or 0),
-                int(catalog.get("row_count_in_input", catalog.get("size", 0))),
-                timestamp,
-            )
-        )
-    connection.executemany(
-        """
-        INSERT INTO named_clusters(
-            platform, cluster_id, taxonomy_id, cluster_name,
-            business_family, business_submodule, business_detail,
-            naming_confidence, naming_source, needs_review,
-            score_share, evidence_mass_coverage, evidence_row_coverage,
-            supporting_evidence, top_ngrams, size, share,
-            row_count_in_input, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        cluster_values,
-    )
+    _insert_named_clusters(connection, read_named_cluster_assets(asset_dir, timestamp))
     connection.execute(
         "INSERT INTO app_metadata(key, value) VALUES('seeded_at', ?)", (timestamp,)
     )

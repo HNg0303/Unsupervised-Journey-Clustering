@@ -11,6 +11,12 @@ import pandas as pd
 APP_DIR = Path(__file__).resolve().parents[1]
 ASSET_DIR = APP_DIR / "assets"
 sys.path.insert(0, str(APP_DIR))
+# Cluster counts change with every retrained model; take them from the bundled mapping.
+MAPPING_COUNTS = (
+    pd.read_csv(ASSET_DIR / "cluster_mapping.csv", encoding="utf-8-sig")["platform"]
+    .value_counts()
+    .to_dict()
+)
 
 from core import (  # noqa: E402
     assignment_status,
@@ -26,6 +32,7 @@ from core import (  # noqa: E402
 from database import (  # noqa: E402
     database_stats,
     initialize_database,
+    replace_named_clusters,
     load_named_clusters,
     load_recent_audit,
     load_taxonomy,
@@ -81,7 +88,7 @@ class TaxonomyTests(unittest.TestCase):
 
 class EvidenceTests(unittest.TestCase):
     def test_both_platforms_have_eight_ngrams_per_cluster(self) -> None:
-        for platform, expected_clusters in (("android", 1374), ("ios", 1440)):
+        for platform, expected_clusters in MAPPING_COUNTS.items():
             evidence = load_platform_evidence(ASSET_DIR, platform)
             self.assertEqual(len(evidence.catalog), expected_clusters)
             counts = evidence.ngrams.groupby("cluster").size()
@@ -102,12 +109,34 @@ class DatabaseTests(unittest.TestCase):
     def test_bootstrap_contract_and_persistence(self) -> None:
         stats = database_stats(self.db_path)
         self.assertEqual(stats["taxonomy_features"], 486)
-        self.assertEqual(stats["android_clusters"], 1374)
-        self.assertEqual(stats["ios_clusters"], 1440)
+        self.assertEqual(stats["android_clusters"], MAPPING_COUNTS["android"])
+        self.assertEqual(stats["ios_clusters"], MAPPING_COUNTS["ios"])
         self.assertEqual(len(load_taxonomy(self.db_path)), 486)
         self.assertFalse(load_named_clusters(self.db_path, "android").cluster_id.duplicated().any())
         # Reinitialization must preserve the same database instead of reseeding it.
         self.assertEqual(initialize_database(self.db_path, ASSET_DIR), stats)
+
+    def test_replace_named_clusters_keeps_taxonomy_and_audit(self) -> None:
+        android = load_named_clusters(self.db_path, "android")
+        cluster_id = int(android.iloc[0].cluster_id)
+        update_named_cluster(
+            self.db_path,
+            "android",
+            cluster_id,
+            family="Chưa phân loại",
+            submodule="",
+            detail="",
+            confidence="high",
+            needs_review=False,
+        )
+        counts = replace_named_clusters(self.db_path, ASSET_DIR, "test_model")
+        self.assertEqual(counts, MAPPING_COUNTS)
+        self.assertEqual(len(load_taxonomy(self.db_path)), 486)
+        refreshed = load_named_clusters(self.db_path, "android").set_index("cluster_id")
+        self.assertEqual(refreshed.loc[cluster_id, "naming_confidence"], android.iloc[0].naming_confidence)
+        audit = load_recent_audit(self.db_path, limit=5)
+        self.assertEqual(audit.iloc[0].entity_type, "cluster_refresh")
+        self.assertEqual(audit.iloc[1].entity_type, "named_cluster")
 
     def test_taxonomy_edit_propagates_to_named_clusters(self) -> None:
         android = load_named_clusters(self.db_path, "android")

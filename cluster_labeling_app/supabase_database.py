@@ -11,8 +11,8 @@ from typing import Any, Iterable
 import pandas as pd
 from supabase import Client, create_client
 
-from core import PLATFORMS, as_bool, clean_text, cluster_name, normalize_taxonomy, validate_taxonomy
-from database import _float_or_none, _read_catalog, _read_csv, utc_now
+from core import PLATFORMS, clean_text, cluster_name, normalize_taxonomy, validate_taxonomy
+from database import _read_csv, check_cluster_taxonomy, read_named_cluster_assets, utc_now
 
 
 @dataclass(frozen=True)
@@ -101,11 +101,6 @@ def initialize_database(target: SupabaseTarget, asset_dir: Path) -> dict[str, in
 def _seed_database(client: Client, asset_dir: Path) -> None:
     timestamp = utc_now()
     taxonomy_source = _read_csv(asset_dir / "taxonomy_features.csv")
-    mapping_source = _read_csv(asset_dir / "cluster_mapping.csv")
-    catalogs = {
-        platform: _read_catalog(asset_dir / f"{platform}_shareholder_catalog.json")
-        for platform in PLATFORMS
-    }
     taxonomy_rows = [
         {
             "taxonomy_id": clean_text(row["taxonomy_id"]),
@@ -123,38 +118,7 @@ def _seed_database(client: Client, asset_dir: Path) -> None:
     for batch in _chunks(taxonomy_rows):
         client.table("taxonomy_features").upsert(batch, on_conflict="taxonomy_id").execute()
 
-    cluster_rows: list[dict[str, Any]] = []
-    for row in mapping_source:
-        platform = clean_text(row["platform"]).lower()
-        cluster_id = int(row["cluster_id"])
-        catalog = catalogs[platform].get(cluster_id)
-        if catalog is None:
-            raise ValueError(f"catalog thiếu cluster {(platform, cluster_id)}")
-        cluster_rows.append(
-            {
-                "platform": platform,
-                "cluster_id": cluster_id,
-                "taxonomy_id": clean_text(row.get("taxonomy_id", "")) or None,
-                "cluster_name": clean_text(row["cluster_name"]),
-                "business_family": clean_text(row["business_family"]),
-                "business_submodule": clean_text(row["business_submodule"]),
-                "business_detail": clean_text(row.get("business_detail", "")),
-                "naming_confidence": clean_text(row["naming_confidence"]),
-                "naming_source": clean_text(row["naming_source"]),
-                "needs_review": as_bool(row["needs_review"]),
-                "score_share": _float_or_none(row.get("score_share")),
-                "evidence_mass_coverage": _float_or_none(row.get("evidence_mass_coverage")),
-                "evidence_row_coverage": _float_or_none(row.get("evidence_row_coverage")),
-                "supporting_evidence": clean_text(row.get("supporting_evidence", "")),
-                "top_ngrams": clean_text(row.get("top_ngrams", "")),
-                "size": int(catalog.get("size", 0)),
-                "share": float(catalog.get("share", 0) or 0),
-                "row_count_in_input": int(
-                    catalog.get("row_count_in_input", catalog.get("size", 0))
-                ),
-                "updated_at": timestamp,
-            }
-        )
+    cluster_rows = read_named_cluster_assets(asset_dir, timestamp)
     for batch in _chunks(cluster_rows):
         client.table("named_clusters").upsert(
             batch, on_conflict="platform,cluster_id"
@@ -446,6 +410,66 @@ def update_named_cluster(
         ],
     )
     return True
+
+
+def replace_named_clusters(
+    target: SupabaseTarget, asset_dir: Path, model_version: str
+) -> dict[str, int]:
+    """Swap named_clusters for a newly trained model; taxonomy and audit history are kept.
+
+    PostgREST has no multi-request transaction, so new rows are upserted before stale
+    cluster IDs are deleted: a failure midway never leaves the table empty.
+    """
+
+    timestamp = utc_now()
+    rows = read_named_cluster_assets(asset_dir, timestamp)
+    problems = check_cluster_taxonomy(rows, load_taxonomy(target))
+    if problems:
+        raise ValueError(
+            f"{len(problems)} cluster tham chiếu taxonomy_id không khớp taxonomy active: "
+            + ", ".join(problems[:10])
+        )
+    client = _client(target)
+    previous = _rows(
+        client.table("app_metadata").select("value").eq("key", "model_version").execute()
+    )
+    old_counts = {
+        platform: _count(client, "named_clusters", (("platform", platform),))
+        for platform in PLATFORMS
+    }
+    for batch in _chunks(rows):
+        client.table("named_clusters").upsert(batch, on_conflict="platform,cluster_id").execute()
+    new_counts: dict[str, int] = {}
+    for platform in PLATFORMS:
+        keep = {row["cluster_id"] for row in rows if row["platform"] == platform}
+        new_counts[platform] = len(keep)
+        existing = _fetch_all(
+            client, "named_clusters", "cluster_id", filters=(("platform", platform),)
+        )
+        stale = sorted({row["cluster_id"] for row in existing} - keep)
+        for start in range(0, len(stale), 200):
+            client.table("named_clusters").delete().eq("platform", platform).in_(
+                "cluster_id", stale[start : start + 200]
+            ).execute()
+    client.table("app_metadata").upsert(
+        {"key": "model_version", "value": model_version}, on_conflict="key"
+    ).execute()
+    _audit_rows(
+        client,
+        [
+            {
+                "entity_type": "cluster_refresh",
+                "entity_key": model_version,
+                "old_value": {
+                    "model_version": previous[0]["value"] if previous else "",
+                    **old_counts,
+                },
+                "new_value": {"model_version": model_version, **new_counts},
+                "changed_at": timestamp,
+            }
+        ],
+    )
+    return new_counts
 
 
 def load_recent_audit(target: SupabaseTarget, limit: int = 20) -> pd.DataFrame:

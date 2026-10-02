@@ -1,0 +1,110 @@
+# Local simulation of the company data flow:
+#   MongoDB (raw clickstream documents)
+#     -> Debezium MongoDB source (Kafka Connect)
+#     -> Kafka topic
+#     -> Debezium JDBC sink (Kafka Connect)
+#     -> PostgreSQL table  <- daily Airflow job reads here
+#
+# Start:   docker compose up -d --build
+# Airflow: docker compose --profile airflow up -d
+name: local-cdc
+
+services:
+  mongo:
+    image: mongo:7.0
+    # Change streams need a replica set, so even one node runs as rs0.
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    ports: ["27017:27017"]
+    volumes: [mongo-data:/data/db]
+    healthcheck:
+      # Initiates the replica set on first start, then reports healthy once
+      # this node is PRIMARY.
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - >-
+          try { rs.status() } catch (e) { rs.initiate({_id: "rs0", members: [{_id: 0, host: "mongo:27017"}]}) }
+          quit(db.hello().isWritablePrimary ? 0 : 1)
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  kafka:
+    image: apache/kafka:4.1.0
+    # KRaft mode: one process is both broker and controller, no ZooKeeper.
+    ports: ["29092:29092"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # Keep CDC events for 7 days, like a typical production topic.
+      KAFKA_LOG_RETENTION_HOURS: 168
+    volumes: [kafka-data:/var/lib/kafka/data]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null"]
+      interval: 5s
+      timeout: 15s
+      retries: 30
+
+  connect:
+    build: ./connect
+    ports: ["8083:8083"]
+    depends_on:
+      kafka: {condition: service_healthy}
+      mongo: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8083/connectors >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  postgres:
+    image: postgres:16
+    ports: ["5432:5432"]
+    environment:
+      POSTGRES_USER: cdc
+      POSTGRES_PASSWORD: cdc
+      POSTGRES_DB: analytics
+    volumes: [pg-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cdc -d analytics"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Optional: `docker compose --profile airflow up -d`, UI at http://localhost:8080
+  airflow:
+    image: apache/airflow:3.1.0
+    profiles: [airflow]
+    command: standalone
+    ports: ["8080:8080"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
+      # Connection the DAG reads from; on the real system this points at the
+      # company PostgreSQL with a read-only account.
+      AIRFLOW_CONN_CDC_POSTGRES: postgresql://cdc:cdc@postgres:5432/analytics
+      JC_SOURCE_TABLE: public.events
+      JC_OUTPUT_ROOT: /opt/airflow/exports
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./scripts:/opt/airflow/local_cdc_scripts
+      - ./exports:/opt/airflow/exports
+
+volumes:
+  mongo-data:
+  kafka-data:
+  pg-data:

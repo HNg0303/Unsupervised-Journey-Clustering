@@ -135,6 +135,42 @@ PostgreSQL. Kafka là chỗ giữ các thay đổi đó (ở đây 7 ngày) nên
 
 Cronjob của bạn không cần đọc Kafka: nó đọc bảng PostgreSQL, nơi data đã ổn định.
 
+## Đọc thẳng từ Kafka topic theo khoảng thời gian
+
+Kafka không phải database nên không có `SELECT ... WHERE date BETWEEN`. Mỗi
+partition là một log chỉ ghi nối, đọc theo offset. Thứ duy nhất Kafka đánh
+index theo thời gian là **timestamp của record** (lúc thay đổi được ghi vào
+Kafka). `scripts/read_topic_range.py` gói hai cách lấy "1 ngày / 1 tuần / 1 tháng":
+
+```bash
+pip install confluent-kafka
+
+# Theo thời gian sự kiện (client_time): quét toàn bộ topic rồi lọc
+python scripts/read_topic_range.py --from 2026-10-01 --to 2026-10-02 --time event   # 1 ngày
+python scripts/read_topic_range.py --last 7d --time event --output week.csv         # 1 tuần
+python scripts/read_topic_range.py --last 1m --time event --output month.csv        # 30 ngày
+
+# Theo thời gian vào Kafka: nhảy thẳng tới offset đầu tiên >= --from (offsets_for_times)
+python scripts/read_topic_range.py --last 1h --time kafka
+```
+
+| | `--time kafka` | `--time event` |
+|---|---|---|
+| Lọc theo | lúc thay đổi vào Kafka | `client_time` trong document |
+| Cách đọc | seek tới offset theo timestamp, chỉ đọc đoạn cần | đọc mọi record còn trong topic |
+| Bẫy | snapshot lần đầu dồn **toàn bộ** data cũ vào đúng thời điểm connector khởi động | chậm khi topic lớn |
+
+Script bóc envelope Debezium (`payload.after` là chuỗi JSON), làm phẳng field
+lồng, giữ bản mới nhất theo `_id` và bỏ document đã bị delete, tức là tự làm lại
+đúng việc mà sink làm.
+
+Giới hạn quan trọng: chỉ đọc được data còn trong **retention** của topic (ở đây
+7 ngày, `KAFKA_LOG_RETENTION_HOURS`). Muốn lấy 1 tháng thì topic phải giữ ít
+nhất 1 tháng, ở công ty là do team vận hành Kafka quyết định. Ngoài ra đọc Kafka
+công ty cần thêm quyền (consumer group, ACL trên topic), khác với quyền đọc
+PostgreSQL. Vì vậy cho job hằng ngày vẫn nên đọc bảng PostgreSQL; đọc Kafka hợp
+khi cần data gần realtime hoặc để đối chiếu.
+
 ## Lưu ý
 
 - Hình dạng document thật trong MongoDB của công ty chưa biết. Bản mẫu giả định

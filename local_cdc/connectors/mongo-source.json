@@ -1,0 +1,12 @@
+{
+  "name": "mongo-source",
+  "config": {
+    "connector.class": "io.debezium.connector.mongodb.MongoDbConnector",
+    "mongodb.connection.string": "mongodb://mongo:27017/?replicaSet=rs0",
+    "topic.prefix": "app",
+    "collection.include.list": "tracking.events",
+    "capture.mode": "change_streams_update_full",
+    "snapshot.mode": "initial",
+    "tasks.max": "1"
+  }
+}

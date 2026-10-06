@@ -4,3 +4,8 @@ __pycache__/
 *.py[cod]
 
 backups/
+
+# Internal data: keep local, never commit
+db.sqlite
+assets/*.csv
+assets/*.json

@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Unsupervised clustering of 250M+ mobile clickstream events into named user journeys: Kafka sink connector, daily Airflow pipeline, HDBSCAN, Markov anomaly scoring and drift monitoring.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Journey Clustering · Hoang-Nguyen Cao">
+<meta property="og:description" content="Unsupervised clustering of 250M+ mobile clickstream events into named user journeys: Kafka sink connector, daily Airflow pipeline, HDBSCAN, Markov anomaly scoring and drift monitoring.">
+<meta property="og:url" content="https://hng0303.github.io/Unsupervised-Journey-Clustering/">
+<link rel="canonical" href="https://hng0303.github.io/Unsupervised-Journey-Clustering/">
+<title>Journey Clustering</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: one narrow reading column; the event tape and charts break out to a wider measure. */
+:root {
+  --paper: #f3f5f2;
+  --surface: #fbfcfa;
+  --ink: #111a21;
+  --ink-2: #47535d;
+  --muted: #6f7a83;
+  --line: #d8ddd8;
+  --accent: #1c5cab;
+  --accent-soft: #dce8f6;
+  --cut: #b5490f;
+  --seg-1: #2a78d6;
+  --seg-2: #1baf7a;
+  --seg-3: #4a3aa7;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --dot: #b9c0c4;
+  --font-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --step--1: 0.8125rem;
+  --step-0: 1rem;
+  --step-1: 1.25rem;
+  --step-2: 1.75rem;
+  --step-3: clamp(2.1rem, 5.2vw, 3.6rem);
+  --read: 42rem;
+  --wide: 68rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0f1418; --surface: #151b20; --ink: #edf1f3; --ink-2: #b4bec6; --muted: #8d99a3;
+    --line: #27313a; --accent: #6da7ec; --accent-soft: #16304f; --cut: #f08a4b;
+    --seg-1: #3987e5; --seg-2: #199e70; --seg-3: #9085e9;
+    --series-1: #3987e5; --series-2: #d95926; --dot: #44505a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0f1418; --surface: #151b20; --ink: #edf1f3; --ink-2: #b4bec6; --muted: #8d99a3;
+  --line: #27313a; --accent: #6da7ec; --accent-soft: #16304f; --cut: #f08a4b;
+  --seg-1: #3987e5; --seg-2: #199e70; --seg-3: #9085e9;
+  --series-1: #3987e5; --series-2: #d95926; --dot: #44505a;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 var(--step-0)/1.6 var(--font-body);
+  padding-inline: 20px;
+  padding-block: 0 64px;
+}
+.wrap { max-width: var(--wide); margin-inline: auto; }
+.read { max-width: var(--read); }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+h1 { font-size: var(--step-3); font-weight: 800; font-stretch: 78%; line-height: 1.02; letter-spacing: -0.01em; }
+h2 { font-size: var(--step-2); font-weight: 750; font-stretch: 85%; line-height: 1.12; }
+h3 { font-size: var(--step-1); font-weight: 650; font-stretch: 92%; line-height: 1.25; }
+p { margin: 0; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+code, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+.eyebrow { font-family: var(--font-mono); font-size: var(--step--1); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: var(--step-1); line-height: 1.5; color: var(--ink-2); }
+.muted { color: var(--muted); }
+.small { font-size: var(--step--1); }
+
+/* Top bar */
+.top { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-block: 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.top nav { display: flex; gap: 18px; flex-wrap: wrap; font-size: var(--step--1); }
+.top nav a { color: var(--ink-2); text-decoration: none; }
+.top nav a:hover { color: var(--accent); }
+
+section { padding-block: 64px 0; display: grid; gap: 24px; }
+.hero { padding-block: 48px 0; gap: 20px; }
+
+/* Event tape */
+.tape-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: grid; gap: 14px; min-width: 0; }
+.tape-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.tape { display: flex; flex-wrap: wrap; gap: 14px 8px; align-items: stretch; }
+.seg { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.seg-events { display: flex; flex-wrap: wrap; gap: 6px; }
+.ev { font-family: var(--font-mono); font-size: 0.75rem; line-height: 1.25; padding: 5px 8px 4px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); display: grid; gap: 1px; max-width: 100%; overflow-wrap: anywhere; transition: opacity .35s ease, transform .35s ease, border-color .4s ease; }
+.ev b { font-weight: 500; color: var(--ink); }
+.ev i { font-style: normal; color: var(--muted); font-size: 0.6875rem; }
+.ev .k { color: var(--muted); }
+.seg-label { font-size: var(--step--1); font-weight: 600; padding-top: 6px; border-top: 3px solid var(--sc); color: var(--ink); transition: opacity .4s ease; }
+.seg-label span { display: block; font-weight: 400; color: var(--ink-2); }
+.seg[data-s="1"] { --sc: var(--seg-1); }
+.seg[data-s="2"] { --sc: var(--seg-2); }
+.seg[data-s="3"] { --sc: var(--seg-3); }
+.seg .ev { border-left: 3px solid var(--sc); }
+.cut { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 64px; transition: opacity .35s ease; }
+.cut .bar { flex: 1; width: 0; border-left: 2px dashed var(--cut); min-height: 40px; }
+.cut .why { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--cut); text-align: center; line-height: 1.3; }
+.tape.playing .ev, .tape.playing .cut, .tape.playing .seg-label { opacity: 0; transform: translateY(4px); }
+.tape .ev.on, .tape .cut.on, .tape .seg-label.on { opacity: 1; transform: none; }
+.tape.playing .seg .ev.on { border-left-color: var(--line); }
+.tape.playing.labeled .seg .ev.on { border-left-color: var(--sc); }
+.btn { font: 500 var(--step--1)/1 var(--font-body); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Figures */
+.figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.fig { background: var(--surface); padding: 16px 18px; display: grid; gap: 2px; align-content: start; }
+.fig strong { font-family: var(--font-display); font-weight: 750; font-stretch: 80%; font-size: 2rem; line-height: 1.1; }
+.fig span { font-size: var(--step--1); color: var(--ink-2); }
+
+/* Challenge table */
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 24px 32px; }
+.prob { display: grid; gap: 6px; padding-top: 14px; border-top: 1px solid var(--line); min-width: 0; }
+.prob h3 { font-size: var(--step-0); font-weight: 650; font-stretch: 100%; font-family: var(--font-body); }
+.prob p { color: var(--ink-2); font-size: 0.9375rem; }
+
+/* Pipelines */
+.flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+.node { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 2px; min-width: 0; flex: 1 1 120px; }
+.node b { font-size: 0.9375rem; font-weight: 600; }
+.node span { font-size: 0.75rem; color: var(--muted); }
+.node.mine { border-color: var(--accent); background: var(--accent-soft); }
+.node.mine span { color: var(--ink-2); }
+.arrow { align-self: center; color: var(--muted); font-family: var(--font-mono); }
+.dag { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 14px; }
+.dag-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline; }
+.tasks { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 10px; counter-reset: t; }
+.tasks li { counter-increment: t; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 4px; align-content: start; min-width: 0; background: var(--paper); }
+.tasks li::before { content: "task " counter(t); font-family: var(--font-mono); font-size: 0.6875rem; color: var(--muted); letter-spacing: .05em; }
+.tasks b { font-size: 0.9375rem; }
+.tasks code { color: var(--accent); overflow-wrap: anywhere; }
+.tasks p { font-size: 0.8125rem; color: var(--ink-2); }
+
+.stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 16px; counter-reset: s; }
+.stage { counter-increment: s; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.stage .eyebrow::before { content: "stage " counter(s) " · "; }
+.stage ul { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; font-size: 0.9375rem; color: var(--ink-2); }
+.stage li b { color: var(--ink); font-weight: 600; }
+
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.875rem; }
+th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font-weight: 600; color: var(--ink-2); font-size: 0.8125rem; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td code { white-space: nowrap; }
+
+/* Charts */
+.chart-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 12px; min-width: 0; position: relative; }
+.chart-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: var(--step--1); color: var(--ink-2); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart text { fill: var(--muted); font-family: var(--font-body); font-size: 12px; }
+.chart .lab { fill: var(--ink-2); }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .base { stroke: var(--muted); stroke-width: 1; }
+.controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-size: var(--step--1); }
+.seg-ctl { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg-ctl button { font: 500 var(--step--1)/1 var(--font-body); padding: 7px 12px; border: 0; background: var(--surface); color: var(--ink-2); cursor: pointer; }
+.seg-ctl button[aria-pressed="true"] { background: var(--accent-soft); color: var(--ink); }
+select { font: 400 var(--step--1) var(--font-body); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; max-width: 100%; }
+.tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--paper); border-radius: 6px; padding: 8px 10px; font-size: 0.75rem; line-height: 1.45; max-width: 260px; z-index: 5; box-shadow: 0 4px 14px rgba(0,0,0,.18); }
+.tip b { font-weight: 600; }
+.tip code { font-size: 0.6875rem; overflow-wrap: anywhere; opacity: .85; }
+details { font-size: var(--step--1); color: var(--ink-2); }
+summary { cursor: pointer; color: var(--accent); }
+details .tbl-wrap { margin-top: 10px; }
+
+/* Quadrant */
+.quad { display: grid; grid-template-columns: auto 1fr 1fr; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 0.875rem; }
+.quad > div { background: var(--surface); padding: 12px 14px; min-width: 0; }
+.quad .h { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+.quad .flag { border-left: 3px solid var(--cut); }
+.quad b { display: block; font-weight: 600; }
+.quad span { color: var(--ink-2); }
+
+.ladder td:first-child { font-weight: 600; }
+footer { margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; font-size: var(--step--1); color: var(--muted); }
+
+@media (max-width: 560px) {
+  .quad { grid-template-columns: 1fr; }
+  .quad .corner { display: none; }
+  .cut { flex-direction: row; min-width: 0; width: 100%; }
+  .cut .bar { border-left: 0; border-top: 2px dashed var(--cut); min-height: 0; height: 0; align-self: center; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ev, .cut, .seg-label { transition: none; }
+}
+</style>
+<style>
+html { -webkit-text-size-adjust: 100%; color-scheme: light; }
+@media (prefers-color-scheme: dark) { html { color-scheme: dark; } }
+body { margin: 0; }
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="eyebrow" href="https://hng0303.github.io/portfolio/" style="text-decoration:none">← Hoang-Nguyen Cao · Portfolio</a>
+    <nav aria-label="Sections">
+      <a href="#problem">Problem</a>
+      <a href="#data-pipeline">Data pipeline</a>
+      <a href="#ml-pipeline">ML pipeline</a>
+      <a href="#results">Results</a>
+      <a href="https://github.com/HNg0303/Unsupervised-Journey-Clustering">GitHub ↗</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <span class="eyebrow">Unsupervised learning · clickstream · telecom self-care app</span>
+    <h1 class="read">Turning 250 million unlabeled clicks into journeys people can name</h1>
+    <p class="lede read">A production pipeline that pulls app events from Kafka every day, cuts each session into goal-level journeys, clusters them with no labels, and tells the product team what users were trying to do and where they struggled.</p>
+
+    <div class="tape-card" aria-labelledby="tape-title">
+      <div class="tape-head">
+        <div>
+          <h3 id="tape-title" style="font-size:1rem">One iOS session, segmented into three journeys</h3>
+          <p class="small muted">Illustrative session with placeholder screen names. Times are seconds from session start.</p>
+        </div>
+        <button class="btn" id="replay" type="button">Replay segmentation</button>
+      </div>
+      <div class="tape" id="tape"></div>
+    </div>
+
+    <div class="figures" role="list">
+      <div class="fig" role="listitem"><strong>250 M+</strong><span>raw events in one quarter</span></div>
+      <div class="fig" role="listitem"><strong>~17 M</strong><span>journeys scored</span></div>
+      <div class="fig" role="listitem"><strong>~2,800</strong><span>journey archetypes across Android and iOS</span></div>
+      <div class="fig" role="listitem"><strong>~500</strong><span>business intents in the 3-level taxonomy</span></div>
+      <div class="fig" role="listitem"><strong>Daily</strong><span>Airflow run, Kafka to named journeys</span></div>
+    </div>
+  </section>
+
+  <section id="problem">
+    <span class="eyebrow">The problem</span>
+    <h2 class="read">Click logs say what happened. They don't say why.</h2>
+    <p class="read" style="color:var(--ink-2)">The product team wanted to know which tasks customers come to the app for, which flows cause friction, and how iOS and Android differ. Nobody had labels, and the raw logs fight back in five ways.</p>
+    <div class="grid2">
+      <div class="prob"><h3>No ground truth</h3><p>Hand-labeling millions of sessions is impossible. Clusters have to emerge from the data; people only name them afterwards.</p></div>
+      <div class="prob"><h3>A session is not a goal</h3><p>One <code>session_id</code> can last over 30 hours and mix a bill payment, a Wi-Fi reset and a support chat.</p></div>
+      <div class="prob"><h3>Two schemas in one table</h3><p><code>View</code> and <code>Action</code> events store the screen name in different columns, so a naive join puts them in separate vocabularies.</p></div>
+      <div class="prob"><h3>Two platforms, two dialects</h3><p>iOS <code>DeviceListVC</code> and Android <code>network_protect/device_management</code> can be the same feature.</p></div>
+      <div class="prob"><h3>An exploding vocabulary</h3><p>Contract codes, UUIDs and URL parameters turn every event into a near-unique token unless they are masked.</p></div>
+      <div class="prob"><h3>Scale</h3><p>A quarter of data is 250 M+ rows. Every stage has to stream with bounded memory and rerun safely.</p></div>
+    </div>
+  </section>
+
+  <section id="data-pipeline">
+    <span class="eyebrow">Part 1 · Data pipeline</span>
+    <h2 class="read">MongoDB → Kafka → SQL, with a daily Airflow job on top</h2>
+    <p class="read" style="color:var(--ink-2)">The app writes events to MongoDB, and they are published to a Kafka cluster. I built the sink connector that pulls those topics into SQL, and an Airflow DAG that runs every day to summarise and cluster the previous day's behaviour.</p>
+    <div class="flow" aria-label="Ingestion flow">
+      <div class="node"><b>Mobile app</b><span>Android · iOS click events</span></div>
+      <span class="arrow" aria-hidden="true">→</span>
+      <div class="node"><b>MongoDB</b><span>operational event store</span></div>
+      <span class="arrow" aria-hidden="true">→</span>
+      <div class="node"><b>Kafka cluster</b><span>clickstream topics</span></div>
+      <span class="arrow" aria-hidden="true">→</span>
+      <div class="node mine"><b>Sink connector</b><span>built for this project · pulls topics</span></div>
+      <span class="arrow" aria-hidden="true">→</span>
+      <div class="node"><b>SQL</b><span>event tables by day</span></div>
+    </div>
+    <div class="dag">
+      <div class="dag-head">
+        <h3>Airflow DAG · daily cron</h3>
+        <span class="small muted">Each task runs one CLI in the same Docker image, so it can retry on its own.</span>
+      </div>
+      <ol class="tasks">
+        <li><b>Extract</b><code>SQL export</code><p>Yesterday's events, after the sink has committed the full day.</p></li>
+        <li><b>Partition</b><code>journey-partition</code><p>Hashes <code>(platform, session_id)</code> so a session never splits across files.</p></li>
+        <li><b>Cluster &amp; score</b><code>journey-infer</code><p>Android and iOS in parallel on the frozen champion model.</p></li>
+        <li><b>Name</b><code>journey-name</code><p>Joins scores with the reviewed taxonomy mapping.</p></li>
+        <li><b>Summarise</b><code>prepare_dashboard_data</code><p>Daily KPIs, cluster mix, friction and next-action tables.</p></li>
+      </ol>
+    </div>
+    <div class="grid2">
+      <div class="prob"><h3>Out-of-core</h3><p>PyArrow streaming and DuckDB. Training on hundreds of thousands of journeys per platform stays within a few GB of memory.</p></div>
+      <div class="prob"><h3>Idempotent reruns</h3><p>Data partitions and model runs carry separate IDs, so rerunning a day reuses what already exists.</p></div>
+      <div class="prob"><h3>Traceable rows</h3><p>Every scored journey stores <code>model_version</code> and <code>source_partition</code>.</p></div>
+    </div>
+  </section>
+
+  <section id="ml-pipeline">
+    <span class="eyebrow">Part 2 · ML pipeline</span>
+    <h2 class="read">Data processing → model development → monitoring</h2>
+    <div class="stages">
+      <div class="stage">
+        <span class="eyebrow">Data processing</span>
+        <h3>From raw rows to clean journeys</h3>
+        <ul>
+          <li><b>Canonicalise.</b> Fix the View/Action column swap, namespace screens by OS, mask <code>{id}</code>, <code>{uuid}</code>, <code>{code}</code>.</li>
+          <li><b>Semantic ladder.</b> Map each event to family / module / object / operation so both platforms meet.</li>
+          <li><b>Segment.</b> Cut on idle gap &gt; 90 s (p97.5), return to home after ≥ 6 events, login or logout, or 80 events.</li>
+          <li><b>Clean.</b> Collapse repeats and A→B→A→B loops, but keep the counts as friction signals.</li>
+        </ul>
+      </div>
+      <div class="stage">
+        <span class="eyebrow">Model development</span>
+        <h3>Embed, cluster, explain</h3>
+        <ul>
+          <li><b>Embed.</b> N-gram TF-IDF → SVD, three semantic channels and 11 behaviour metrics, each L2-normalised, then PCA to 48 dims.</li>
+          <li><b>Cluster.</b> HDBSCAN finds archetypes of any shape and leaves irregular journeys as noise. K-means is the baseline.</li>
+          <li><b>Markov bank.</b> One transition chain per cluster for likelihood and next-action prediction.</li>
+          <li><b>Name.</b> Cluster n-grams are matched to a ~500-intent taxonomy with evidence thresholds and a human review queue.</li>
+        </ul>
+      </div>
+      <div class="stage">
+        <span class="eyebrow">Monitoring</span>
+        <h3>Know when the model goes stale</h3>
+        <ul>
+          <li><b>Data drift.</b> Schema changes, row volume, new-token rate, boundary-reason mix, journey length and timing distributions.</li>
+          <li><b>Model drift.</b> Unassigned rate, centroid distance, Markov log-prob, cluster population PSI, anomaly and friction rates.</li>
+          <li><b>Response.</b> Drift that persists triggers a challenger. It replaces the champion only after passing holdout and stability gates, and the old model stays for rollback.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3 style="margin-top:12px">The semantic ladder</h3>
+    <p class="read small muted">One tap on the modem toggle, seen at five resolutions. Coarser levels let iOS and Android meet in the same space; tokens seen in fewer than 3 journeys back off one level.</p>
+    <div class="tbl-wrap">
+      <table class="ladder">
+        <thead><tr><th>Level</th><th>Token</th><th>Granularity</th></tr></thead>
+        <tbody>
+          <tr><td>Exact</td><td><code>action@ModemSettingsVC#toggle_power</code></td><td>Verbatim event</td></tr>
+          <tr><td>L3 intent</td><td><code>internet/modem/modem/toggle</code></td><td>family / module / object / operation</td></tr>
+          <tr><td>L2 coarse</td><td><code>internet/modem</code></td><td>family / module</td></tr>
+          <tr><td>L1 family</td><td><code>internet</code></td><td>business domain</td></tr>
+          <tr><td>Operation</td><td><code>configure:toggle</code></td><td>stage : operation</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin-top:12px">Two ways a journey can look wrong</h3>
+    <p class="read small muted">Every scored journey gets a geometric check (distance to its cluster centre) and a generative check (how likely its screen transitions are under that cluster's Markov chain).</p>
+    <div class="quad">
+      <div class="corner"></div>
+      <div class="h">Transitions likely</div>
+      <div class="h">Transitions unlikely (&lt; p05)</div>
+      <div class="h">Close to centre</div>
+      <div><b>Typical journey</b><span>The expected flow for this task.</span></div>
+      <div class="flag"><b>Odd path, familiar screens</b><span>Right screens, strange order. Often a confusing navigation step.</span></div>
+      <div class="h">Far from centre (&gt; p95)</div>
+      <div class="flag"><b>Odd mix, normal steps</b><span>Plausible moves but an unusual overall shape, such as very long or very loopy.</span></div>
+      <div class="flag"><b>Anomalous on both</b><span>Highest priority for UX review.</span></div>
+    </div>
+  </section>
+
+  <section id="results">
+    <span class="eyebrow">Results · one quarter of data</span>
+    <h2 class="read">What ~17 million journeys say about the app</h2>
+
+    <div class="chart-card">
+      <div class="chart-top">
+        <div>
+          <h3 style="font-size:1rem">Share of journeys by business family</h3>
+          <p class="small muted">Rounded to whole percent. Unclassified includes noise (about 5 %) and clusters without enough naming evidence.</p>
+        </div>
+        <div class="legend" aria-label="Legend"><span><i style="background:var(--series-1)"></i>Android</span><span><i style="background:var(--series-2)"></i>iOS</span></div>
+      </div>
+      <div class="chart" id="bars"></div>
+      <details>
+        <summary>Show as table</summary>
+        <div class="tbl-wrap"><table id="bars-table"><thead><tr><th>Family</th><th class="num">Android</th><th class="num">iOS</th></tr></thead><tbody></tbody></table></div>
+      </details>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-top">
+        <div>
+          <h3 style="font-size:1rem">Friction map: every discovered cluster</h3>
+          <p class="small muted">Each dot is one cluster. Longer journeys with more backtracking sit up and to the right. Dot area shows journey count. Values are rounded.</p>
+        </div>
+        <div class="controls">
+          <div class="seg-ctl" role="group" aria-label="Platform">
+            <button type="button" data-p="0" aria-pressed="true">Android</button>
+            <button type="button" data-p="1" aria-pressed="false">iOS</button>
+          </div>
+          <label for="fam" class="muted">Highlight</label>
+          <select id="fam"></select>
+        </div>
+      </div>
+      <div class="chart" id="scatter"></div>
+      <p class="small muted" id="scatter-note"></p>
+    </div>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>HDBSCAN, per platform</th><th class="num">Clusters</th><th class="num">Silhouette</th><th class="num">Davies–Bouldin</th><th class="num">Calinski–Harabasz</th><th class="num">Fit-time noise</th></tr></thead>
+        <tbody>
+          <tr><td>Android</td><td class="num">~1,400</td><td class="num">0.36</td><td class="num">1.3</td><td class="num">~8,700</td><td class="num">~43 %</td></tr>
+          <tr><td>iOS</td><td class="num">~1,400</td><td class="num">0.36</td><td class="num">1.2</td><td class="num">~7,600</td><td class="num">~45 %</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="read small muted">HDBSCAN leaves irregular journeys out at fit time on purpose. At inference, nearest-centroid assignment and noise post-processing bring the unassigned share down to about 5 %.</p>
+  </section>
+
+  <section id="edge">
+    <span class="eyebrow">Beyond the warehouse</span>
+    <h2 class="read">The same model runs on the phone</h2>
+    <div class="grid2">
+      <div class="prob"><h3>Android · Kotlin + ONNX Runtime</h3><p>Replays real clickstreams at 0.25× to 10× and classifies each journey on-device, with friction flags and next-action prediction.</p></div>
+      <div class="prob"><h3>iOS · Swift package</h3><p>A port with no external dependencies: float16 projection weights, centroid matrix and Markov graph shipped as compact binaries.</p></div>
+      <div class="prob"><h3>One contract</h3><p>Python, Kotlin and Swift share tokenisation, masking and model files, so phone and warehouse agree on every journey.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">What's next</span>
+    <div class="grid2">
+      <div class="prob"><h3>Stable cluster identities</h3><p>Match clusters across retrains by medoid and n-gram overlap, so "cluster 7" keeps its meaning.</p></div>
+      <div class="prob"><h3>Entropy-based segmentation</h3><p>Promote branching-entropy cuts from opt-in to default once validated against the rules.</p></div>
+      <div class="prob"><h3>Neural sequence encoders</h3><p>Add a learned sequence embedding as one more channel next to TF-IDF.</p></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Hoang-Nguyen Cao · Python, PyArrow, DuckDB, scikit-learn, HDBSCAN, Kafka, Airflow, Docker, Streamlit, Kotlin, Swift</span>
+    <a href="https://github.com/HNg0303/Unsupervised-Journey-Clustering">Source on GitHub ↗</a>
+  </footer>
+</div>
+
+<script>
+const DATA = {"families":["Internet, Wi-Fi & devices","Unclassified","Bills & payments","Notifications & shortcuts","Home & discovery","Sign-in & account","Support & customer care","Contracts & service requests","E-contracts & acceptance","Loyalty & promotions","Network health checks","Camera, TV & add-ons","Ratings & surveys","Utilities","Shop & product sign-up"],"share":{"android":{"Internet, Wi-Fi & devices":0.21,"Unclassified":0.2,"Bills & payments":0.16,"Notifications & shortcuts":0.1,"Home & discovery":0.06,"Sign-in & account":0.06,"Support & customer care":0.04,"Contracts & service requests":0.04,"E-contracts & acceptance":0.03,"Loyalty & promotions":0.02,"Network health checks":0.02,"Camera, TV & add-ons":0.02,"Ratings & surveys":0.01,"Utilities":0.01,"Shop & product sign-up":0.0},"ios":{"Internet, Wi-Fi & devices":0.17,"Unclassified":0.25,"Bills & payments":0.12,"Notifications & shortcuts":0.06,"Home & discovery":0.16,"Sign-in & account":0.05,"Support & customer care":0.05,"Contracts & service requests":0.05,"E-contracts & acceptance":0.02,"Loyalty & promotions":0.02,"Network health checks":0.02,"Camera, TV & add-ons":0.0,"Ratings & surveys":0.01,"Utilities":0.0,"Shop & product sign-up":0.01}},"points":[[0,1,1,6.0,0.02,0.0],[0,0,1,4.0,0.005,0.05],[0,3,3,10.0,0.16,0.0],[0,2,2,7.0,0.01,0.05],[0,1,2,5.0,0.185,0.0],[0,2,2,7.0,0.03,0.05],[0,0,1,6.0,0.165,0.0],[0,2,3,6.0,0.015,0.0],[0,1,1,4.0,0.045,0.1],[0,10,2,8.0,0.13,0.05],[0,3,1,6.0,0.16,0.0],[0,3,2,4.0,0.0,0.0],[0,12,1,5.0,0.055,0.0],[0,0,4,8.0,0.015,0.05],[0,2,1,11.0,0.13,0.0],[0,2,2,10.0,0.045,0.0],[0,2,3,11.0,0.035,0.0],[0,2,1,5.0,0.0,0.0],[0,10,6,6.0,0.015,0.0],[0,8,3,9.0,0.055,0.0],[0,0,1,6.0,0.005,0.05],[0,1,6,6.0,0.3,0.05],[0,1,1,12.0,0.1,0.05],[0,1,2,4.0,0.255,0.0],[0,2,1,7.0,0.15,0.0],[0,1,6,5.0,0.02,0.05],[0,8,2,11.0,0.055,0.0],[0,0,3,9.0,0.115,0.1],[0,1,2,4.0,0.23,0.0],[0,1,2,9.0,0.045,0.0],[0,7,1,9.0,0.21,0.05],[0,2,1,8.0,0.19,0.0],[0,2,2,11.0,0.035,0.0],[0,2,5,8.0,0.155,0.05],[0,7,2,9.0,0.0,0.0],[0,3,4,5.0,0.205,0.0],[0,3,1,12.0,0.12,0.0],[0,0,4,8.0,0.05,0.05],[0,3,2,12.0,0.025,0.0],[0,2,2,5.0,0.0,0.0],[0,2,2,7.0,0.02,0.0],[0,1,3,10.0,0.1,0.05],[0,4,3,4.0,0.025,0.05],[0,4,6,7.0,0.0,0.0],[0,4,2,4.0,0.0,0.0],[0,3,2,10.0,0.1,0.0],[0,2,3,17.0,0.06,0.2],[0,2,2,11.0,0.065,0.0],[0,1,4,5.0,0.195,0.0],[0,0,2,6.0,0.16,0.0],[0,1,4,8.0,0.125,0.0],[0,7,2,7.0,0.14,0.05],[0,7,4,9.0,0.11,0.0],[0,7,3,8.0,0.02,0.0],[0,7,2,8.0,0.05,0.0],[0,1,1,4.0,0.0,0.0],[0,0,4,9.0,0.115,0.1],[0,2,2,4.0,0.0,0.0],[0,1,1,4.0,0.0,0.0],[0,1,2,5.0,0.075,0.0],[0,8,2,6.0,0.18,0.0],[0,3,6,7.0,0.18,0.2],[0,0,3,4.0,0.0,0.1],[0,1,3,4.0,0.0,0.0],[0,1,3,4.0,0.0,0.0],[0,0,2,6.0,0.005,0.0],[0,1,3,4.0,0.0,0.05],[0,7,4,12.0,0.095,0.0],[0,0,2,5.0,0.0,0.0],[0,6,2,5.0,0.0,0.0],[0,2,3,4.0,0.01,0.0],[0,8,4,6.0,0.085,0.0],[0,0,3,4.0,0.0,0.0],[0,0,2,4.0,0.0,0.0],[0,0,3,4.0,0.0,0.0],[0,0,1,5.0,0.0,0.0],[0,2,4,7.0,0.07,0.05],[0,7,2,8.0,0.13,0.05],[0,2,6,7.0,0.015,0.05],[0,2,2,6.0,0.2,0.05],[0,12,2,6.0,0.0,0.0],[0,12,2,5.0,0.0,0.0],[0,12,8,4.0,0.0,0.0],[0,8,2,6.0,0.18,0.0],[0,0,3,8.0,0.14,0.05],[0,13,6,5.0,0.195,0.1],[0,13,4,4.0,0.0,0.25],[0,8,7,10.0,0.105,0.05],[0,8,3,9.0,0.16,0.0],[0,3,11,9.0,0.32,0.2],[0,8,5,4.0,0.0,0.0],[0,14,5,4.0,0.0,0.0],[0,1,2,6.0,0.33,0.0],[0,1,2,9.0,0.225,0.1],[0,0,1,7.0,0.28,0.0],[0,1,3,8.0,0.25,0.05],[0,13,2,6.0,0.005,0.0],[0,2,1,9.0,0.11,0.0],[0,1,3,11.0,0.11,0.05],[0,1,3,10.0,0.145,0.0],[0,7,3,7.0,0.045,0.05],[0,3,2,9.0,0.21,0.0],[0,0,2,5.0,0.0,0.05],[0,1,3,5.0,0.025,0.2],[0,2,2,10.0,0.115,0.0],[0,7,2,11.0,0.155,0.0],[0,0,1,9.0,0.11,0.1],[0,3,3,8.0,0.025,0.05],[0,6,2,5.0,0.01,0.0],[0,1,3,7.0,0.16,0.05],[0,3,4,5.0,0.29,0.05],[0,2,3,6.0,0.115,0.0],[0,10,4,6.0,0.18,0.05],[0,0,3,6.0,0.0,0.0],[0,4,3,9.0,0.05,0.05],[0,1,2,5.0,0.04,0.0],[0,2,3,9.0,0.1,0.0],[0,1,3,11.0,0.06,0.05],[0,0,2,5.0,0.215,0.05],[0,5,1,5.0,0.0,0.0],[0,2,2,4.0,0.0,0.0],[0,2,4,17.0,0.055,0.1],[0,2,3,9.0,0.02,0.0],[0,0,5,7.0,0.0,0.0],[0,3,6,5.0,0.21,0.05],[0,8,2,17.0,0.12,0.0],[0,3,3,11.0,0.015,0.05],[0,2,6,4.0,0.005,0.0],[0,1,1,8.0,0.12,0.0],[0,3,2,9.0,0.115,0.0],[0,14,2,9.0,0.05,0.0],[0,2,5,9.0,0.04,0.0],[0,2,3,7.0,0.14,0.05],[0,2,4,6.0,0.0,0.05],[0,0,35,5.0,0.0,0.0],[0,1,2,8.0,0.135,0.05],[0,1,2,5.0,0.005,0.0],[0,0,1,7.0,0.005,0.05],[0,3,3,5.0,0.0,0.0],[0,6,4,14.0,0.01,0.05],[0,2,2,11.0,0.04,0.0],[0,0,2,6.0,0.0,0.1],[0,13,2,9.0,0.115,0.0],[0,1,3,7.0,0.14,0.0],[0,1,2,9.0,0.11,0.0],[0,12,4,6.0,0.175,0.0],[0,4,2,7.0,0.155,0.0],[0,2,3,14.0,0.06,0.0],[0,6,4,6.0,0.01,0.1],[0,2,2,8.0,0.185,0.05],[0,6,2,4.0,0.0,0.0],[0,6,2,6.0,0.0,0.0],[0,1,2,6.0,0.0,0.0],[0,6,5,6.0,0.0,0.0],[0,6,8,4.0,0.0,0.0],[0,5,1,4.0,0.0,0.05],[0,7,3,8.0,0.005,0.0],[0,0,3,4.0,0.035,0.0],[0,1,3,9.0,0.11,0.0],[0,3,3,8.0,0.125,0.0],[0,6,3,11.0,0.05,0.0],[0,5,9,6.0,0.17,0.05],[0,2,5,5.0,0.005,0.05],[0,5,3,8.0,0.02,0.1],[0,6,3,6.0,0.005,0.1],[0,6,6,5.0,0.005,0.15],[0,1,5,7.0,0.385,0.25],[0,0,16,6.0,0.005,0.15],[0,0,3,5.0,0.005,0.2],[0,2,4,13.0,0.04,0.0],[0,2,2,6.0,0.015,0.05],[0,1,2,5.0,0.0,0.0],[0,9,5,5.0,0.035,0.05],[0,0,1,9.0,0.1,0.15],[0,3,9,4.0,0.245,0.0],[0,3,6,5.0,0.215,0.1],[0,0,3,5.0,0.0,0.05],[0,3,9,6.0,0.185,0.05],[0,0,3,6.0,0.05,0.05],[0,0,3,10.0,0.075,0.05],[0,0,4,6.0,0.0,0.1],[0,3,1,5.0,0.2,0.1],[0,3,2,5.0,0.0,0.05],[0,0,1,4.0,0.0,0.1],[0,0,19,5.0,0.0,0.0],[0,0,4,5.0,0.0,1.0],[0,0,6,5.0,0.005,0.1],[0,0,25,4.0,0.0,0.0],[0,0,4,4.0,0.0,1.0],[0,0,2,4.0,0.035,0.05],[0,1,5,4.0,0.0,0.0],[0,3,7,7.0,0.13,0.0],[0,8,3,5.0,0.005,0.0],[0,0,2,6.0,0.005,0.1],[0,1,3,5.0,0.05,0.05],[0,4,21,4.0,0.015,0.0],[0,0,4,7.0,0.065,0.0],[0,2,2,4.0,0.0,0.0],[0,7,3,11.0,0.1,0.0],[0,6,3,8.0,0.04,0.0],[0,2,2,9.0,0.16,0.0],[0,1,4,10.0,0.105,0.0],[0,1,3,6.0,0.195,0.05],[0,0,2,8.0,0.005,0.1],[0,7,7,7.0,0.275,0.05],[0,7,3,6.0,0.315,0.0],[0,7,4,5.0,0.19,0.05],[0,10,3,8.0,0.015,0.05],[0,11,3,6.0,0.04,0.0],[0,2,8,5.0,0.2,0.0],[0,2,33,5.0,0.0,0.0],[0,2,5,6.0,0.065,0.05],[0,2,16,6.0,0.01,0.0],[0,2,3,7.0,0.14,0.0],[0,2,3,8.0,0.12,0.0],[0,1,2,5.0,0.175,0.05],[0,0,3,4.0,0.225,0.05],[0,2,3,8.0,0.03,0.0],[0,12,3,5.0,0.19,0.0],[0,1,8,5.0,0.305,0.05],[0,1,2,4.0,0.245,0.0],[0,2,5,7.0,0.01,0.05],[0,2,4,6.0,0.0,0.1],[0,7,1,8.0,0.125,0.0],[0,8,1,9.0,0.22,0.0],[0,7,2,10.0,0.2,0.0],[0,2,3,5.0,0.02,0.0],[0,0,2,8.0,0.135,0.1],[0,0,3,8.0,0.07,0.1],[0,2,4,8.0,0.165,0.05],[0,2,2,6.0,0.175,0.0],[0,7,3,9.0,0.07,0.0],[0,2,4,7.0,0.08,0.0],[0,1,3,9.0,0.11,0.0],[0,5,5,6.0,0.0,0.05],[0,2,2,8.0,0.045,0.0],[0,2,2,4.0,0.0,0.0],[0,2,2,11.0,0.01,0.0],[0,1,8,5.0,0.195,0.0],[0,0,2,10.0,0.005,0.05],[0,10,6,4.0,0.01,0.0],[0,1,6,6.0,0.015,0.05],[0,1,3,5.0,0.0,0.0],[0,1,3,4.0,0.0,0.0],[0,8,2,7.0,0.145,0.0],[0,7,1,6.0,0.0,0.0],[0,0,3,9.0,0.02,0.1],[0,5,3,8.0,0.035,0.05],[0,1,4,8.0,0.11,0.0],[0,5,2,6.0,0.0,0.0],[0,1,2,8.0,0.035,0.0],[0,1,7,8.0,0.025,0.0],[0,2,3,7.0,0.0,0.0],[0,7,4,8.0,0.01,0.0],[0,2,3,6.0,0.0,0.0],[0,5,2,9.0,0.1,0.0],[0,3,2,10.0,0.1,0.0],[0,0,3,8.0,0.13,0.05],[0,0,2,7.0,0.14,0.05],[0,0,4,6.0,0.165,0.0],[0,0,2,6.0,0.0,0.0],[0,1,4,12.0,0.05,0.35],[0,0,3,5.0,0.0,0.05],[0,1,2,4.0,0.06,0.05],[0,2,3,5.0,0.0,0.0],[0,2,3,5.0,0.195,0.0],[0,2,3,6.0,0.045,0.05],[0,2,3,5.0,0.0,0.0],[0,3,4,5.0,0.0,0.0],[0,2,4,4.0,0.0,0.0],[0,2,2,9.0,0.03,0.05],[0,10,3,8.0,0.0,0.05],[0,2,14,5.0,0.0,0.0],[0,2,1,4.0,0.0,0.0],[0,2,28,4.0,0.0,0.0],[0,2,9,4.0,0.0,1.0],[0,2,3,8.0,0.05,0.05],[0,2,4,7.0,0.0,0.05],[0,2,5,6.0,0.0,0.0],[0,2,2,7.0,0.145,0.0],[0,2,2,7.0,0.14,0.0],[0,2,3,7.0,0.14,0.0],[0,2,2,6.0,0.0,0.05],[0,1,3,11.0,0.18,0.1],[0,2,2,6.0,0.0,0.0],[0,2,1,7.0,0.0,0.0],[0,2,4,5.0,0.0,0.1],[0,2,5,6.0,0.0,0.05],[0,2,3,8.0,0.0,0.05],[0,2,4,5.0,0.0,0.1],[0,2,2,4.0,0.0,0.0],[0,2,3,5.0,0.0,0.0],[0,2,4,6.0,0.16,0.0],[0,2,2,7.0,0.0,0.0],[0,2,3,13.0,0.22,0.0],[0,2,2,7.0,0.145,0.0],[0,2,3,12.0,0.325,0.05],[0,2,4,7.0,0.165,0.0],[0,2,2,7.0,0.145,0.0],[0,13,4,6.0,0.0,0.0],[0,2,4,6.0,0.0,0.0],[0,1,3,4.0,0.025,0.0],[0,1,13,6.0,0.0,0.0],[0,2,2,4.0,0.0,0.0],[0,4,4,8.0,0.0,0.0],[0,2,5,6.0,0.0,0.0],[0,1,5,8.0,0.03,0.0],[0,6,1,5.0,0.0,0.05],[0,2,7,7.0,0.06,0.05],[0,4,2,5.0,0.0,0.0],[0,4,4,6.0,0.005,0.0],[0,4,6,6.0,0.005,0.0],[0,4,3,4.0,0.0,0.0],[0,4,3,4.0,0.0,1.0],[0,2,4,11.0,0.1,0.05],[0,0,12,4.0,0.02,0.05],[0,2,2,9.0,0.0,0.0],[0,2,3,7.0,0.0,0.0],[0,0,2,15.0,0.17,0.35],[0,2,2,14.0,0.095,0.1],[0,0,2,4.0,0.0,0.0],[0,0,2,6.0,0.16,0.05],[0,6,3,5.0,0.0,0.0],[0,6,1,6.0,0.165,0.0],[0,0,3,4.0,0.0,0.05],[0,1,3,5.0,0.0,0.0],[0,1,2,5.0,0.2,0.0],[0,3,3,6.0,0.16,0.05],[0,1,3,5.0,0.22,0.0],[0,1,1,5.0,0.0,0.0],[0,0,6,6.0,0.0,0.05],[0,14,4,6.0,0.325,0.1],[0,10,2,6.0,0.0,0.05],[0,1,3,5.0,0.0,0.05],[0,0,7,4.0,0.0,1.0],[0,1,2,4.0,0.415,0.05],[0,0,4,5.0,0.0,0.05],[0,0,5,6.0,0.0,0.0],[0,14,4,9.0,0.315,0.2],[0,3,2,9.0,0.22,0.0],[0,0,4,9.0,0.11,0.05],[0,1,2,7.0,0.14,0.05],[0,0,4,8.0,0.175,0.05],[0,1,1,6.0,0.165,0.05],[0,0,4,6.0,0.16,0.05],[0,12,7,4.0,0.0,0.1],[0,0,5,5.0,0.0,0.1],[0,0,4,4.0,0.0,0.05],[0,1,2,9.0,0.11,0.0],[0,0,5,6.0,0.0,0.05],[0,1,7,6.0,0.165,0.0],[0,0,22,6.0,0.0,0.0],[0,0,2,5.0,0.0,0.05],[0,0,2,8.0,0.12,0.05],[0,0,5,7.0,0.14,0.0],[0,1,3,8.0,0.0,0.1],[0,0,6,7.0,0.0,0.05],[0,1,3,6.0,0.055,0.05],[0,0,1,5.0,0.0,0.1],[0,0,3,9.0,0.105,0.05],[0,0,2,8.0,0.125,0.0],[0,0,3,7.0,0.0,0.0],[0,1,2,7.0,0.0,0.0],[0,1,4,8.0,0.125,0.05],[0,1,3,6.0,0.205,0.0],[0,0,4,6.0,0.165,0.05],[0,1,4,9.0,0.0,0.0],[0,0,2,8.0,0.0,0.0],[0,5,2,9.0,0.11,0.0],[0,1,1,10.0,0.19,0.0],[0,1,3,6.0,0.165,0.0],[0,1,21,5.0,0.2,0.0],[0,0,2,6.0,0.165,0.05],[0,3,4,7.0,0.145,0.0],[0,1,5,5.0,0.0,0.05],[0,6,5,5.0,0.005,0.0],[0,1,4,7.0,0.135,0.0],[0,0,3,7.0,0.0,0.05],[0,0,4,8.0,0.0,0.2],[0,0,9,6.0,0.0,0.05],[0,0,6,7.0,0.14,0.15],[0,0,14,6.0,0.165,0.0],[0,1,5,6.0,0.0,0.0],[0,1,9,6.0,0.0,0.0],[0,1,5,9.0,0.0,0.05],[0,0,7,7.0,0.0,0.0],[0,0,5,8.0,0.0,0.0],[0,1,11,5.0,0.0,0.0],[0,1,3,5.0,0.0,0.0],[0,3,3,6.0,0.165,0.0],[0,3,2,6.0,0.165,0.0],[0,0,4,7.0,0.14,0.0],[0,0,3,6.0,0.0,0.0],[0,1,4,9.0,0.11,0.05],[0,0,4,8.0,0.125,0.0],[0,0,38,5.0,0.0,0.0],[0,0,2,5.0,0.0,0.0],[0,1,5,7.0,0.0,0.2],[0,0,10,6.0,0.0,0.1],[0,1,4,6.0,0.0,0.0],[0,1,4,7.0,0.0,0.0],[0,0,5,6.0,0.0,0.05],[0,1,7,8.0,0.0,0.1],[0,0,3,7.0,0.0,0.05],[0,7,3,8.0,0.125,0.0],[0,7,9,7.0,0.145,0.0],[0,1,4,7.0,0.0,0.0],[0,7,6,6.0,0.0,0.05],[0,7,2,6.0,0.165,0.05],[0,10,3,9.0,0.01,0.05],[0,8,4,6.0,0.0,0.0],[0,7,5,9.0,0.11,0.0],[0,2,3,10.0,0.175,0.0],[0,7,3,7.0,0.14,0.0],[0,7,3,7.0,0.14,0.0],[0,7,12,8.0,0.13,0.0],[0,7,2,11.0,0.16,0.0],[0,7,15,6.0,0.165,0.0],[0,0,58,4.0,0.0,0.0],[0,0,15,4.0,0.0,0.0],[0,7,2,7.0,0.015,0.0],[0,7,2,9.0,0.135,0.0],[0,7,3,9.0,0.11,0.0],[0,7,2,8.0,0.0,0.0],[0,7,2,9.0,0.125,0.0],[0,7,5,10.0,0.1,0.0],[0,5,5,9.0,0.025,0.0],[0,0,8,16.0,0.085,0.25],[0,3,2,9.0,0.105,0.0],[0,1,3,10.0,0.04,0.1],[0,4,13,5.0,0.0,0.0],[0,12,2,12.0,0.13,0.05],[0,3,3,8.0,0.13,0.0],[0,3,2,14.0,0.145,0.2],[0,3,4,14.0,0.075,0.4],[0,3,2,12.0,0.085,0.0],[0,1,7,7.0,0.145,0.0],[0,3,4,4.0,0.0,0.0],[0,10,9,5.0,0.0,0.0],[0,10,9,6.0,0.0,0.0],[0,2,9,8.0,0.13,0.0],[0,1,6,6.0,0.165,0.0],[0,2,8,8.0,0.115,0.0],[0,1,5,7.0,0.145,0.0],[0,1,5,6.0,0.155,0.0],[0,2,3,7.0,0.095,0.1],[0,2,2,10.0,0.065,0.1],[0,1,2,11.0,0.145,0.05],[0,3,5,5.0,0.185,0.0],[0,1,5,10.0,0.1,0.0],[0,3,11,8.0,0.13,0.0],[0,2,10,7.0,0.145,0.0],[0,2,9,6.0,0.165,0.0],[0,0,2,4.0,0.005,0.05],[0,2,3,11.0,0.06,0.1],[0,5,2,10.0,0.0,0.0],[0,3,2,9.0,0.01,0.0],[0,7,4,12.0,0.155,0.1],[0,1,4,9.0,0.065,0.0],[0,2,2,8.0,0.03,0.0],[0,2,4,10.0,0.165,0.05],[0,4,2,4.0,0.01,0.05],[0,1,7,4.0,0.0,0.0],[0,0,2,4.0,0.0,0.05],[0,1,2,8.0,0.0,0.0],[0,2,3,7.0,0.0,0.0],[0,0,5,5.0,0.0,0.0],[0,0,4,4.0,0.0,0.0],[0,11,4,11.0,0.095,0.15],[0,2,2,8.0,0.125,0.0],[0,2,6,6.0,0.0,0.05],[0,0,2,13.0,0.245,0.2],[0,11,7,10.0,0.07,0.15],[0,2,5,7.0,0.14,0.0],[0,11,4,6.0,0.0,0.2],[0,11,12,8.0,0.14,0.2],[0,2,3,4.0,0.0,0.2],[0,2,5,9.0,0.01,0.0],[0,2,3,6.0,0.0,0.0],[0,2,3,8.0,0.0,0.0],[0,2,4,7.0,0.14,0.0],[0,2,4,10.0,0.2,0.0],[0,13,3,10.0,0.2,0.0],[0,1,8,9.0,0.015,0.05],[0,5,6,6.0,0.0,0.0],[0,1,8,8.0,0.17,0.1],[0,1,7,6.0,0.03,0.0],[0,5,3,5.0,0.0,0.0],[0,0,2,7.0,0.16,0.0],[0,3,1,7.0,0.145,0.0],[0,1,5,10.0,0.045,0.0],[0,0,3,4.0,0.0,0.0],[0,12,13,6.0,0.175,0.1],[0,1,3,5.0,0.0,0.0],[0,5,9,4.0,0.02,0.0],[0,5,3,6.0,0.0,0.05],[0,5,5,8.0,0.0,0.0],[0,1,3,6.0,0.0,0.0],[0,1,7,8.0,0.21,0.05],[0,1,4,6.0,0.0,0.0],[0,1,3,6.0,0.0,0.0],[0,1,4,4.0,0.0,0.1],[0,2,3,6.0,0.02,0.0],[0,3,1,8.0,0.0,0.0],[0,5,3,5.0,0.0,0.0],[0,5,2,4.0,0.0,0.0],[0,11,4,6.0,0.025,0.1],[0,3,1,7.0,0.015,0.0],[0,5,2,8.0,0.0,0.0],[0,0,4,14.0,0.125,0.35],[0,1,7,16.0,0.095,0.15],[0,1,1,8.0,0.195,0.1],[0,3,2,11.0,0.175,0.2],[0,3,5,10.0,0.0,0.05],[0,4,3,9.0,0.115,0.0],[0,2,1,10.0,0.04,0.1],[0,2,6,6.0,0.15,0.0],[0,4,5,5.0,0.2,0.0],[0,5,3,11.0,0.06,0.0],[0,2,2,6.0,0.16,0.0],[0,7,2,10.0,0.105,0.0],[0,5,2,9.0,0.13,0.05],[0,0,3,9.0,0.0,0.0],[0,2,4,13.0,0.02,0.0],[0,2,2,13.0,0.045,0.0],[0,2,4,17.0,0.12,0.0],[0,2,2,11.0,0.045,0.0],[0,2,3,13.0,0.02,0.0],[0,1,2,12.0,0.075,0.2],[0,3,1,7.0,0.0,0.0],[0,3,2,13.0,0.07,0.5],[0,1,2,10.0,0.1,0.0],[0,3,6,11.0,0.085,0.5],[0,3,4,8.0,0.12,0.0],[0,3,2,5.0,0.195,0.0],[0,3,2,6.0,0.165,0.0],[0,1,3,9.0,0.12,0.0],[0,3,11,7.0,0.145,0.0],[0,3,16,6.0,0.165,0.0],[0,3,4,8.0,0.13,0.0],[0,3,2,7.0,0.14,0.0],[0,3,2,6.0,0.165,0.0],[0,14,3,7.0,0.195,0.1],[0,0,2,6.0,0.16,0.0],[0,6,5,9.0,0.005,0.0],[0,3,5,10.0,0.2,0.0],[0,3,2,6.0,0.165,0.05],[0,8,3,7.0,0.17,0.05],[0,3,7,6.0,0.165,0.05],[0,3,14,5.0,0.2,0.05],[0,1,2,6.0,0.165,0.0],[0,1,2,6.0,0.335,0.05],[0,1,4,7.0,0.145,0.0],[0,3,1,6.0,0.165,0.0],[0,6,10,14.0,0.01,0.05],[0,6,4,14.0,0.08,0.05],[0,1,2,11.0,0.16,0.0],[0,1,2,8.0,0.005,0.05],[0,2,3,13.0,0.155,0.0],[0,10,4,6.0,0.16,0.0],[0,6,3,6.0,0.02,0.0],[0,0,4,4.0,0.0,0.0],[0,6,3,6.0,0.0,0.0],[0,7,4,11.0,0.19,0.05],[0,2,6,8.0,0.005,0.05],[0,0,1,5.0,0.0,0.1],[0,12,4,5.0,0.0,0.0],[0,1,3,4.0,0.0,0.0],[0,14,9,9.0,0.29,0.15],[0,8,5,6.0,0.16,0.0],[0,0,5,14.0,0.155,0.15],[0,13,5,5.0,0.0,0.0],[0,14,6,4.0,0.0,0.0],[0,13,5,5.0,0.0,0.0],[0,1,3,6.0,0.0,0.0],[0,1,2,10.0,0.17,0.15],[0,10,2,5.0,0.195,0.05],[0,10,2,4.0,0.0,0.0],[0,10,3,4.0,0.01,0.1],[0,6,4,6.0,0.0,0.05],[0,10,3,5.0,0.0,0.0],[0,3,3,5.0,0.03,0.0],[0,0,4,6.0,0.0,0.1],[0,10,3,6.0,0.0,0.2],[0,0,2,6.0,0.155,0.05],[0,0,1,6.0,0.165,0.05],[0,6,5,11.0,0.07,0.05],[0,10,8,5.0,0.0,0.0],[0,10,18,4.0,0.0,0.0],[0,7,5,10.0,0.13,0.0],[0,6,4,5.0,0.005,0.0],[0,7,3,7.0,0.145,0.0],[0,7,4,6.0,0.0,0.0],[0,7,7,6.0,0.125,0.0],[0,8,8,16.0,0.13,0.15],[0,7,5,6.0,0.165,0.0],[0,5,4,9.0,0.115,0.05],[0,7,2,6.0,0.0,0.05],[0,1,3,8.0,0.125,0.0],[0,2,3,8.0,0.18,0.0],[0,8,3,6.0,0.0,0.0],[0,7,8,6.0,0.16,0.0],[0,7,2,8.0,0.125,0.0],[0,7,2,9.0,0.145,0.0],[0,2,2,7.0,0.14,0.0],[0,8,2,11.0,0.18,0.0],[0,7,12,5.0,0.0,0.0],[0,8,5,6.0,0.0,0.0],[0,7,6,8.0,0.175,0.05],[0,8,4,7.0,0.14,0.0],[0,7,9,6.0,0.165,0.0],[0,7,10,8.0,0.125,0.05],[0,7,25,7.0,0.145,0.0],[0,0,4,6.0,0.155,0.05],[0,7,2,6.0,0.16,0.0],[0,8,3,10.0,0.195,0.0],[0,8,4,9.0,0.205,0.0],[0,8,3,9.0,0.11,0.05],[0,8,4,7.0,0.0,0.05],[0,7,12,4.0,0.0,0.05],[0,8,2,5.0,0.0,0.1],[0,7,4,6.0,0.225,0.0],[0,7,5,5.0,0.2,0.05],[0,8,3,6.0,0.165,0.0],[0,8,3,11.0,0.175,0.0],[0,7,3,7.0,0.14,0.0],[0,3,2,5.0,0.07,0.05],[0,8,4,11.0,0.185,0.0],[0,7,3,7.0,0.145,0.05],[0,7,4,7.0,0.145,0.0],[0,7,3,7.0,0.285,0.0],[0,8,2,6.0,0.165,0.0],[0,8,51,6.0,0.165,0.0],[0,8,11,6.0,0.165,1.0],[0,12,5,7.0,0.165,0.1],[0,4,3,13.0,0.14,0.05],[0,3,5,5.0,0.0,0.0],[0,3,2,5.0,0.0,0.0],[0,2,8,11.0,0.095,0.1],[0,0,6,7.0,0.0,0.0],[0,11,3,6.0,0.0,0.05],[0,2,4,9.0,0.035,0.05],[0,3,3,14.0,0.15,0.2],[0,6,3,7.0,0.06,0.0],[0,0,2,9.0,0.11,0.0],[0,1,5,10.0,0.055,0.05],[0,5,2,11.0,0.14,0.05],[0,1,9,11.0,0.075,0.15],[0,1,4,8.0,0.0,0.0],[0,5,6,6.0,0.0,0.0],[0,0,3,4.0,0.0,0.0],[0,0,4,12.0,0.185,0.25],[0,1,6,9.0,0.0,0.0],[0,0,4,8.0,0.0,0.0],[0,0,2,10.0,0.2,0.0],[0,1,8,13.0,0.09,0.05],[0,3,4,4.0,0.0,0.05],[0,3,6,5.0,0.0,0.0],[0,3,6,4.0,0.0,0.0],[0,1,3,12.0,0.155,0.55],[0,1,3,9.0,0.22,0.05],[0,3,70,4.0,0.0,0.0],[0,3,3,5.0,0.0,0.0],[0,4,5,9.0,0.01,0.0],[0,1,2,8.0,0.0,0.0],[0,3,9,6.0,0.0,0.0],[0,3,15,5.0,0.0,0.0],[0,1,5,13.0,0.09,0.1],[0,1,4,9.0,0.015,0.0],[0,0,3,9.0,0.025,0.1],[0,3,1,14.0,0.135,0.3],[0,2,3,10.0,0.125,0.0],[0,2,2,10.0,0.135,0.05],[0,2,2,14.0,0.205,0.05],[0,2,1,8.0,0.2,0.0],[0,1,3,10.0,0.055,0.0],[0,1,2,7.0,0.145,0.0],[0,1,5,6.0,0.0,0.0],[0,10,2,10.0,0.065,0.0],[0,2,4,15.0,0.14,0.0],[0,2,2,11.0,0.05,0.0],[0,2,2,10.0,0.105,0.0],[0,2,2,9.0,0.0,0.0],[0,2,2,10.0,0.0,0.0],[0,2,2,11.0,0.09,0.0],[0,1,2,11.0,0.02,0.0],[0,1,6,9.0,0.095,0.1],[0,2,3,11.0,0.03,0.0],[0,2,2,10.0,0.0,0.0],[0,5,1,11.0,0.05,0.0],[0,1,7,12.0,0.04,0.25],[0,2,2,10.0,0.03,0.0],[0,2,3,7.0,0.01,0.0],[0,2,4,10.0,0.025,0.0],[0,1,4,8.0,0.005,0.0],[0,5,3,11.0,0.12,0.0],[0,1,9,8.0,0.155,0.0],[0,1,3,8.0,0.005,0.05],[0,2,1,10.0,0.12,0.0],[0,2,2,8.0,0.125,0.0],[0,5,4,7.0,0.01,0.0],[0,2,6,9.0,0.045,0.0],[0,3,5,12.0,0.08,0.0],[0,2,3,8.0,0.0,0.0],[0,3,5,20.0,0.055,0.3],[0,4,2,10.0,0.035,0.0],[0,2,6,8.0,0.125,0.0],[0,2,8,7.0,0.0,0.0],[0,5,2,7.0,0.0,0.0],[0,5,2,7.0,0.0,0.0],[0,1,4,14.0,0.07,0.4],[0,12,4,15.0,0.075,0.25],[0,5,2,11.0,0.02,0.05],[0,3,3,13.0,0.08,0.3],[0,3,3,15.0,0.06,0.3],[0,1,6,6.0,0.025,0.0],[0,3,3,9.0,0.025,0.0],[0,1,4,10.0,0.01,0.0],[0,1,1,8.0,0.01,0.0],[0,5,2,5.0,0.0,0.0],[0,4,1,7.0,0.0,0.05],[0,5,4,6.0,0.0,0.05],[0,3,6,10.0,0.05,0.0],[0,4,2,15.0,0.115,0.05],[0,4,3,8.0,0.005,0.0],[0,4,3,10.0,0.12,0.0],[0,1,2,10.0,0.105,0.0],[0,1,5,4.0,0.0,0.05],[0,4,3,6.0,0.0,0.0],[0,2,12,11.0,0.06,0.0],[0,5,8,6.0,0.0,0.05],[0,5,6,4.0,0.0,0.05],[0,4,3,4.0,0.0,0.0],[0,5,4,7.0,0.0,0.0],[0,4,5,5.0,0.0,0.0],[0,11,4,6.0,0.0,0.0],[0,3,6,18.0,0.05,0.4],[0,2,3,6.0,0.0,0.0],[0,1,6,10.0,0.095,0.0],[0,3,6,14.0,0.06,0.55],[0,4,9,13.0,0.14,0.05],[0,4,3,14.5,0.11,0.0],[0,3,7,12.0,0.085,0.05],[0,4,6,8.0,0.0,0.0],[0,5,3,5.0,0.0,0.05],[0,4,3,8.0,0.0,0.05],[0,3,8,11.0,0.09,0.0],[0,3,11,13.0,0.07,0.6],[0,1,6,7.0,0.0,0.0],[0,5,16,4.0,0.0,0.0],[0,3,5,8.0,0.11,0.75],[0,3,3,7.0,0.135,0.2],[0,4,9,10.0,0.05,0.05],[0,2,8,17.0,0.06,0.5],[0,2,10,16.0,0.06,0.5],[0,2,3,7.0,0.02,0.0],[0,5,9,6.0,0.015,0.0],[0,3,5,7.0,0.005,0.0],[0,5,5,6.0,0.0,0.0],[0,3,8,9.0,0.11,0.0],[0,13,3,9.0,0.02,0.0],[0,1,6,10.0,0.105,0.0],[0,3,4,8.0,0.125,0.0],[0,5,2,9.0,0.0,0.0],[0,6,3,11.0,0.055,0.1],[0,1,3,14.0,0.06,0.35],[0,4,2,6.0,0.005,0.0],[0,4,2,6.0,0.165,0.05],[0,5,3,5.0,0.0,0.0],[0,5,4,7.0,0.0,0.0],[0,4,2,6.0,0.0,0.0],[0,5,2,7.0,0.0,0.0],[0,2,2,9.0,0.05,0.05],[0,5,2,6.0,0.0,0.0],[0,5,7,6.0,0.0,0.0],[0,1,9,10.0,0.055,0.05],[0,5,5,6.0,0.0,0.0],[0,3,2,7.0,0.14,0.0],[0,4,4,5.0,0.2,0.0],[0,5,3,6.0,0.0,0.0],[0,4,6,5.0,0.0,0.0],[0,4,4,8.0,0.0,0.0],[0,3,4,15.0,0.065,0.4],[0,6,3,5.0,0.04,0.0],[0,5,5,8.0,0.0,0.0],[0,3,12,14.0,0.08,0.4],[0,5,4,5.0,0.0,0.05],[0,4,1,5.0,0.0,0.0],[0,4,3,8.0,0.14,0.0],[0,4,1,5.0,0.0,0.0],[0,4,5,5.0,0.0,0.0],[0,1,2,8.0,0.045,0.2],[0,2,2,5.0,0.0,0.0],[0,4,77,4.0,0.0,0.0],[0,4,14,4.0,0.0,1.0],[0,5,4,5.0,0.0,0.0],[0,6,3,12.0,0.08,0.1],[0,6,5,7.0,0.14,0.05],[0,4,65,4.0,0.0,0.0],[0,5,6,5.0,0.0,0.05],[0,3,4,10.0,0.095,0.6],[0,3,3,10.0,0.0,0.55],[0,1,13,7.0,0.02,0.0],[0,10,1,13.0,0.075,0.05],[0,3,5,12.0,0.08,1.0],[0,3,3,12.0,0.085,0.0],[0,3,15,8.0,0.125,0.0],[0,3,5,9.0,0.15,0.0],[0,2,3,7.0,0.145,0.0],[0,4,4,6.0,0.06,0.0],[0,1,3,12.0,0.08,0.1],[0,6,3,6.0,0.16,0.0],[0,5,4,6.0,0.015,0.05],[0,5,4,5.0,0.015,0.0],[0,5,2,4.0,0.01,0.1],[0,5,1,8.0,0.0,0.0],[0,5,6,6.0,0.02,0.0],[0,5,10,5.0,0.015,0.0],[0,4,3,7.0,0.01,0.0],[0,4,4,8.0,0.01,0.0],[0,0,2,6.0,0.01,0.0],[0,0,2,7.0,0.01,0.05],[0,5,4,5.0,0.0,0.1],[0,2,8,8.0,0.18,0.05],[0,5,3,6.0,0.0,0.05],[0,5,15,6.0,0.0,0.05],[0,4,5,5.0,0.0,0.0],[0,4,2,6.0,0.0,0.05],[0,3,7,11.0,0.09,0.0],[0,3,11,11.0,0.09,1.0],[0,4,5,5.0,0.0,0.0],[0,5,6,4.0,0.0,0.0],[0,0,6,4.0,0.03,0.15],[0,1,4,8.0,0.13,0.0],[0,4,2,9.0,0.0,0.0],[0,4,4,4.0,0.225,0.05],[0,5,3,7.0,0.15,0.05],[0,1,6,6.0,0.0,0.0],[0,5,5,4.0,0.0,0.0],[0,4,6,6.0,0.0,0.0],[0,4,12,5.0,0.0,0.0],[0,2,3,8.0,0.0,0.0],[0,4,2,7.0,0.0,0.0],[0,2,3,8.0,0.0,0.0],[0,2,1,7.0,0.0,0.0],[0,4,4,7.0,0.0,0.0],[0,5,4,4.0,0.0,0.05],[0,5,7,4.0,0.0,0.0],[0,0,3,4.0,0.0,0.05],[0,0,2,5.0,0.0,0.1],[0,2,7,9.0,0.135,0.0],[0,2,4,8.0,0.125,0.0],[0,4,6,4.0,0.0,0.0],[0,4,6,4.0,0.0,0.0],[0,4,3,7.0,0.14,0.0],[0,2,7,6.0,0.0,0.0],[0,5,3,6.0,0.0,0.0],[0,2,3,6.0,0.065,0.05],[0,2,5,7.0,0.0,0.05],[0,2,7,5.0,0.0,0.05],[0,0,3,6.0,0.005,0.05],[0,0,4,6.0,0.155,0.05],[0,1,3,7.0,0.07,0.05],[0,0,4,4.0,0.0,0.15],[0,0,3,4.0,0.0,0.15],[0,0,6,9.0,0.005,0.2],[0,1,4,9.0,0.015,0.0],[0,0,4,9.0,0.0,0.15],[0,0,8,5.0,0.0,0.0],[0,1,4,6.0,0.0,0.0],[0,0,3,8.0,0.0,0.2],[0,1,6,6.0,0.0,0.0],[0,0,4,7.0,0.0,0.2],[0,0,4,7.0,0.0,0.2],[0,0,8,5.0,0.0,0.05],[0,0,3,8.0,0.0,0.15],[0,0,5,8.0,0.005,0.2],[0,1,2,5.0,0.0,0.0],[0,1,16,6.0,0.0,0.0],[0,13,7,4.0,0.0,0.05],[0,4,7,4.0,0.0,0.0],[0,0,8,8.0,0.005,0.25],[0,0,7,9.0,0.0,0.3],[0,0,17,5.0,0.0,0.0],[0,0,12,6.0,0.0,0.0],[0,13,6,5.0,0.19,0.05],[0,4,6,5.0,0.2,0.0],[0,1,2,11.0,0.145,0.45],[0,9,4,7.0,0.165,0.15],[0,0,5,9.0,0.0,0.2],[0,1,4,7.0,0.0,0.0],[0,13,6,4.0,0.0,0.05],[0,0,6,9.0,0.0,0.25],[0,13,5,6.0,0.0,0.0],[0,13,2,5.0,0.0,0.0],[0,0,17,5.0,0.0,0.0],[0,1,3,5.0,0.0,0.05],[0,0,7,8.0,0.0,0.25],[0,1,5,6.0,0.0,0.0],[0,0,8,7.0,0.0,0.25],[0,0,4,8.0,0.0,0.2],[0,5,2,10.0,0.04,0.05],[0,2,2,7.0,0.14,0.0],[0,1,5,11.0,0.08,0.05],[0,2,2,7.0,0.0,0.0],[0,2,4,6.0,0.03,0.0],[0,2,2,6.0,0.09,0.0],[0,10,7,9.0,0.045,0.05],[0,13,2,8.0,0.0,0.0],[0,2,2,6.0,0.0,0.0],[0,1,7,10.0,0.075,0.1],[0,3,25,6.0,0.0,0.0],[0,3,8,16.0,0.06,0.4],[0,2,3,8.0,0.035,0.0],[0,10,2,9.0,0.0,0.0],[0,2,2,7.0,0.14,0.0],[0,10,4,7.0,0.0,0.0],[0,3,47,5.0,0.0,0.0],[0,3,3,6.0,0.0,0.0],[0,2,3,6.0,0.315,0.05],[0,2,2,12.0,0.26,0.0],[0,3,2,8.0,0.0,0.0],[0,10,3,9.0,0.0,0.0],[0,2,3,7.0,0.075,0.0],[0,3,7,6.0,0.0,0.05],[0,3,3,6.0,0.165,0.0],[0,3,17,7.0,0.005,0.0],[0,3,3,7.0,0.0,0.0],[0,2,7,8.0,0.085,0.05],[0,2,7,7.0,0.0,0.0],[0,2,12,7.0,0.14,0.0],[0,2,21,6.0,0.0,0.0],[0,3,5,9.0,0.005,0.0],[0,3,5,10.0,0.005,0.0],[0,6,3,5.0,0.0,0.0],[0,2,3,7.0,0.345,0.1],[0,2,1,5.0,0.2,0.0],[0,2,3,6.0,0.165,0.0],[0,9,6,11.0,0.08,0.15],[0,1,5,9.0,0.0,0.0],[0,12,4,9.0,0.05,0.0],[0,12,3,10.0,0.045,0.0],[0,3,3,8.0,0.0,0.0],[0,3,4,7.0,0.0,0.0],[0,3,4,11.5,0.05,0.2],[0,3,2,6.0,0.0,0.0],[0,3,7,6.0,0.0,0.0],[0,3,4,8.0,0.0,0.0],[0,3,8,7.0,0.0,0.0],[0,3,1,7.0,0.0,0.0],[0,1,3,9.0,0.0,0.0],[0,0,3,8.0,0.0,0.0],[0,9,2,8.0,0.0,0.0],[0,6,5,6.0,0.0,0.0],[0,0,3,7.0,0.0,0.05],[0,6,5,7.0,0.0,0.0],[0,6,7,8.0,0.0,0.0],[0,2,9,4.0,0.0,0.05],[0,2,13,6.0,0.0,0.0],[0,12,4,10.0,0.1,0.0],[0,2,2,10.0,0.175,0.0],[0,2,6,7.0,0.18,0.0],[0,2,8,7.0,0.135,0.0],[0,13,5,10.0,0.2,0.0],[0,0,3,4.0,0.0,0.0],[0,6,3,7.0,0.14,0.0],[0,6,4,6.0,0.0,0.0],[0,5,4,7.0,0.14,0.0],[0,12,8,9.0,0.125,0.0],[0,6,3,8.0,0.0,0.0],[0,3,3,7.0,0.0,0.0],[0,2,3,4.0,0.0,0.0],[0,1,7,7.0,0.0,0.0],[0,3,4,6.0,0.0,0.0],[0,2,11,23.0,0.11,0.2],[0,2,5,22.0,0.115,0.15],[0,3,6,13.0,0.035,0.15],[0,1,2,8.0,0.0,0.05],[0,2,2,6.0,0.0,0.0],[0,1,2,9.0,0.0,0.0],[0,1,3,10.0,0.095,0.0],[0,1,7,7.0,0.0,0.0],[0,5,4,6.0,0.0,0.0],[0,5,3,4.0,0.0,0.0],[0,2,2,9.0,0.03,0.0],[0,1,6,12.0,0.03,0.35],[0,1,4,6.0,0.07,0.0],[0,9,7,12.0,0.035,0.3],[0,9,4,9.0,0.11,0.0],[0,6,11,8.0,0.005,0.05],[0,2,3,5.0,0.045,0.0],[0,5,10,12.0,0.09,0.05],[0,2,3,7.0,0.0,0.0],[0,2,7,9.0,0.08,0.15],[0,2,2,11.0,0.025,0.0],[0,4,3,5.0,0.01,0.1],[0,2,3,11.0,0.035,0.0],[0,2,3,9.0,0.0,0.0],[0,5,4,7.0,0.0,0.05],[0,9,5,7.0,0.145,0.0],[0,2,3,8.0,0.17,0.0],[0,2,5,10.0,0.1,0.0],[0,2,4,10.0,0.0,0.0],[0,0,2,5.0,0.0,0.0],[0,0,4,14.0,0.05,0.0],[0,0,5,6.0,0.005,0.05],[0,4,17,7.0,0.07,0.05],[0,0,2,9.0,0.0,0.1],[0,8,3,10.0,0.195,0.05],[0,2,7,7.0,0.135,0.05],[0,1,6,10.0,0.065,0.0],[0,0,3,6.0,0.005,0.0],[0,1,9,8.0,0.0,0.0],[0,2,2,10.0,0.025,0.0],[0,2,4,10.0,0.095,0.0],[0,2,3,9.0,0.0,0.0],[0,2,7,10.0,0.115,0.05],[0,5,10,5.0,0.0,0.0],[0,5,6,6.0,0.0,0.0],[0,2,4,5.0,0.0,0.0],[0,5,12,10.5,0.08,0.05],[0,2,2,6.0,0.075,0.0],[0,2,1,8.0,0.0,0.0],[0,2,4,7.0,0.0,0.0],[0,2,6,8.0,0.0,0.0],[0,2,3,9.0,0.105,0.0],[0,2,2,9.0,0.0,0.0],[0,2,3,9.0,0.11,0.0],[0,2,3,8.0,0.125,0.0],[0,4,4,6.0,0.155,0.05],[0,4,2,5.0,0.0,0.0],[0,4,3,7.0,0.0,0.05],[0,2,4,6.0,0.0,0.0],[0,2,2,5.0,0.0,0.0],[0,2,5,10.0,0.035,0.0],[0,2,4,6.0,0.04,0.0],[0,2,4,7.0,0.0,0.0],[0,2,4,8.0,0.125,0.0],[0,2,5,7.0,0.14,0.0],[0,2,3,6.0,0.0,0.0],[0,2,2,7.0,0.0,0.0],[0,2,5,7.0,0.0,0.0],[0,2,2,8.0,0.0,0.0],[0,2,2,9.0,0.11,0.0],[0,2,5,8.0,0.125,0.0],[0,2,2,7.0,0.135,0.05],[0,2,3,7.0,0.14,0.0],[0,2,7,6.0,0.165,0.0],[0,2,2,7.0,0.29,0.0],[0,2,7,6.0,0.17,0.0],[0,1,6,10.0,0.0,0.0],[0,2,2,8.0,0.0,0.0],[0,2,6,10.0,0.11,0.1],[0,2,6,11.0,0.0,0.05],[0,2,2,4.0,0.0,0.0],[0,2,4,11.0,0.195,0.0],[0,2,7,7.0,0.14,0.0],[0,2,6,6.0,0.0,0.0],[0,2,2,12.0,0.165,0.0],[0,2,7,9.0,0.105,0.0],[0,2,3,9.0,0.0,0.0],[0,2,2,6.0,0.165,0.05],[0,6,6,6.0,0.0,0.0],[0,4,4,6.0,0.0,0.0],[0,2,2,11.0,0.185,0.0],[0,2,2,11.0,0.175,0.0],[0,2,3,12.0,0.17,0.0],[0,2,4,11.0,0.19,0.0],[0,2,4,10.0,0.2,0.0],[0,1,7,6.0,0.035,0.0],[0,2,4,11.0,0.18,0.0],[0,2,3,12.0,0.165,0.0],[0,2,3,11.0,0.18,0.0],[0,2,4,8.0,0.0,0.0],[0,2,6,8.0,0.125,0.0],[0,2,2,7.0,0.145,0.0],[0,2,4,6.0,0.165,0.0],[0,2,5,5.0,0.2,0.05],[0,6,4,6.0,0.0,0.0],[0,5,6,7.0,0.0,0.0],[0,5,4,4.0,0.0,0.0],[0,2,3,7.0,0.0,0.0],[0,2,2,6.0,0.0,0.0],[0,0,7,8.0,0.0,0.0],[0,0,2,6.0,0.0,0.0],[0,0,2,4.0,0.0,0.0],[0,2,2,10.0,0.1,0.0],[0,2,3,8.0,0.0,0.0],[0,2,5,9.0,0.105,0.0],[0,7,9,13.0,0.055,0.05],[0,6,3,6.0,0.0,0.0],[0,2,3,14.0,0.175,0.05],[0,2,4,8.0,0.115,0.0],[0,2,5,10.0,0.195,0.0],[0,2,3,6.0,0.31,0.0],[0,2,2,6.0,0.0,0.0],[0,2,3,13.0,0.16,0.0],[0,2,4,6.0,0.0,0.0],[0,2,3,14.0,0.145,0.0],[0,2,4,13.0,0.15,0.0],[0,2,4,14.0,0.145,0.0],[0,2,5,11.0,0.175,0.0],[0,2,7,8.0,0.13,0.0],[0,2,2,8.0,0.0,0.0],[0,2,2,7.0,0.0,0.0],[0,2,6,13.0,0.16,0.05],[0,2,11,11.0,0.175,0.0],[0,8,11,11.0,0.15,0.2],[0,2,3,7.0,0.145,0.0],[0,1,4,6.0,0.155,0.05],[0,1,11,13.5,0.045,0.1],[0,4,7,6.0,0.06,0.15],[0,4,7,8.0,0.065,0.35],[0,5,3,6.0,0.0,0.0],[0,5,6,4.0,0.0,0.05],[0,0,3,11.0,0.09,0.05],[0,1,2,10.0,0.1,0.05],[0,6,3,5.0,0.0,0.0],[0,1,14,9.0,0.0,0.05],[0,2,4,8.0,0.125,0.1],[0,10,3,13.0,0.0,0.1],[0,2,4,13.0,0.15,0.05],[0,10,5,12.0,0.0,0.1],[0,0,11,8.0,0.005,0.0],[0,0,4,6.0,0.0,0.0],[0,6,8,12.0,0.0,0.05],[0,6,10,7.0,0.0,0.0],[0,6,5,7.0,0.0,0.0],[0,11,2,9.0,0.045,0.05],[0,1,7,5.0,0.0,0.05],[0,1,3,12.0,0.135,0.05],[0,5,6,8.0,0.0,0.05],[0,10,4,4.0,0.0,0.05],[0,1,5,11.0,0.19,0.3],[0,6,6,13.0,0.0,0.1],[0,10,8,12.0,0.0,0.05],[0,6,4,11.0,0.0,0.05],[0,0,4,10.0,0.0,0.0],[0,6,5,9.0,0.0,0.1],[0,6,6,6.0,0.0,0.0],[0,0,5,9.0,0.11,0.25],[0,5,11,7.0,0.145,0.0],[0,6,3,4.0,0.0,0.0],[0,1,16,9.0,0.115,0.05],[0,9,5,6.0,0.15,0.1],[0,2,4,9.0,0.0,0.15],[0,9,2,4.0,0.0,0.0],[0,1,4,6.0,0.0,0.0],[0,0,4,10.0,0.0,0.0],[0,0,10,9.0,0.0,0.0],[0,3,5,7.0,0.08,0.05],[0,8,5,7.0,0.14,0.0],[0,2,5,6.0,0.165,0.0],[0,9,6,8.0,0.07,0.3],[0,9,5,5.0,0.0,0.0],[0,6,8,10.0,0.0,0.05],[0,0,2,12.0,0.16,0.0],[0,2,6,9.0,0.105,0.1],[0,2,11,8.0,0.115,0.1],[0,2,4,8.0,0.0,0.1],[0,6,12,9.0,0.0,0.05],[0,0,14,11.0,0.0,0.1],[0,8,4,6.0,0.0,0.0],[0,1,6,8.0,0.165,0.0],[0,8,9,7.0,0.0,0.0],[0,5,6,7.0,0.0,0.0],[0,8,8,7.0,0.0,0.2],[0,5,3,5.0,0.0,0.0],[0,1,7,6.0,0.18,0.0],[0,5,16,4.0,0.0,0.0],[0,5,9,6.0,0.0,0.0],[0,5,5,6.0,0.0,0.0],[0,8,11,9.0,0.1,0.0],[0,1,9,6.0,0.0,0.05],[0,6,4,4.0,0.0,0.0],[0,0,3,8.0,0.23,0.0],[0,0,2,6.0,0.165,0.0],[0,0,6,10.5,0.095,0.15],[0,8,6,6.0,0.0,0.05],[0,5,4,4.0,0.0,0.2],[0,6,13,11.0,0.0,0.05],[0,6,6,7.0,0.0,0.0],[0,6,6,6.0,0.0,0.0],[0,6,6,5.0,0.0,0.0],[0,6,5,7.0,0.0,0.0],[0,6,6,6.0,0.0,0.0],[0,8,4,7.0,0.0,0.25],[0,8,9,9.0,0.2,0.1],[0,8,4,8.0,0.0,0.0],[0,1,5,11.0,0.18,0.05],[0,10,16,9.0,0.02,0.0],[0,2,7,6.0,0.0,0.0],[0,5,3,6.0,0.0,0.0],[0,5,3,6.0,0.0,0.0],[0,1,2,9.0,0.005,0.0],[0,6,7,6.0,0.0,0.0],[0,6,10,5.0,0.0,0.0],[0,11,4,5.0,0.005,0.0],[0,1,4,11.0,0.055,0.2],[0,11,3,6.0,0.05,0.05],[0,6,15,10.0,0.0,0.05],[0,6,7,12.0,0.0,0.0],[0,11,5,9.0,0.055,0.05],[0,11,3,6.0,0.18,0.0],[0,0,2,7.0,0.14,0.0],[0,1,3,6.0,0.18,0.0],[0,1,7,9.0,0.11,0.0],[0,1,4,9.0,0.11,0.0],[0,0,8,12.0,0.08,0.0],[0,0,4,11.0,0.11,0.05],[0,0,4,12.0,0.085,0.05],[0,9,3,7.0,0.14,0.0],[0,9,5,5.0,0.175,0.1],[0,1,3,5.0,0.345,0.0],[0,1,4,4.0,0.0,0.05],[0,0,3,9.0,0.0,0.0],[0,1,2,10.0,0.0,0.05],[0,11,7,7.0,0.0,0.05],[0,1,3,13.0,0.15,0.0],[0,0,3,8.0,0.125,0.0],[0,11,13,11.0,0.16,0.05],[0,1,9,15.5,0.215,0.0],[0,11,4,9.0,0.22,0.0],[0,9,5,7.0,0.0,0.0],[0,9,13,11.0,0.105,0.35],[0,9,6,8.0,0.0,0.3],[0,9,5,7.0,0.0,0.35],[0,9,5,7.0,0.0,0.0],[0,9,3,6.0,0.0,0.0],[0,1,11,11.0,0.015,0.6],[0,1,5,8.0,0.12,0.2],[0,1,6,5.0,0.0,0.05],[0,1,5,13.0,0.155,0.05],[0,0,3,11.0,0.18,0.0],[0,0,5,10.0,0.1,0.0],[0,1,4,12.0,0.165,0.25],[0,0,3,12.0,0.085,0.0],[0,1,2,11.0,0.09,0.0],[0,9,6,6.0,0.165,0.0],[0,1,12,8.0,0.005,0.1],[0,1,6,5.0,0.0,0.05],[0,0,2,4.0,0.0,0.25],[0,9,13,4.0,0.005,0.45],[0,1,16,6.0,0.16,0.0],[0,0,2,6.0,0.0,0.0],[0,0,3,17.0,0.18,0.05],[0,0,6,10.0,0.105,0.05],[0,9,5,7.0,0.0,0.3],[0,9,4,6.0,0.0,0.35],[0,9,4,6.0,0.0,0.0],[0,9,4,5.0,0.0,0.0],[0,9,5,5.0,0.195,0.4],[0,1,16,11.0,0.02,0.55],[0,9,15,7.0,0.03,0.6],[0,0,4,19.0,0.165,0.1],[0,0,2,11.0,0.18,0.0],[0,9,14,10.0,0.11,0.5],[0,9,5,8.0,0.125,0.05],[0,0,2,5.0,0.0,0.0],[0,0,2,8.0,0.12,0.1],[0,0,8,16.0,0.12,0.2],[0,0,7,6.0,0.0,0.0],[0,11,5,5.0,0.02,0.0],[0,0,3,5.0,0.0,0.05],[0,0,6,7.0,0.145,0.1],[0,0,5,11.0,0.09,0.0],[0,11,16,17.0,0.14,0.25],[0,0,20,18.0,0.155,0.1],[0,8,5,9.0,0.19,0.1],[0,0,11,8.0,0.125,0.05],[0,0,8,6.0,0.065,0.0],[0,0,7,7.0,0.17,0.1],[0,0,9,5.0,0.0,0.0],[0,1,11,8.0,0.14,0.05],[0,0,11,7.0,0.14,0.0],[0,0,4,6.0,0.165,0.0],[0,1,8,6.0,0.16,0.0],[0,8,2,7.0,0.0,0.1],[0,1,4,12.0,0.08,0.05],[0,1,7,10.0,0.1,0.05],[0,0,3,8.0,0.12,0.0],[0,0,6,10.0,0.0,0.25],[0,0,5,18.0,0.115,0.05],[0,0,10,11.0,0.09,0.0],[0,0,3,8.0,0.12,0.0],[0,0,3,6.0,0.16,0.0],[0,0,15,11.0,0.01,0.05],[0,1,8,5.0,0.0,0.0],[0,11,5,6.0,0.0,0.0],[0,0,7,9.0,0.11,0.2],[0,0,2,11.0,0.09,0.15],[0,0,7,13.0,0.075,0.05],[0,0,4,12.0,0.085,0.0],[0,0,17,8.0,0.24,0.05],[0,1,10,6.0,0.17,0.0],[0,0,2,5.0,0.0,0.0],[0,0,7,5.0,0.0,0.0],[0,0,9,8.0,0.0,0.05],[0,11,5,6.0,0.0,0.0],[0,11,3,5.0,0.0,0.0],[0,1,6,4.0,0.0,0.0],[0,0,5,9.0,0.22,0.25],[0,0,34,18.0,0.03,0.2],[0,1,9,10.5,0.0,0.0],[0,0,11,6.0,0.0,0.05],[0,0,12,19.0,0.19,0.3],[0,0,6,12.0,0.17,0.25],[0,0,3,10.0,0.2,0.25],[0,0,11,10.0,0.1,0.0],[0,0,5,10.0,0.1,0.0],[0,0,7,12.0,0.085,0.2],[0,1,3,10.0,0.1,0.2],[0,1,4,9.0,0.005,0.0],[0,0,5,17.0,0.125,0.05],[0,1,3,11.0,0.09,0.05],[0,0,6,18.0,0.19,0.05],[0,0,5,11.0,0.09,0.05],[0,0,7,13.0,0.075,0.05],[0,0,3,11.0,0.09,0.0],[0,1,6,4.0,0.215,0.0],[0,0,9,19.0,0.14,0.4],[0,1,6,12.0,0.085,0.05],[0,0,3,9.0,0.11,0.25],[0,0,7,11.0,0.095,0.3],[0,0,7,11.0,0.09,0.3],[0,0,3,11.0,0.085,0.25],[0,1,3,9.0,0.11,1.0],[0,1,4,9.0,0.11,0.0],[0,0,3,10.0,0.0,0.0],[0,0,3,10.0,0.105,0.0],[0,0,6,8.0,0.125,0.05],[0,0,7,8.0,0.125,1.0],[0,0,3,12.0,0.115,0.0],[0,0,10,21.0,0.17,0.15],[0,1,9,21.0,0.13,0.05],[0,0,7,14.0,0.145,0.0],[0,0,20,18.0,0.2,0.3],[0,0,8,22.0,0.15,0.25],[0,0,17,15.0,0.15,0.45],[0,0,7,16.0,0.125,0.05],[0,1,5,20.0,0.125,0.05],[0,0,5,18.0,0.125,0.05],[0,0,7,19.0,0.11,0.1],[0,1,10,13.0,0.16,0.05],[0,0,4,15.0,0.095,0.05],[0,0,39,27.0,0.185,0.15],[0,0,7,13.0,0.095,0.0],[0,1,6,12.0,0.185,0.05],[0,0,10,21.0,0.14,0.05],[0,1,4,19.0,0.165,0.2],[0,1,3,14.0,0.145,0.0],[0,0,5,21.0,0.155,0.05],[0,1,4,15.0,0.135,0.05],[0,0,16,17.0,0.14,0.2],[0,0,8,17.0,0.125,0.1],[0,0,8,22.0,0.12,0.05],[0,0,7,14.0,0.14,0.25],[0,0,2,14.0,0.07,0.0],[0,0,13,21.0,0.12,0.05],[0,0,8,14.0,0.155,0.05],[0,0,3,17.0,0.115,0.05],[0,0,5,22.0,0.14,0.1],[0,0,4,16.0,0.125,0.05],[1,1,2,5.0,0.0,0.15],[1,1,2,5.0,0.0,0.55],[1,5,2,5.0,0.01,0.0],[1,4,2,4.0,0.0,0.0],[1,10,3,8.0,0.0,0.05],[1,1,2,4.0,0.235,0.0],[1,4,4,8.0,0.01,0.05],[1,3,5,12.0,0.01,0.05],[1,10,18,5.0,0.01,0.0],[1,4,4,5.0,0.215,0.0],[1,1,1,5.0,0.19,0.0],[1,1,3,5.0,0.2,0.0],[1,1,4,8.0,0.005,0.05],[1,2,3,12.0,0.015,0.1],[1,7,4,8.0,0.0,0.0],[1,7,2,8.0,0.0,0.0],[1,7,2,9.0,0.0,0.1],[1,1,2,10.0,0.0,0.1],[1,7,5,6.0,0.005,0.05],[1,4,6,4.0,0.015,0.0],[1,2,4,6.0,0.155,0.0],[1,10,3,5.0,0.175,0.0],[1,4,4,5.0,0.0,0.05],[1,2,3,8.0,0.0,0.0],[1,2,3,10.0,0.0,0.1],[1,2,2,4.5,0.0,0.0],[1,0,4,7.0,0.005,0.05],[1,10,19,6.0,0.0,0.0],[1,0,3,6.0,0.165,0.05],[1,4,2,4.0,0.015,0.0],[1,1,5,9.0,0.02,0.0],[1,1,6,6.0,0.065,0.2],[1,3,3,10.0,0.0,0.3],[1,2,1,5.0,0.005,0.0],[1,2,4,6.0,0.0,0.0],[1,2,3,5.0,0.0,0.0],[1,4,3,7.0,0.0,0.0],[1,1,2,7.0,0.14,0.0],[1,0,3,9.0,0.005,0.05],[1,4,6,5.0,0.0,0.0],[1,4,3,5.0,0.0,0.0],[1,4,2,7.0,0.0,0.0],[1,2,4,5.0,0.165,0.0],[1,0,2,8.0,0.13,0.05],[1,10,4,8.0,0.035,0.0],[1,1,5,6.0,0.14,0.0],[1,3,3,5.0,0.21,0.0],[1,0,6,11.0,0.0,0.1],[1,4,4,7.0,0.005,0.0],[1,2,3,6.0,0.01,0.0],[1,5,5,8.0,0.025,0.1],[1,3,2,6.0,0.0,0.0],[1,13,5,7.0,0.005,0.0],[1,4,2,4.0,0.01,0.0],[1,1,16,4.0,0.245,0.0],[1,1,13,4.0,0.0,0.0],[1,0,4,8.0,0.12,0.05],[1,1,3,9.0,0.005,0.45],[1,0,4,10.0,0.005,0.1],[1,1,2,8.0,0.005,0.05],[1,4,4,8.0,0.115,0.0],[1,7,7,6.0,0.155,0.0],[1,2,2,6.0,0.0,0.0],[1,1,3,8.0,0.0,0.0],[1,1,4,8.0,0.0,0.0],[1,0,4,6.0,0.195,0.0],[1,1,7,8.0,0.015,0.05],[1,4,3,7.0,0.005,0.0],[1,12,4,4.0,0.0,0.0],[1,12,8,4.0,0.25,0.0],[1,12,4,4.0,0.25,0.0],[1,4,2,9.0,0.0,0.05],[1,4,2,7.0,0.0,0.0],[1,4,3,7.0,0.0,0.0],[1,7,2,9.0,0.0,0.0],[1,7,2,9.0,0.0,0.0],[1,5,4,9.0,0.0,0.0],[1,0,4,10.0,0.0,0.0],[1,7,30,6.0,0.0,0.0],[1,7,4,8.0,0.125,0.0],[1,7,4,5.0,0.005,0.0],[1,7,35,7.0,0.0,0.0],[1,8,9,8.0,0.005,0.0],[1,7,9,8.0,0.13,0.0],[1,7,4,6.0,0.005,0.0],[1,7,15,6.0,0.165,0.0],[1,7,2,11.0,0.155,0.0],[1,8,2,7.0,0.01,0.0],[1,8,15,8.0,0.005,0.0],[1,7,3,12.0,0.135,0.0],[1,7,17,7.0,0.14,0.0],[1,3,2,9.0,0.01,0.0],[1,0,7,8.0,0.0,0.05],[1,0,1,8.0,0.0,0.0],[1,2,2,9.0,0.005,0.0],[1,7,2,6.0,0.165,0.0],[1,7,4,6.0,0.165,0.0],[1,0,1,7.0,0.01,0.05],[1,0,4,9.0,0.01,0.0],[1,0,2,7.0,0.01,0.0],[1,0,5,7.0,0.01,0.05],[1,2,2,8.0,0.01,0.0],[1,4,5,5.0,0.015,0.0],[1,2,5,18.0,0.005,0.15],[1,4,2,4.0,0.0,0.0],[1,3,2,8.0,0.005,0.25],[1,4,4,4.0,0.0,0.0],[1,2,2,4.0,0.0,0.0],[1,4,3,6.0,0.005,0.0],[1,2,2,4.0,0.0,0.0],[1,0,4,8.0,0.125,0.1],[1,0,5,6.0,0.16,0.0],[1,7,4,6.0,0.055,0.0],[1,0,7,5.0,0.0,0.0],[1,1,3,8.0,0.01,0.05],[1,0,3,9.0,0.0,0.0],[1,5,3,12.0,0.025,0.1],[1,10,3,6.0,0.165,0.0],[1,4,2,6.0,0.165,0.0],[1,2,3,8.0,0.005,0.0],[1,1,6,6.0,0.01,0.0],[1,4,6,7.0,0.0,0.0],[1,2,2,9.0,0.0,0.0],[1,10,9,6.0,0.005,0.05],[1,0,2,11.0,0.095,0.05],[1,7,4,6.0,0.0,0.05],[1,4,7,8.0,0.145,0.05],[1,4,5,4.0,0.225,0.0],[1,2,3,4.0,0.0,0.0],[1,0,3,8.0,0.125,0.1],[1,0,4,9.0,0.105,0.1],[1,4,2,7.0,0.145,0.0],[1,1,3,7.0,0.14,0.0],[1,2,4,8.0,0.005,0.0],[1,9,3,8.0,0.0,0.15],[1,4,15,5.0,0.0,0.0],[1,1,4,7.0,0.015,0.0],[1,4,3,6.0,0.16,0.1],[1,4,5,6.0,0.0,0.0],[1,4,15,6.0,0.0,0.0],[1,4,4,4.0,0.005,0.0],[1,10,3,9.0,0.115,0.0],[1,10,3,8.0,0.0,0.0],[1,10,3,7.0,0.0,0.0],[1,7,4,6.0,0.01,0.0],[1,4,2,9.0,0.01,0.0],[1,2,3,6.5,0.0,0.15],[1,0,7,6.0,0.005,0.05],[1,6,4,5.0,0.025,0.05],[1,1,3,5.0,0.01,0.1],[1,8,3,7.0,0.0,0.0],[1,4,5,5.0,0.2,0.0],[1,4,2,5.0,0.2,0.0],[1,14,2,6.0,0.015,0.1],[1,9,3,4.0,0.0,0.0],[1,7,5,10.0,0.115,0.15],[1,1,6,9.0,0.025,0.0],[1,3,2,7.0,0.29,0.0],[1,12,5,5.0,0.035,0.0],[1,3,3,5.0,0.0,0.05],[1,13,5,6.0,0.19,0.0],[1,14,5,6.0,0.165,0.1],[1,9,11,4.0,0.0,0.0],[1,14,6,5.0,0.0,0.0],[1,14,3,4.0,0.0,0.0],[1,4,4,6.0,0.0,0.0],[1,10,5,6.0,0.005,0.05],[1,1,3,6.0,0.015,0.05],[1,7,2,10.0,0.1,0.35],[1,7,2,9.0,0.11,0.0],[1,1,2,7.0,0.14,0.0],[1,1,2,7.0,0.14,0.0],[1,1,2,6.0,0.01,0.0],[1,1,18,6.0,0.0,0.0],[1,0,6,7.0,0.0,0.0],[1,1,5,8.0,0.0,0.2],[1,4,1,5.0,0.0,0.0],[1,4,2,5.0,0.03,0.05],[1,3,3,6.0,0.165,0.0],[1,1,5,7.0,0.015,0.2],[1,1,16,5.0,0.0,0.0],[1,0,5,6.0,0.0,0.0],[1,1,2,7.0,0.13,0.0],[1,1,10,9.0,0.045,0.05],[1,1,3,9.0,0.0,0.05],[1,2,2,5.0,0.0,0.0],[1,4,3,6.0,0.0,0.0],[1,0,3,6.0,0.0,0.05],[1,0,5,9.0,0.005,0.1],[1,1,7,9.0,0.0,0.1],[1,0,5,6.0,0.0,0.05],[1,1,4,8.0,0.03,0.05],[1,0,3,8.0,0.0,0.1],[1,1,8,6.0,0.0,0.0],[1,7,4,8.0,0.135,0.0],[1,7,15,5.0,0.195,0.0],[1,0,7,10.0,0.0,0.15],[1,1,3,8.0,0.0,0.05],[1,1,5,7.0,0.0,0.1],[1,10,2,5.0,0.005,0.05],[1,4,7,5.0,0.1,0.05],[1,1,3,4.0,0.025,0.05],[1,2,7,7.0,0.0,0.0],[1,2,2,8.0,0.27,0.0],[1,14,4,6.0,0.005,0.05],[1,14,7,6.0,0.015,0.0],[1,6,5,6.0,0.02,0.05],[1,6,2,6.0,0.0,0.0],[1,5,2,11.0,0.02,0.05],[1,3,3,8.0,0.12,0.4],[1,0,9,6.0,0.19,0.05],[1,2,4,10.0,0.055,0.05],[1,4,19,6.0,0.0,0.0],[1,2,7,8.0,0.01,0.0],[1,2,3,6.0,0.005,0.0],[1,0,3,5.0,0.055,0.0],[1,4,2,8.0,0.0,0.0],[1,2,2,8.0,0.0,0.0],[1,7,2,10.0,0.005,0.3],[1,2,4,11.0,0.01,0.05],[1,4,4,5.0,0.04,0.0],[1,3,3,5.0,0.0,0.0],[1,3,6,4.0,0.005,0.0],[1,0,5,5.0,0.005,0.1],[1,4,5,9.0,0.005,0.05],[1,2,2,6.0,0.0,0.0],[1,8,3,13.0,0.015,0.05],[1,1,3,7.0,0.02,0.0],[1,4,2,7.0,0.0,0.05],[1,0,8,7.0,0.0,0.05],[1,2,3,14.0,0.005,0.0],[1,4,5,7.0,0.0,0.0],[1,4,4,7.0,0.0,0.0],[1,0,4,5.0,0.005,0.0],[1,5,4,9.0,0.005,0.05],[1,10,3,7.0,0.0,0.0],[1,4,4,7.0,0.0,0.0],[1,2,2,14.0,0.0,0.0],[1,1,5,8.0,0.005,0.0],[1,2,3,10.0,0.0,0.05],[1,3,1,7.0,0.0,0.0],[1,1,2,10.0,0.12,0.05],[1,1,3,8.0,0.245,0.0],[1,7,11,5.0,0.385,0.0],[1,4,2,4.0,0.0,0.0],[1,1,3,12.0,0.085,0.0],[1,7,6,11.0,0.09,0.0],[1,4,3,8.0,0.0,0.05],[1,2,4,11.0,0.015,0.05],[1,7,2,5.0,0.0,0.0],[1,4,2,7.0,0.145,0.05],[1,4,3,8.0,0.01,0.1],[1,4,2,5.0,0.2,0.0],[1,10,8,5.0,0.235,0.0],[1,4,7,7.0,0.14,0.0],[1,0,5,6.0,0.155,0.0],[1,0,5,6.0,0.185,0.05],[1,0,10,6.0,0.145,0.0],[1,0,6,7.0,0.145,0.0],[1,0,11,6.0,0.165,0.0],[1,0,3,9.0,0.0,0.0],[1,0,3,18.0,0.025,0.05],[1,0,6,6.0,0.0,0.0],[1,0,15,6.0,0.0,0.0],[1,0,13,7.0,0.0,0.1],[1,1,5,8.0,0.0,0.05],[1,0,3,9.5,0.0,0.1],[1,0,4,8.0,0.0,0.1],[1,1,2,9.0,0.0,0.15],[1,10,15,5.0,0.0,0.0],[1,1,3,11.0,0.005,0.05],[1,4,5,4.0,0.01,0.0],[1,1,2,5.0,0.0,0.0],[1,2,4,10.0,0.005,0.0],[1,4,5,7.0,0.0,0.0],[1,2,4,11.0,0.005,0.0],[1,2,5,16.0,0.0,0.0],[1,2,4,13.0,0.005,0.05],[1,5,8,6.0,0.015,0.0],[1,5,10,8.0,0.015,0.05],[1,2,5,11.0,0.005,0.0],[1,1,4,8.0,0.0,0.2],[1,5,5,8.0,0.13,0.05],[1,5,3,7.0,0.14,0.0],[1,0,3,17.0,0.095,0.2],[1,1,4,6.0,0.0,0.0],[1,2,7,7.0,0.005,0.0],[1,1,5,6.0,0.02,0.05],[1,1,3,11.0,0.005,0.0],[1,5,2,7.0,0.01,0.0],[1,2,3,7.0,0.005,0.05],[1,6,7,4.0,0.0,0.0],[1,6,2,4.0,0.0,0.0],[1,3,4,8.0,0.0,0.0],[1,2,5,15.0,0.005,0.2],[1,3,5,8.0,0.01,0.0],[1,9,3,6.0,0.0,0.15],[1,0,5,5.0,0.0,0.0],[1,4,2,5.0,0.015,0.0],[1,0,7,5.0,0.0,0.1],[1,0,5,5.0,0.0,0.1],[1,0,6,5.0,0.0,0.0],[1,0,11,4.0,0.0,0.0],[1,0,4,8.0,0.0,0.05],[1,7,5,5.0,0.01,0.0],[1,5,7,7.0,0.02,0.0],[1,5,3,6.0,0.0,0.0],[1,2,4,10.0,0.0,0.05],[1,4,4,4.0,0.075,0.05],[1,4,2,4.0,0.0,0.0],[1,4,4,7.0,0.0,0.0],[1,7,5,7.0,0.14,0.0],[1,7,4,7.0,0.14,0.0],[1,7,5,7.0,0.15,0.05],[1,1,5,8.0,0.015,0.0],[1,4,5,5.0,0.015,0.0],[1,1,3,5.0,0.0,0.0],[1,4,4,5.0,0.0,0.0],[1,3,16,8.0,0.01,0.0],[1,7,5,8.0,0.005,0.15],[1,1,4,7.0,0.01,0.0],[1,3,4,7.0,0.14,0.0],[1,4,5,5.0,0.2,0.0],[1,1,5,8.0,0.125,0.05],[1,4,6,6.0,0.16,0.1],[1,1,2,7.0,0.14,0.1],[1,3,3,9.0,0.115,0.0],[1,3,3,8.0,0.09,0.0],[1,1,4,7.0,0.0,0.0],[1,1,6,8.0,0.0,0.0],[1,0,6,9.0,0.0,0.05],[1,7,8,11.0,0.005,0.2],[1,0,20,7.0,0.0,0.0],[1,0,3,7.0,0.0,0.0],[1,1,5,9.0,0.0,0.05],[1,0,11,8.0,0.0,0.1],[1,0,3,8.0,0.0,0.1],[1,1,4,10.0,0.0,0.1],[1,0,4,9.0,0.0,0.05],[1,0,3,10.0,0.0,0.2],[1,2,3,5.0,0.025,0.05],[1,3,5,4.0,0.0,0.0],[1,4,2,4.0,0.0,0.0],[1,1,2,10.0,0.0,0.45],[1,4,3,7.0,0.0,0.0],[1,4,13,5.0,0.03,0.15],[1,14,4,6.0,0.16,0.05],[1,4,11,4.0,0.0,0.0],[1,4,63,4.0,0.0,0.0],[1,4,17,5.0,0.185,0.0],[1,4,6,6.0,0.0,0.0],[1,5,1,4.0,0.0,0.05],[1,4,2,7.0,0.115,0.0],[1,5,3,5.0,0.0,0.0],[1,1,3,8.0,0.015,0.05],[1,5,4,6.0,0.0,0.0],[1,1,9,5.0,0.02,0.0],[1,4,2,6.0,0.035,0.05],[1,5,5,6.0,0.015,0.0],[1,4,1,4.0,0.0,0.0],[1,3,8,7.0,0.1,0.0],[1,3,2,8.0,0.005,0.0],[1,0,2,6.0,0.0,0.0],[1,3,7,5.0,0.0,0.0],[1,5,3,5.0,0.0,0.0],[1,5,2,4.0,0.0,0.05],[1,5,6,5.0,0.0,0.0],[1,5,4,4.0,0.0,0.0],[1,3,2,4.0,0.0,0.0],[1,5,5,4.0,0.0,0.0],[1,5,26,4.0,0.0,0.0],[1,5,1,4.0,0.0,0.0],[1,1,7,8.0,0.005,0.0],[1,5,15,6.0,0.015,0.0],[1,4,5,4.0,0.01,0.0],[1,2,2,6.0,0.14,0.0],[1,4,3,5.0,0.015,0.0],[1,4,4,5.0,0.0,0.0],[1,5,9,5.0,0.04,0.1],[1,1,10,9.0,0.0,0.0],[1,5,4,8.0,0.0,0.05],[1,4,3,10.0,0.005,0.05],[1,1,8,5.0,0.0,0.05],[1,5,7,4.0,0.245,0.05],[1,2,4,7.0,0.0,0.0],[1,2,5,5.0,0.0,0.05],[1,12,5,6.0,0.045,0.2],[1,3,8,8.0,0.0,0.0],[1,4,11,4.0,0.0,0.0],[1,1,3,7.0,0.0,0.0],[1,2,3,9.0,0.13,0.0],[1,5,4,4.0,0.0,0.0],[1,5,3,5.0,0.0,0.0],[1,5,3,6.0,0.0,0.0],[1,2,2,4.0,0.0,0.05],[1,4,3,6.0,0.0,0.05],[1,5,3,5.0,0.0,0.05],[1,4,7,7.0,0.0,0.0],[1,4,6,5.0,0.0,0.0],[1,4,4,6.0,0.16,0.0],[1,1,8,10.0,0.0,0.25],[1,5,2,5.0,0.0,0.0],[1,2,8,4.0,0.0,0.0],[1,4,7,5.0,0.2,0.0],[1,4,9,5.0,0.2,0.0],[1,7,9,5.0,0.0,0.0],[1,4,8,6.0,0.0,0.0],[1,4,9,7.0,0.0,0.0],[1,2,4,6.0,0.0,0.0],[1,2,7,5.0,0.0,0.0],[1,5,4,4.0,0.0,0.0],[1,4,3,4.0,0.0,0.05],[1,4,5,5.0,0.205,0.0],[1,0,4,6.0,0.0,0.0],[1,4,3,5.0,0.0,0.15],[1,5,6,6.0,0.0,0.0],[1,5,3,5.0,0.2,0.0],[1,5,2,5.0,0.2,0.0],[1,4,4,8.0,0.0,0.0],[1,0,6,4.0,0.0,0.0],[1,2,3,11.0,0.005,0.05],[1,4,4,4.0,0.0,0.0],[1,5,3,4.0,0.0,0.0],[1,5,2,4.0,0.0,0.0],[1,5,8,4.0,0.0,0.0],[1,5,4,4.0,0.0,0.0],[1,5,4,4.0,0.0,0.0],[1,5,4,5.0,0.19,0.0],[1,5,5,6.0,0.16,0.0],[1,0,6,5.0,0.0,0.0],[1,0,31,4.0,0.0,0.0],[1,0,10,4.0,0.0,0.0],[1,2,4,11.0,0.015,0.0],[1,2,6,7.0,0.0,0.0],[1,5,8,5.0,0.0,0.0],[1,2,5,5.0,0.0,0.0],[1,5,2,7.0,0.0,0.0],[1,4,8,5.0,0.0,0.0],[1,4,2,5.0,0.0,0.0],[1,5,3,6.0,0.0,0.0],[1,4,2,4.0,0.0,0.0],[1,4,3,4.0,0.0,0.0],[1,5,5,5.0,0.0,0.0],[1,4,2,6.0,0.0,0.0],[1,5,10,5.0,0.0,0.0],[1,2,4,6.0,0.165,0.0],[1,5,3,6.0,0.0,0.0],[1,5,11,5.0,0.0,0.0],[1,1,3,6.0,0.0,0.0],[1,4,3,6.0,0.0,0.15],[1,2,3,4.0,0.0,0.1],[1,1,9,8.0,0.08,0.1],[1,4,3,5.0,0.22,0.0],[1,4,6,7.0,0.0,0.0],[1,2,5,10.0,0.015,0.0],[1,2,3,12.0,0.02,0.1],[1,5,5,4.0,0.0,0.0],[1,5,4,4.0,0.0,0.0],[1,4,3,6.0,0.0,0.0],[1,4,2,4.0,0.0,0.0],[1,5,8,5.0,0.0,0.0],[1,2,5,6.0,0.0,0.0],[1,7,4,6.0,0.31,0.0],[1,13,9,6.0,0.0,0.0],[1,5,4,6.0,0.005,0.0],[1,4,5,6.0,0.0,0.0],[1,5,7,4.0,0.0,0.0],[1,5,5,4.0,0.0,0.0],[1,4,10,4.0,0.0,0.0],[1,4,4,4.0,0.0,0.0],[1,4,7,4.0,0.0,0.0],[1,5,5,4.0,0.0,0.0],[1,5,4,4.0,0.0,0.0],[1,4,1,4.0,0.0,0.0],[1,4,5,4.0,0.0,0.0],[1,4,4,4.0,0.0,0.0],[1,4,5,4.0,0.0,0.0],[1,4,8,6.0,0.0,0.0],[1,13,4,5.0,0.0,0.05],[1,13,4,4.0,0.0,0.0],[1,13,3,4.0,0.0,0.0],[1,4,1,4.0,0.0,0.0],[1,4,2,4.0,0.0,0.0],[1,4,7,4.0,0.0,0.0],[1,4,6,5.0,0.0,0.0],[1,4,6,12.0,0.0,0.0],[1,4,9,4.0,0.0,0.0],[1,4,3,6.0,0.0,0.0],[1,5,12,4.0,0.0,0.0],[1,4,3,6.0,0.0,0.0],[1,4,4,4.0,0.0,0.2],[1,4,5,5.0,0.0,0.0],[1,4,6,7.0,0.0,0.0],[1,1,2,8.0,0.0,0.1],[1,3,2,7.0,0.0,0.05],[1,0,3,9.0,0.115,0.05],[1,3,6,8.0,0.03,0.05],[1,0,2,11.0,0.025,0.0],[1,5,8,7.0,0.015,0.05],[1,5,3,6.0,0.0,0.0],[1,3,3,4.0,0.0,0.0],[1,2,2,15.0,0.005,0.0],[1,2,6,9.0,0.01,0.0],[1,7,5,8.0,0.0,0.0],[1,7,5,8.0,0.0,0.0],[1,1,3,12.5,0.075,0.3],[1,9,4,7.0,0.0,0.15],[1,1,3,13.0,0.005,0.15],[1,0,3,6.0,0.165,0.0],[1,0,5,7.0,0.0,0.1],[1,8,4,5.0,0.0,0.0],[1,0,17,6.0,0.0,0.0],[1,0,24,5.0,0.0,0.0],[1,2,3,10.0,0.125,0.05],[1,4,7,5.0,0.0,0.0],[1,1,3,8.0,0.125,0.0],[1,7,2,8.0,0.125,0.0],[1,3,2,8.0,0.005,0.0],[1,4,6,7.0,0.13,0.35],[1,2,4,10.0,0.0,0.05],[1,2,5,9.0,0.0,0.0],[1,1,4,9.0,0.045,0.05],[1,4,3,7.0,0.0,0.0],[1,2,14,5.0,0.0,0.0],[1,3,4,9.0,0.0,0.0],[1,4,2,11.0,0.0,0.45],[1,3,3,9.0,0.0,0.0],[1,3,17,6.0,0.0,0.0],[1,3,15,5.0,0.0,0.0],[1,0,4,8.0,0.125,0.05],[1,1,12,14.0,0.0,0.4],[1,3,6,9.0,0.005,0.0],[1,2,5,12.0,0.005,0.0],[1,3,9,8.0,0.0,0.05],[1,3,8,6.0,0.0,0.0],[1,3,5,10.0,0.0,0.05],[1,3,4,8.0,0.0,0.0],[1,4,5,10.0,0.0,0.4],[1,4,5,10.0,0.1,0.3],[1,3,2,7.0,0.0,0.0],[1,2,6,10.0,0.0,0.0],[1,3,2,10.0,0.005,0.3],[1,3,3,10.0,0.0,0.4],[1,3,9,9.0,0.0,0.05],[1,3,8,7.0,0.0,0.0],[1,3,16,12.0,0.0,0.4],[1,1,17,11.0,0.0,0.45],[1,12,6,11.0,0.01,0.4],[1,1,7,12.0,0.0,0.45],[1,3,6,8.0,0.0,1.0],[1,3,6,8.0,0.0,0.0],[1,3,7,9.0,0.0,1.0],[1,3,6,9.0,0.0,0.0],[1,2,16,7.0,0.01,0.0],[1,4,8,4.0,0.24,0.0],[1,0,4,5.0,0.23,0.0],[1,3,24,13.0,0.0,0.4],[1,3,10,12.0,0.005,0.0],[1,2,12,10.0,0.0,0.0],[1,3,11,8.0,0.0,0.0],[1,2,3,13.0,0.0,0.35],[1,2,12,18.0,0.02,0.1],[1,4,25,4.0,0.0,0.0],[1,4,2,4.0,0.0,0.0],[1,9,3,5.0,0.0,0.0],[1,0,7,9.0,0.005,0.25],[1,1,4,10.0,0.02,0.0],[1,0,4,6.0,0.0,0.0],[1,1,3,8.0,0.015,0.05],[1,4,4,4.0,0.0,0.0],[1,3,4,4.0,0.0,0.05],[1,1,5,8.0,0.115,0.4],[1,4,6,5.0,0.0,0.0],[1,4,5,6.0,0.02,0.0],[1,12,5,6.0,0.025,0.0],[1,2,3,11.0,0.0,0.0],[1,2,2,10.0,0.0,0.0],[1,2,2,11.0,0.0,0.0],[1,2,6,11.0,0.0,0.05],[1,3,3,5.0,0.0,0.0],[1,2,3,8.0,0.0,0.0],[1,2,4,7.0,0.0,0.0],[1,1,2,6.0,0.0,0.0],[1,3,5,9.0,0.105,0.4],[1,14,8,7.0,0.145,0.1],[1,6,6,6.0,0.0,0.0],[1,4,8,5.0,0.0,0.0],[1,11,12,5.0,0.0,0.0],[1,14,8,6.0,0.0,0.0],[1,14,4,5.0,0.0,0.0],[1,1,4,13.0,0.0,0.15],[1,1,4,8.0,0.005,0.05],[1,3,9,5.0,0.0,0.05],[1,3,2,7.0,0.005,0.45],[1,1,3,5.0,0.0,0.05],[1,4,3,5.0,0.0,0.0],[1,4,5,6.0,0.0,0.0],[1,4,4,6.0,0.0,0.0],[1,9,4,9.0,0.0,0.15],[1,4,20,7.0,0.0,0.0],[1,2,5,11.0,0.05,0.05],[1,4,2,6.0,0.0,0.1],[1,3,5,7.0,0.0,0.0],[1,4,4,5.0,0.0,0.0],[1,3,8,12.0,0.0,0.0],[1,7,16,6.0,0.0,0.0],[1,4,5,9.0,0.0,0.0],[1,4,4,5.0,0.0,0.0],[1,3,7,9.0,0.0,0.0],[1,3,5,7.0,0.0,0.0],[1,1,7,7.0,0.0,0.0],[1,1,9,9.0,0.025,0.5],[1,4,4,8.0,0.0,0.45],[1,3,7,5.0,0.0,0.0],[1,4,16,4.0,0.0,0.0],[1,4,9,4.0,0.0,0.2],[1,2,10,5.0,0.0,0.05],[1,2,9,12.0,0.03,0.1],[1,3,6,6.0,0.0,0.0],[1,3,6,6.0,0.0,0.0],[1,4,8,6.0,0.0,0.0],[1,1,4,8.0,0.015,0.0],[1,3,11,9.0,0.0,0.0],[1,3,8,7.0,0.0,0.0],[1,6,3,7.0,0.0,0.15],[1,6,2,7.0,0.01,0.0],[1,4,7,4.0,0.25,0.05],[1,3,7,9.0,0.0,0.6],[1,3,4,4.0,0.0,0.0],[1,3,7,12.0,0.0,0.35],[1,3,2,4.0,0.0,0.0],[1,5,8,5.0,0.0,0.0],[1,4,2,7.0,0.025,0.35],[1,4,4,5.0,0.0,1.0],[1,4,8,5.0,0.0,0.0],[1,3,5,6.0,0.015,0.3],[1,3,5,9.0,0.0,0.4],[1,1,6,9.0,0.0,0.3],[1,3,4,9.0,0.0,1.0],[1,3,10,10.0,0.005,0.45],[1,12,8,10.0,0.05,0.25],[1,1,27,15.0,0.0,0.45],[1,4,36,6.0,0.0,1.0],[1,4,28,6.0,0.0,0.0],[1,4,12,10.0,0.0,0.45],[1,3,8,6.0,0.0,0.0],[1,3,22,13.0,0.0,0.75],[1,4,6,5.0,0.0,0.45],[1,3,13,5.0,0.0,0.8],[1,3,5,4.0,0.0,0.65],[1,5,6,6.0,0.025,0.0],[1,5,2,5.0,0.0,0.0],[1,0,6,7.0,0.0,0.0],[1,0,6,8.0,0.005,0.0],[1,2,25,9.0,0.0,0.25],[1,3,10,8.0,0.0,0.3],[1,3,8,7.0,0.0,0.0],[1,3,12,7.0,0.0,1.0],[1,4,3,7.0,0.0,0.0],[1,4,8,7.0,0.0,0.05],[1,4,4,6.0,0.0,0.05],[1,0,3,9.0,0.105,0.05],[1,1,6,5.0,0.0,0.0],[1,0,3,7.0,0.0,0.1],[1,2,3,7.0,0.14,0.0],[1,4,4,7.0,0.14,0.0],[1,4,3,6.0,0.025,0.0],[1,4,10,5.0,0.0,0.0],[1,4,6,5.0,0.0,0.0],[1,4,10,5.0,0.0,0.0],[1,0,6,9.0,0.005,0.0],[1,4,3,7.0,0.0,0.1],[1,9,7,7.0,0.13,0.15],[1,0,3,9.0,0.11,0.0],[1,0,13,5.0,0.0,0.1],[1,1,8,5.0,0.015,0.05],[1,1,7,8.0,0.0,0.0],[1,6,4,8.0,0.0,0.05],[1,1,3,6.0,0.005,0.0],[1,1,6,8.0,0.145,0.0],[1,1,6,8.0,0.025,0.05],[1,3,3,6.0,0.165,0.0],[1,4,2,6.0,0.165,0.0],[1,4,2,8.0,0.13,0.05],[1,4,3,7.0,0.155,0.0],[1,7,2,7.0,0.0,0.0],[1,7,2,7.0,0.0,0.0],[1,2,10,6.0,0.12,0.1],[1,1,5,7.0,0.165,0.15],[1,2,3,11.0,0.04,0.05],[1,0,6,12.0,0.005,0.05],[1,2,4,9.0,0.015,0.05],[1,2,5,8.0,0.0,0.05],[1,4,3,7.0,0.0,0.0],[1,0,8,17.0,0.065,0.05],[1,2,3,16.0,0.005,0.0],[1,5,5,8.0,0.025,0.1],[1,5,2,7.0,0.0,0.0],[1,2,4,7.0,0.02,0.05],[1,5,1,6.0,0.0,0.0],[1,11,11,6.0,0.005,0.0],[1,2,7,11.0,0.0,0.0],[1,2,6,13.0,0.0,0.0],[1,4,2,7.0,0.0,0.0],[1,4,20,4.0,0.005,0.0],[1,1,3,11.0,0.015,0.0],[1,1,3,10.0,0.005,0.0],[1,1,6,8.0,0.035,0.05],[1,0,5,9.0,0.005,0.0],[1,2,7,4.0,0.0,0.0],[1,4,4,6.0,0.375,0.0],[1,1,13,5.0,0.4,0.0],[1,2,3,12.0,0.0,0.05],[1,6,2,6.0,0.165,0.0],[1,2,5,11.0,0.095,0.05],[1,2,4,7.0,0.14,0.0],[1,2,6,12.0,0.095,0.05],[1,0,11,8.0,0.0,0.0],[1,0,4,6.0,0.155,0.0],[1,5,5,13.0,0.035,0.1],[1,5,8,14.0,0.045,0.15],[1,1,4,6.0,0.165,0.0],[1,2,5,6.0,0.155,0.0],[1,3,2,4.0,0.0,0.0],[1,3,3,4.0,0.0,0.0],[1,1,5,6.0,0.175,0.15],[1,4,4,6.0,0.17,0.15],[1,2,8,4.0,0.0,0.0],[1,1,14,4.0,0.23,0.0],[1,1,10,4.0,0.235,0.0],[1,1,5,6.0,0.01,0.05],[1,2,4,8.0,0.11,0.05],[1,2,6,10.0,0.015,0.05],[1,4,2,10.0,0.005,0.0],[1,4,2,10.0,0.105,0.05],[1,2,5,9.0,0.0,0.1],[1,2,4,8.0,0.0,0.0],[1,10,9,6.0,0.0,1.0],[1,10,5,6.0,0.0,0.0],[1,0,8,7.0,0.0,0.0],[1,2,3,12.0,0.005,0.0],[1,5,5,5.0,0.0,0.0],[1,5,2,5.0,0.0,0.0],[1,2,8,9.0,0.0,0.1],[1,0,4,4.0,0.0,0.05],[1,2,6,12.0,0.025,0.1],[1,7,10,10.0,0.105,0.1],[1,13,7,6.0,0.025,0.05],[1,1,9,14.0,0.095,0.1],[1,7,8,12.0,0.015,0.15],[1,7,10,10.0,0.005,0.15],[1,2,9,5.0,0.01,0.05],[1,3,7,8.0,0.115,0.05],[1,1,8,7.0,0.0,0.0],[1,1,2,18.0,0.02,0.0],[1,0,12,8.0,0.005,0.0],[1,2,3,14.0,0.075,0.05],[1,1,4,11.0,0.0,0.05],[1,1,3,10.0,0.0,0.05],[1,0,7,9.0,0.0,0.05],[1,4,11,13.0,0.095,0.05],[1,2,5,8.0,0.0,0.05],[1,2,16,6.0,0.0,0.05],[1,2,19,5.0,0.0,0.0],[1,2,22,7.0,0.0,0.05],[1,2,9,14.0,0.09,0.05],[1,2,5,10.0,0.0,0.1],[1,1,4,7.0,0.01,0.0],[1,0,3,7.0,0.0,0.0],[1,0,10,9.0,0.0,0.05],[1,2,3,10.0,0.01,0.0],[1,2,4,7.0,0.135,0.0],[1,2,2,5.0,0.195,0.0],[1,1,4,19.0,0.015,0.05],[1,4,2,7.0,0.145,0.0],[1,2,4,12.0,0.0,0.05],[1,4,6,4.0,0.0,0.0],[1,2,4,13.0,0.005,0.05],[1,2,3,13.0,0.0,0.05],[1,2,6,12.0,0.0,0.0],[1,2,3,10.0,0.0,0.0],[1,2,5,9.0,0.0,0.0],[1,2,3,9.0,0.0,0.0],[1,2,8,6.0,0.0,0.0],[1,2,5,7.0,0.0,0.0],[1,2,5,8.0,0.0,0.0],[1,2,7,10.0,0.0,0.0],[1,1,18,18.0,0.0,0.25],[1,2,5,12.0,0.005,0.0],[1,2,3,13.0,0.005,0.0],[1,2,3,14.0,0.0,0.05],[1,0,3,8.0,0.135,0.0],[1,4,1,6.0,0.0,0.0],[1,2,6,10.0,0.01,0.05],[1,2,3,12.0,0.01,0.05],[1,2,7,15.0,0.01,0.05],[1,2,4,15.0,0.0,0.05],[1,4,9,5.0,0.0,0.0],[1,4,22,5.0,0.0,0.0],[1,2,9,10.0,0.005,0.05],[1,1,6,8.0,0.13,0.0],[1,2,5,6.0,0.14,0.05],[1,1,6,5.0,0.225,0.3],[1,5,11,6.0,0.015,0.05],[1,2,11,12.0,0.02,0.1],[1,13,6,6.0,0.0,0.1],[1,5,11,7.0,0.185,0.05],[1,2,5,9.0,0.11,0.0],[1,5,4,5.0,0.01,0.0],[1,4,10,5.0,0.005,0.0],[1,0,6,8.0,0.0,0.05],[1,3,4,9.0,0.11,0.1],[1,4,5,5.0,0.3,0.05],[1,2,4,14.0,0.005,0.05],[1,2,7,5.0,0.0,0.15],[1,2,5,4.0,0.0,0.0],[1,2,4,6.0,0.0,0.0],[1,1,9,5.0,0.2,0.0],[1,2,4,11.0,0.0,0.0],[1,1,3,9.0,0.11,0.0],[1,7,3,7.0,0.285,0.0],[1,7,3,7.0,0.28,0.0],[1,8,7,9.0,0.03,0.05],[1,1,6,8.0,0.13,0.0],[1,7,12,5.0,0.0,0.0],[1,2,3,8.0,0.0,0.0],[1,2,8,5.0,0.0,0.0],[1,2,4,11.0,0.0,0.0],[1,2,4,8.0,0.0,0.0],[1,2,5,8.0,0.0,0.0],[1,0,8,4.0,0.22,0.0],[1,2,5,9.0,0.0,0.05],[1,2,5,6.0,0.0,0.0],[1,1,6,9.0,0.0,0.0],[1,2,4,7.0,0.0,0.0],[1,1,8,7.0,0.0,0.0],[1,2,10,13.0,0.0,0.05],[1,1,4,9.0,0.0,0.0],[1,2,3,8.0,0.0,0.0],[1,2,6,13.0,0.0,0.05],[1,1,94,8.0,0.055,0.1],[1,7,5,5.0,0.01,0.0],[1,2,2,10.0,0.0,0.05],[1,2,3,10.0,0.0,0.0],[1,7,6,6.0,0.205,0.0],[1,2,4,11.0,0.0,0.0],[1,2,4,11.0,0.0,0.0],[1,2,2,5.0,0.0,0.0],[1,7,3,5.0,0.2,0.0],[1,1,10,10.0,0.0,0.0],[1,2,4,9.0,0.0,0.0],[1,8,15,7.0,0.04,0.0],[1,4,6,6.0,0.0,0.0],[1,7,5,4.0,0.0,0.0],[1,8,5,6.0,0.02,0.1],[1,7,2,5.0,0.19,0.0],[1,10,4,5.0,0.05,0.0],[1,8,3,14.0,0.11,0.0],[1,7,7,8.0,0.125,0.0],[1,7,4,8.0,0.125,0.0],[1,4,5,7.0,0.17,0.0],[1,7,2,5.0,0.2,0.0],[1,2,5,6.0,0.0,0.1],[1,7,4,10.0,0.04,0.0],[1,7,4,7.0,0.0,0.0],[1,4,5,7.0,0.0,0.0],[1,7,2,5.0,0.2,0.0],[1,1,1,5.0,0.2,0.0],[1,7,2,5.0,0.0,0.0],[1,10,2,4.0,0.0,0.1],[1,10,3,6.0,0.0,0.05],[1,7,3,5.0,0.0,0.0],[1,7,2,5.0,0.0,0.0],[1,4,5,6.0,0.0,0.0],[1,6,2,6.0,0.0,0.0],[1,0,3,7.0,0.0,0.0],[1,14,6,4.0,0.245,0.0],[1,10,10,5.0,0.0,0.1],[1,4,4,4.0,0.0,0.05],[1,0,2,9.0,0.0,0.0],[1,7,4,10.0,0.1,0.0],[1,4,3,6.0,0.05,0.0],[1,7,6,8.0,0.245,0.0],[1,8,2,9.0,0.19,0.0],[1,8,9,4.0,0.25,0.0],[1,8,13,4.0,0.25,0.0],[1,8,4,4.0,0.25,1.0],[1,4,4,5.0,0.225,0.0],[1,8,21,4.0,0.0,1.0],[1,8,24,4.0,0.0,0.0],[1,8,12,4.0,0.0,0.0],[1,6,7,11.0,0.005,0.0],[1,1,6,10.0,0.015,0.0],[1,1,13,13.0,0.015,0.05],[1,10,9,5.0,0.0,0.0],[1,10,10,4.0,0.0,0.05],[1,1,4,9.0,0.0,0.0],[1,2,7,6.0,0.0,0.0],[1,14,16,5.0,0.0,0.0],[1,1,11,12.0,0.005,0.05],[1,2,10,12.0,0.0,0.05],[1,5,8,8.0,0.015,0.0],[1,5,17,8.0,0.025,0.05],[1,2,5,8.0,0.0,0.05],[1,2,7,9.0,0.0,0.0],[1,7,11,7.0,0.005,0.25],[1,7,12,7.0,0.135,0.05],[1,7,16,8.5,0.12,0.1],[1,7,12,8.0,0.01,0.15],[1,0,3,9.0,0.0,0.0],[1,4,21,4.0,0.0,0.0],[1,2,17,7.0,0.005,0.1],[1,2,3,6.0,0.0,0.0],[1,2,12,8.0,0.0,0.0],[1,2,7,10.0,0.025,0.0],[1,2,10,5.0,0.0,0.05],[1,2,18,17.0,0.115,0.3],[1,2,4,9.0,0.0,0.0],[1,2,4,5.0,0.0,0.0],[1,0,8,5.0,0.015,0.0],[1,2,8,6.0,0.0,0.0],[1,2,5,7.0,0.0,0.1],[1,2,4,6.0,0.0,0.0],[1,2,2,5.0,0.0,0.05],[1,2,5,6.0,0.0,0.05],[1,2,15,9.0,0.0,0.05],[1,2,3,7.0,0.135,0.05],[1,0,3,6.0,0.0,0.05],[1,1,4,6.0,0.0,0.0],[1,0,4,7.0,0.005,0.15],[1,0,3,5.0,0.0,0.0],[1,4,5,4.0,0.0,0.0],[1,2,6,12.0,0.13,0.05],[1,2,3,6.0,0.0,0.0],[1,4,5,5.0,0.0,0.05],[1,2,9,9.0,0.12,0.05],[1,2,4,6.0,0.005,0.05],[1,0,6,6.0,0.0,0.0],[1,0,8,5.0,0.0,0.0],[1,1,7,4.0,0.005,0.45],[1,2,7,4.0,0.0,0.0],[1,2,2,6.0,0.0,0.0],[1,2,11,4.0,0.0,0.05],[1,5,3,6.0,0.165,0.0],[1,2,6,7.0,0.0,0.05],[1,4,6,6.0,0.0,0.0],[1,2,2,5.0,0.0,0.0],[1,4,2,4.0,0.0,0.05],[1,0,10,5.0,0.0,0.0],[1,0,8,6.0,0.0,0.0],[1,4,4,5.0,0.0,0.0],[1,2,11,4.0,0.0,0.05],[1,0,4,4.0,0.245,0.0],[1,2,5,7.0,0.0,0.0],[1,2,6,5.0,0.0,0.0],[1,2,4,5.0,0.0,0.0],[1,14,12,8.0,0.245,0.35],[1,2,6,12.0,0.105,0.0],[1,2,4,8.0,0.12,0.0],[1,2,2,5.0,0.0,0.0],[1,4,3,8.0,0.005,0.0],[1,4,4,7.0,0.0,0.0],[1,4,7,6.0,0.0,0.0],[1,4,4,9.0,0.125,0.1],[1,2,7,7.0,0.0,0.0],[1,2,4,7.0,0.0,0.0],[1,2,2,5.0,0.0,0.0],[1,2,4,7.0,0.0,0.0],[1,11,3,11.0,0.04,0.05],[1,4,8,5.0,0.01,0.0],[1,0,8,16.0,0.1,0.05],[1,14,7,5.0,0.19,0.0],[1,2,8,8.0,0.0,0.0],[1,2,8,8.0,0.0,0.0],[1,2,18,11.0,0.0,0.05],[1,1,6,4.0,0.245,0.0],[1,2,4,7.0,0.0,0.0],[1,2,5,6.0,0.0,0.0],[1,4,3,4.0,0.0,0.0],[1,4,7,4.0,0.0,1.0],[1,4,9,4.0,0.0,0.0],[1,1,9,12.0,0.0,0.3],[1,4,6,5.0,0.205,0.0],[1,4,3,4.0,0.25,0.0],[1,4,4,4.0,0.25,0.0],[1,4,4,4.0,0.25,0.0],[1,4,10,4.0,0.25,0.0],[1,1,6,9.0,0.005,0.0],[1,14,4,4.0,0.25,0.0],[1,14,11,6.0,0.165,0.0],[1,14,13,6.0,0.165,0.0],[1,3,5,4.0,0.0,0.0],[1,1,3,5.0,0.0,0.15],[1,1,5,6.0,0.005,0.1],[1,1,6,8.0,0.005,0.05],[1,1,4,6.0,0.0,0.0],[1,5,3,5.0,0.0,0.0],[1,1,24,5.0,0.0,0.0],[1,4,6,4.0,0.0,0.0],[1,4,3,4.0,0.0,0.0],[1,3,2,7.0,0.005,0.0],[1,3,4,11.0,0.0,0.3],[1,9,7,7.0,0.005,0.05],[1,6,2,5.0,0.0,0.0],[1,6,3,6.0,0.0,0.0],[1,1,3,9.0,0.0,0.05],[1,1,11,6.0,0.005,0.0],[1,3,6,6.0,0.155,0.0],[1,4,6,5.0,0.03,0.0],[1,1,6,5.0,0.195,0.0],[1,5,10,11.0,0.025,0.1],[1,1,51,5.0,0.0,0.0],[1,8,11,15.0,0.085,0.1],[1,5,6,6.0,0.0,0.0],[1,4,4,4.0,0.0,0.0],[1,4,2,5.0,0.0,0.0],[1,6,12,5.0,0.0,0.0],[1,1,3,7.0,0.02,0.0],[1,4,3,5.0,0.0,0.0],[1,4,3,7.0,0.0,0.0],[1,10,6,19.0,0.01,0.05],[1,3,4,4.0,0.0,0.05],[1,0,5,13.0,0.035,0.0],[1,3,5,7.0,0.01,0.0],[1,12,5,5.0,0.0,0.0],[1,12,3,5.0,0.0,0.0],[1,12,4,5.0,0.0,0.0],[1,4,5,5.0,0.0,0.0],[1,2,3,5.0,0.0,0.0],[1,12,6,5.0,0.0,0.0],[1,12,3,5.0,0.0,0.0],[1,2,4,8.0,0.0,0.0],[1,4,1,6.0,0.0,0.0],[1,0,3,13.0,0.025,0.1],[1,2,5,6.0,0.0,0.0],[1,0,5,9.0,0.02,0.1],[1,1,2,11.0,0.055,0.05],[1,4,3,7.0,0.0,0.0],[1,0,13,17.0,0.09,0.2],[1,0,1,6.0,0.0,0.1],[1,1,6,6.0,0.0,0.15],[1,0,6,4.0,0.0,0.2],[1,0,3,4.0,0.0,0.1],[1,4,3,5.0,0.0,0.0],[1,0,2,6.0,0.035,0.0],[1,9,11,7.0,0.0,0.4],[1,4,11,5.0,0.0,0.05],[1,4,2,7.0,0.1,0.1],[1,4,8,5.0,0.0,0.0],[1,1,8,12.0,0.08,0.0],[1,1,9,20.0,0.045,0.05],[1,4,3,5.0,0.195,0.0],[1,1,4,5.0,0.0,0.0],[1,1,3,7.0,0.0,0.15],[1,4,13,5.0,0.0,0.0],[1,6,6,8.0,0.0,0.0],[1,0,5,7.0,0.0,0.0],[1,4,3,7.0,0.0,0.0],[1,4,6,7.0,0.0,0.0],[1,4,7,6.0,0.01,0.1],[1,1,3,8.0,0.01,0.1],[1,0,7,5.0,0.0,0.0],[1,1,8,5.0,0.0,0.0],[1,4,4,5.0,0.0,0.05],[1,4,6,6.0,0.0,0.05],[1,4,10,10.0,0.0,0.5],[1,4,2,6.0,0.0,0.1],[1,1,5,7.0,0.0,0.25],[1,9,2,6.0,0.0,0.05],[1,4,3,6.0,0.0,0.1],[1,0,6,7.0,0.0,0.0],[1,1,5,6.0,0.0,0.0],[1,0,3,6.0,0.0,1.0],[1,0,4,6.0,0.0,0.0],[1,0,6,4.0,0.0,1.0],[1,0,6,7.0,0.0,0.4],[1,0,4,4.0,0.0,0.0],[1,1,19,6.0,0.0,0.05],[1,1,8,6.0,0.0,0.1],[1,4,4,7.0,0.01,0.05],[1,0,2,4.0,0.0,0.0],[1,0,9,4.0,0.0,0.0],[1,6,3,5.0,0.025,0.0],[1,1,2,5.0,0.0,1.0],[1,1,3,5.0,0.0,0.3],[1,1,3,5.0,0.0,0.0],[1,0,4,7.0,0.0,0.05],[1,1,8,8.0,0.0,0.1],[1,0,7,7.0,0.0,0.05],[1,1,10,6.0,0.0,0.05],[1,1,7,6.0,0.0,0.0],[1,1,5,9.0,0.0,0.1],[1,1,5,7.0,0.0,0.05],[1,1,5,9.0,0.115,0.0],[1,1,3,8.0,0.12,0.0],[1,1,12,5.0,0.0,0.0],[1,1,4,5.0,0.0,0.0],[1,6,4,9.0,0.0,0.0],[1,1,4,11.0,0.015,0.0],[1,2,6,9.0,0.085,0.0],[1,0,6,4.0,0.0,0.0],[1,1,13,9.0,0.0,0.35],[1,4,13,6.0,0.0,0.0],[1,4,5,6.0,0.0,0.0],[1,4,4,4.0,0.23,0.0],[1,1,35,5.0,0.0,0.0],[1,1,8,5.0,0.0,0.0],[1,4,4,7.0,0.145,0.3],[1,4,10,4.0,0.22,0.05],[1,1,3,5.0,0.045,0.0],[1,3,3,7.0,0.0,0.0],[1,1,16,5.0,0.27,0.05],[1,4,3,4.0,0.295,0.0],[1,5,4,7.0,0.0,0.05],[1,0,34,4.0,0.0,0.0],[1,0,20,4.0,0.0,0.0],[1,3,5,7.0,0.0,0.0],[1,9,2,6.0,0.01,0.0],[1,5,7,9.0,0.155,0.0],[1,5,4,4.0,0.235,0.0],[1,0,3,10.0,0.0,0.0],[1,3,14,6.0,0.15,0.0],[1,3,14,6.0,0.0,0.0],[1,1,16,4.0,0.0,0.0],[1,1,4,15.0,0.095,0.35],[1,5,3,5.0,0.0,0.0],[1,4,3,5.0,0.0,0.05],[1,9,10,11.0,0.0,0.35],[1,9,12,7.0,0.0,0.0],[1,10,8,19.0,0.005,0.05],[1,1,6,5.0,0.0,0.05],[1,6,4,19.0,0.005,0.0],[1,6,5,14.0,0.025,0.05],[1,1,3,14.0,0.12,0.0],[1,0,11,16.0,0.145,0.2],[1,1,5,11.0,0.0,0.0],[1,9,11,7.0,0.0,0.3],[1,10,5,19.0,0.005,0.05],[1,9,8,5.0,0.0,0.0],[1,9,7,5.0,0.0,0.0],[1,6,8,6.0,0.16,0.0],[1,1,8,7.0,0.155,0.0],[1,1,5,4.0,0.0,0.0],[1,7,4,14.0,0.1,0.1],[1,0,3,5.0,0.0,0.0],[1,5,5,9.0,0.005,0.0],[1,0,5,7.0,0.0,0.05],[1,0,3,6.0,0.0,0.05],[1,1,8,8.0,0.0,0.0],[1,0,5,9.0,0.0,0.0],[1,4,6,5.0,0.0,0.0],[1,4,5,5.0,0.0,0.0],[1,14,8,4.0,0.01,0.0],[1,7,9,10.0,0.0,0.0],[1,6,7,7.0,0.0,0.1],[1,0,4,4.0,0.0,0.0],[1,2,3,8.0,0.0,0.0],[1,7,11,8.0,0.02,0.2],[1,7,33,9.0,0.0,0.0],[1,0,13,4.0,0.0,0.0],[1,6,13,15.0,0.035,0.05],[1,6,6,8.0,0.0,0.0],[1,0,4,7.0,0.0,0.3],[1,1,12,5.0,0.005,0.25],[1,2,7,7.0,0.0,0.0],[1,6,4,8.0,0.0,0.0],[1,0,11,15.0,0.095,0.15],[1,8,9,18.0,0.135,0.1],[1,1,8,13.0,0.04,0.05],[1,4,10,4.0,0.0,0.0],[1,0,4,5.0,0.0,0.0],[1,5,6,7.0,0.005,0.0],[1,0,8,5.0,0.0,0.05],[1,0,5,5.0,0.0,0.1],[1,0,10,11.0,0.0,0.15],[1,0,4,6.0,0.0,0.0],[1,1,10,5.0,0.0,0.0],[1,0,7,6.0,0.0,0.0],[1,1,11,5.0,0.0,0.0],[1,6,13,10.0,0.005,0.0],[1,1,11,20.0,0.01,0.2],[1,1,7,9.0,0.0,0.0],[1,6,5,8.0,0.0,0.0],[1,6,15,9.0,0.03,0.05],[1,4,11,5.0,0.0,0.1],[1,0,11,14.0,0.0,0.1],[1,0,6,8.0,0.0,0.0],[1,1,9,7.0,0.0,0.0],[1,0,6,9.0,0.0,0.0],[1,1,3,7.0,0.0,0.0],[1,0,7,5.0,0.0,0.0],[1,1,2,4.0,0.0,0.0],[1,5,12,6.0,0.0,0.05],[1,0,6,9.0,0.0,0.05],[1,0,3,6.0,0.0,0.0],[1,0,10,12.0,0.0,0.05],[1,0,8,7.0,0.0,0.05],[1,0,3,4.0,0.0,0.0],[1,0,28,5.0,0.0,0.0],[1,4,9,4.0,0.0,0.05],[1,1,9,7.0,0.0,0.0],[1,0,9,6.0,0.0,0.0],[1,0,5,5.0,0.0,0.05],[1,0,4,4.0,0.0,0.05],[1,2,8,6.0,0.245,0.05],[1,0,4,6.0,0.0,0.0],[1,4,5,12.0,0.17,0.25],[1,0,5,4.0,0.0,0.0],[1,0,7,16.0,0.0,0.1],[1,5,12,7.0,0.0,0.0],[1,0,15,12.0,0.0,0.05],[1,0,7,8.0,0.0,0.0],[1,0,10,8.0,0.0,0.35],[1,9,10,4.0,0.0,0.05],[1,5,6,6.0,0.0,0.0],[1,5,10,5.0,0.0,0.0],[1,1,22,15.0,0.1,0.35],[1,0,13,10.0,0.0,0.3],[1,2,6,7.0,0.0,0.05],[1,0,20,13.0,0.0,0.1],[1,0,8,15.0,0.0,0.1],[1,0,6,9.0,0.0,0.05],[1,0,6,9.0,0.0,0.1],[1,0,3,6.0,0.0,0.0],[1,1,24,5.0,0.0,0.0],[1,0,4,8.0,0.005,0.0],[1,0,8,7.0,0.0,0.05],[1,0,8,6.0,0.0,0.0],[1,12,46,13.0,0.115,0.05],[1,5,15,7.0,0.0,0.05],[1,8,11,9.0,0.14,0.05],[1,4,9,4.0,0.0,0.35],[1,4,6,6.0,0.0,0.45],[1,1,20,4.0,0.0,0.0],[1,1,8,17.0,0.065,0.05],[1,0,11,7.0,0.0,0.4],[1,0,15,6.0,0.0,0.45],[1,0,2,9.0,0.065,0.05],[1,4,9,4.0,0.0,0.05],[1,1,5,6.0,0.285,0.0],[1,4,15,7.0,0.0,1.0],[1,4,12,7.0,0.0,0.0],[1,9,6,6.0,0.0,0.1],[1,9,14,5.0,0.0,0.1],[1,6,4,5.0,0.0,0.05],[1,4,5,7.0,0.14,0.0],[1,9,15,7.0,0.0,0.55],[1,6,25,7.0,0.15,0.1],[1,6,14,5.0,0.0,0.05],[1,9,8,5.0,0.0,0.45],[1,4,11,5.0,0.19,0.0],[1,4,8,5.0,0.21,0.05],[1,1,3,7.0,0.0,0.0],[1,4,16,5.0,0.0,0.4],[1,9,13,7.0,0.0,0.4],[1,4,8,5.0,0.0,0.35],[1,9,37,7.0,0.0,0.5],[1,4,13,5.0,0.0,0.45],[1,1,8,13.0,0.05,0.0],[1,7,6,11.0,0.09,0.05],[1,0,6,9.0,0.0,0.0],[1,10,4,6.0,0.02,0.05],[1,6,11,8.0,0.0,0.05],[1,1,6,8.0,0.0,0.0],[1,6,5,7.0,0.0,0.0],[1,0,7,11.0,0.0,0.0],[1,6,6,6.0,0.0,0.0],[1,0,6,13.0,0.055,0.1],[1,1,7,19.0,0.06,0.0],[1,1,5,12.0,0.215,0.1],[1,4,7,10.0,0.22,0.05],[1,1,16,17.0,0.08,0.1],[1,0,6,15.0,0.195,0.35],[1,0,13,7.0,0.0,0.0],[1,0,6,10.0,0.0,0.0],[1,0,7,5.0,0.0,0.05],[1,0,6,8.0,0.0,0.0],[1,0,3,10.0,0.0,0.0],[1,0,31,21.0,0.105,0.05],[1,0,4,5.0,0.205,0.05],[1,1,5,17.0,0.08,0.0],[1,1,4,12.0,0.0,0.0],[1,11,8,9.0,0.02,0.0],[1,4,5,6.0,0.0,0.0],[1,4,6,13.0,0.075,0.3],[1,0,4,4.0,0.0,0.0],[1,1,3,6.0,0.0,0.0],[1,1,8,15.0,0.075,0.15],[1,0,5,11.0,0.085,0.35],[1,0,3,5.0,0.0,0.0],[1,1,7,6.0,0.17,0.1],[1,14,10,10.0,0.14,0.05],[1,0,3,11.0,0.0,0.0],[1,1,4,11.0,0.09,0.3],[1,6,5,6.0,0.18,0.0],[1,1,4,13.0,0.075,0.0],[1,0,9,14.0,0.07,0.15],[1,0,7,7.0,0.145,0.0],[1,1,4,13.0,0.075,0.0],[1,11,3,5.0,0.0,0.0],[1,1,9,4.0,0.0,0.0],[1,10,7,16.0,0.04,0.1],[1,1,13,5.0,0.0,0.05],[1,11,5,7.0,0.0,0.0],[1,11,5,6.0,0.0,0.0],[1,0,59,25.0,0.13,0.05],[1,1,4,10.0,0.0,0.0],[1,1,8,10.0,0.05,0.1],[1,0,10,6.0,0.35,0.0],[1,0,6,12.0,0.08,0.0],[1,0,8,7.0,0.15,0.05],[1,1,6,8.0,0.0,0.0],[1,0,23,16.0,0.16,0.0],[1,0,28,14.0,0.135,0.05],[1,1,9,23.5,0.13,0.15],[1,1,3,13.0,0.015,0.1],[1,1,6,23.5,0.105,0.0],[1,0,6,14.0,0.07,0.0],[1,0,6,19.5,0.105,0.0],[1,1,4,13.0,0.075,0.0],[1,0,6,10.0,0.1,0.0],[1,1,6,12.0,0.08,0.3],[1,0,11,25.0,0.11,0.15],[1,0,7,18.0,0.11,0.1],[1,1,13,24.0,0.11,0.1],[1,0,6,19.0,0.105,0.05],[1,6,11,18.0,0.01,0.05],[1,1,10,19.0,0.005,0.05],[1,6,8,16.0,0.005,0.05],[1,0,3,7.0,0.0,0.1],[1,1,8,19.0,0.005,0.05],[1,6,8,16.0,0.005,0.05],[1,0,4,9.0,0.005,0.0],[1,0,5,6.0,0.17,0.0],[1,0,6,4.0,0.22,0.05],[1,1,11,8.0,0.0,0.0],[1,1,35,16.0,0.0,0.05],[1,0,5,6.0,0.0,0.0],[1,1,4,6.0,0.0,0.0],[1,1,5,7.0,0.0,0.0],[1,1,5,6.0,0.0,0.0],[1,6,5,11.0,0.0,0.0],[1,1,11,13.0,0.08,0.05],[1,1,53,13.0,0.005,0.0],[1,10,12,15.0,0.0,0.05],[1,1,8,11.0,0.09,0.05],[1,10,28,17.0,0.005,0.0],[1,10,12,17.0,0.0,0.0],[1,6,9,5.0,0.0,0.0],[1,1,3,7.0,0.0,0.0],[1,6,14,6.0,0.0,0.0],[1,1,10,6.0,0.0,0.0],[1,4,5,7.0,0.0,0.0],[1,6,14,10.0,0.0,0.05],[1,6,52,13.0,0.09,0.05],[1,6,4,10.0,0.0,0.0],[1,1,12,4.0,0.0,0.0],[1,6,12,6.0,0.0,0.0],[1,6,4,7.0,0.0,0.0],[1,6,20,11.0,0.0,0.05],[1,6,28,6.0,0.0,0.0],[1,6,3,6.0,0.0,0.0],[1,1,7,7.0,0.0,0.0],[1,1,5,5.0,0.2,0.05],[1,6,5,6.0,0.0,0.0],[1,6,12,5.0,0.0,0.0],[1,1,9,4.0,0.0,0.0],[1,6,8,5.0,0.0,0.0],[1,6,11,4.0,0.0,0.0],[1,0,9,8.0,0.125,0.0],[1,0,10,8.0,0.125,1.0],[1,1,6,4.0,0.0,0.0],[1,6,4,5.0,0.0,0.0],[1,6,28,10.0,0.0,0.0],[1,6,5,5.0,0.0,0.0],[1,6,7,5.0,0.0,0.0],[1,6,3,5.0,0.0,0.0],[1,1,15,11.0,0.085,0.3],[1,1,7,7.0,0.155,0.0],[1,1,10,10.0,0.1,0.35],[1,1,7,9.0,0.0,0.0],[1,1,5,9.0,0.11,0.0],[1,1,4,9.0,0.11,0.0],[1,1,9,9.0,0.11,1.0],[1,1,7,6.0,0.155,0.2],[1,0,10,7.0,0.15,0.0],[1,0,13,12.0,0.08,0.1],[1,0,8,6.0,0.165,0.0],[1,0,22,17.0,0.17,0.1],[1,0,13,8.0,0.275,0.4],[1,0,27,22.0,0.225,0.25],[1,1,28,16.0,0.125,0.65],[1,0,29,15.0,0.14,0.5],[1,1,29,17.0,0.135,0.2],[1,0,14,10.0,0.1,0.0],[1,0,17,20.0,0.135,0.05],[1,0,25,21.0,0.12,0.1],[1,1,12,11.0,0.09,0.0],[1,0,14,22.0,0.14,0.05],[1,1,9,16.0,0.125,0.0],[1,0,21,18.0,0.16,0.0],[1,1,13,26.0,0.135,0.0],[1,1,8,17.0,0.12,0.0]]};
+
+/* ---------- Event tape ---------- */
+const SESSION = [
+  { s: 1, name: "Support & customer care", detail: "Chat with customer care", ev: [
+    ["V", "HomeScreen", 0], ["A", "Home › open_support", 2], ["V", "SupportHub", 3], ["V", "SupportTopics", 4],
+    ["V", "NewRequest", 6], ["A", "NewRequest › start_chat", 9], ["V", "ChatScreen", 12], ["V", "SupportHub", 31] ] },
+  { cut: "root_return", why: "back to HomeScreen after 8 events" },
+  { s: 2, name: "Internet, Wi-Fi & devices", detail: "View connected devices", ev: [
+    ["V", "HomeScreen", 33], ["A", "Home › open_devices", 35], ["V", "DeviceList", 36], ["A", "DeviceList › tab_all", 38] ] },
+  { cut: "idle_gap", why: "3 min 41 s idle (> 90 s)" },
+  { s: 3, name: "Bills & payments", detail: "Payment history", ev: [
+    ["V", "HomeScreen", 259], ["A", "Home › open_payments", 261], ["V", "PaymentHome", 263], ["A", "PaymentHome › history", 266],
+    ["V", "PaymentHistory", 268], ["V", "PaymentHome", 284], ["A", "Home › nav_home", 288] ] }
+];
+const tape = document.getElementById("tape");
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+tape.innerHTML = SESSION.map(b => b.cut
+  ? `<div class="cut"><div class="why">✂ ${esc(b.cut)}</div><div class="bar"></div><div class="why">${esc(b.why)}</div></div>`
+  : `<div class="seg" data-s="${b.s}"><div class="seg-events">${b.ev.map(e =>
+      `<div class="ev"><b><span class="k">${e[0] === "V" ? "view" : "tap"}</span> ${esc(e[1])}</b><i>t+${e[2]}s</i></div>`).join("")}</div>
+      <div class="seg-label">${esc(b.name)}<span>${esc(b.detail)}</span></div></div>`).join("");
+
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let timers = [];
+function replay() {
+  timers.forEach(clearTimeout); timers = [];
+  const evs = [...tape.querySelectorAll(".ev")], cuts = [...tape.querySelectorAll(".cut")], labels = [...tape.querySelectorAll(".seg-label")];
+  if (reduce) return;
+  [...evs, ...cuts, ...labels].forEach(n => n.classList.remove("on"));
+  tape.classList.remove("labeled");
+  tape.classList.add("playing");
+  let t = 80;
+  evs.forEach(n => { timers.push(setTimeout(() => n.classList.add("on"), t)); t += 90; });
+  t += 250;
+  cuts.forEach(n => { timers.push(setTimeout(() => n.classList.add("on"), t)); t += 450; });
+  timers.push(setTimeout(() => tape.classList.add("labeled"), t));
+  labels.forEach(n => { timers.push(setTimeout(() => n.classList.add("on"), t)); t += 300; });
+  timers.push(setTimeout(() => tape.classList.remove("playing", "labeled"), t + 600));
+}
+document.getElementById("replay").addEventListener("click", replay);
+
+/* ---------- Shared chart helpers ---------- */
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs = {}, parent) => { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); if (parent) parent.appendChild(n); return n; };
+const pct = v => (v * 100).toFixed(1) + " %";
+const pct0 = v => v < 0.005 ? "< 1 %" : Math.round(v * 100) + " %";
+const fmt = n => n.toLocaleString("en-US");
+function tipFor(card) {
+  const t = document.createElement("div"); t.className = "tip"; t.hidden = true; card.appendChild(t);
+  return {
+    show(html, x, y) {
+      t.innerHTML = html; t.hidden = false;
+      const cw = card.clientWidth, tw = t.offsetWidth, th = t.offsetHeight;
+      let left = x + 14; if (left + tw > cw - 8) left = x - tw - 14; if (left < 8) left = 8;
+      let top = y - th - 10; if (top < 8) top = y + 16;
+      t.style.left = left + "px"; t.style.top = top + "px";
+    },
+    hide() { t.hidden = true; }
+  };
+}
+function localXY(card, evt) { const r = card.getBoundingClientRect(); return [evt.clientX - r.left, evt.clientY - r.top]; }
+
+/* ---------- Grouped bar chart ---------- */
+const famOrder = DATA.families.slice().sort((a, b) =>
+  (DATA.share.android[b] + DATA.share.ios[b]) - (DATA.share.android[a] + DATA.share.ios[a]));
+document.querySelector("#bars-table tbody").innerHTML = famOrder.map(f =>
+  `<tr><td>${esc(f)}</td><td class="num">${pct0(DATA.share.android[f])}</td><td class="num">${pct0(DATA.share.ios[f])}</td></tr>`).join("");
+
+const barsBox = document.getElementById("bars"), barsCard = barsBox.closest(".chart-card"), barsTip = tipFor(barsCard);
+function drawBars() {
+  barsBox.innerHTML = "";
+  const W = Math.max(320, barsBox.clientWidth), narrow = W < 560;
+  const labelW = narrow ? 0 : 200, bh = 7, gap = 2, rowH = narrow ? 40 : 24, top = 8, bottom = 26;
+  const H = top + famOrder.length * rowH + bottom, plotW = W - labelW - 16;
+  const max = 0.25, x = v => labelW + (v / max) * plotW;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Grouped bar chart of journey share by business family, Android and iOS" }, barsBox);
+  [0, 0.05, 0.1, 0.15, 0.2, 0.25].forEach(v => {
+    el("line", { x1: x(v), x2: x(v), y1: top - 4, y2: H - bottom, class: v === 0 ? "base" : "grid" }, svg);
+    el("text", { x: x(v), y: H - 8, "text-anchor": "middle" }, svg).textContent = Math.round(v * 100) + "%";
+  });
+  famOrder.forEach((f, i) => {
+    const y0 = top + i * rowH + (narrow ? 16 : (rowH - (bh * 2 + gap)) / 2);
+    const lab = el("text", { x: narrow ? 0 : labelW - 10, y: narrow ? y0 - 5 : y0 + bh + 1, "text-anchor": narrow ? "start" : "end", class: "lab", "dominant-baseline": "middle" }, svg);
+    lab.textContent = f;
+    [["android", "var(--series-1)", 0], ["ios", "var(--series-2)", 1]].forEach(([p, c, k]) => {
+      const v = DATA.share[p][f], y = y0 + k * (bh + gap), w = Math.max(1, x(v) - labelW);
+      el("path", { d: `M${labelW},${y} h${w - 3} a3,3 0 0 1 3,3 v${bh - 6} a3,3 0 0 1 -3,3 h${-(w - 3)} z`, fill: c }, svg);
+    });
+    const hit = el("rect", { x: 0, y: top + i * rowH, width: W, height: rowH, fill: "transparent" }, svg);
+    hit.addEventListener("mousemove", e => { const [mx, my] = localXY(barsCard, e);
+      barsTip.show(`<b>${esc(f)}</b><br>Android ${pct0(DATA.share.android[f])}<br>iOS ${pct0(DATA.share.ios[f])}`, mx, my); });
+    hit.addEventListener("mouseleave", () => barsTip.hide());
+  });
+}
+
+/* ---------- Friction scatter ---------- */
+const scBox = document.getElementById("scatter"), scCard = scBox.closest(".chart-card"), scTip = tipFor(scCard);
+const famSel = document.getElementById("fam");
+famSel.innerHTML = famOrder.filter(f => f !== "Unclassified").map(f => `<option>${esc(f)}</option>`).join("");
+famSel.value = "Bills & payments";
+let platform = 0;
+document.querySelectorAll(".seg-ctl button").forEach(b => b.addEventListener("click", () => {
+  platform = +b.dataset.p;
+  document.querySelectorAll(".seg-ctl button").forEach(o => o.setAttribute("aria-pressed", o === b ? "true" : "false"));
+  drawScatter();
+}));
+famSel.addEventListener("change", drawScatter);
+const jitter = i => (((i * 2654435761) % 1000) / 1000 - 0.5) * 0.7;
+
+function drawScatter() {
+  scBox.innerHTML = "";
+  const W = Math.max(320, scBox.clientWidth), H = Math.round(Math.min(460, Math.max(300, W * 0.52)));
+  const m = { l: 46, r: 12, t: 10, b: 38 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const xMin = 3, xMax = 28, yMax = 0.45;
+  const x = v => m.l + (v - xMin) / (xMax - xMin) * pw;
+  const y = v => m.t + ph - Math.sqrt(v / yMax) * ph;
+  const fi = DATA.families.indexOf(famSel.value);
+  const pts = DATA.points.map((p, i) => ({ p, i })).filter(d => d.p[0] === platform);
+  const maxSize = Math.max(...pts.map(d => d.p[2]));
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Scatter plot of clusters: median journey length against backtrack rate" }, scBox);
+  [0, 0.01, 0.05, 0.1, 0.2, 0.4].forEach(v => {
+    el("line", { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), class: v === 0 ? "base" : "grid" }, svg);
+    el("text", { x: m.l - 8, y: y(v), "text-anchor": "end", "dominant-baseline": "middle" }, svg).textContent = Math.round(v * 100) + "%";
+  });
+  [5, 10, 15, 20, 25].forEach(v => {
+    el("text", { x: x(v), y: H - m.b + 18, "text-anchor": "middle" }, svg).textContent = v;
+  });
+  el("text", { x: m.l + pw / 2, y: H - 4, "text-anchor": "middle", class: "lab" }, svg).textContent = "Median journey length (events)";
+  el("text", { x: 12, y: m.t + ph / 2, "text-anchor": "middle", class: "lab", transform: `rotate(-90 12 ${m.t + ph / 2})` }, svg).textContent = "Backtrack rate";
+  const placed = [];
+  const draw = (d, hi) => {
+    const r = 2 + Math.sqrt(d.p[2] / maxSize) * (W < 560 ? 10 : 16);
+    const cx = x(d.p[3] + jitter(d.i)), cy = y(d.p[4]);
+    el("circle", { cx, cy, r, fill: hi ? "var(--series-1)" : "var(--dot)", "fill-opacity": hi ? 0.85 : 0.55, stroke: "var(--surface)", "stroke-width": hi ? 1.5 : 0.75 }, svg);
+    placed.push({ d, cx, cy, r });
+  };
+  const rest = pts.filter(d => d.p[1] !== fi), hi = pts.filter(d => d.p[1] === fi);
+  rest.forEach(d => draw(d, false));
+  hi.sort((a, b) => b.p[2] - a.p[2]).forEach(d => draw(d, true));
+  const share = hi.reduce((s, d) => s + d.p[2], 0) / pts.reduce((s, d) => s + d.p[2], 0);
+  document.getElementById("scatter-note").textContent =
+    `About ${fmt(Math.round(hi.length / 10) * 10)} of ~${fmt(Math.round(pts.length / 100) * 100)} ${platform ? "iOS" : "Android"} clusters are ${famSel.value}, covering about ${pct0(share)} of clustered journeys. The y-axis uses a square-root scale because most clusters have almost no backtracking.`;
+  const hitRect = el("rect", { x: m.l, y: m.t, width: pw, height: ph, fill: "transparent" }, svg);
+  hitRect.addEventListener("mousemove", e => {
+    const r = svg.getBoundingClientRect(), sx = W / r.width;
+    const mx = (e.clientX - r.left) * sx, my = (e.clientY - r.top) * sx;
+    let best = null, bd = Infinity;
+    for (let k = placed.length - 1; k >= 0; k--) { const q = placed[k]; const dd = Math.hypot(q.cx - mx, q.cy - my) - q.r; if (dd < bd) { bd = dd; best = q; } }
+    if (!best || bd > 10) return scTip.hide();
+    const p = best.d.p, [lx, ly] = localXY(scCard, e);
+    scTip.show(`<b>${esc(DATA.families[p[1]])}</b><br>~${fmt(p[2])}k journeys · median ~${p[3]} events<br>backtrack ~${pct(p[4])} · loops in ~${pct0(p[5])}`, lx, ly);
+  });
+  hitRect.addEventListener("mouseleave", () => scTip.hide());
+}
+
+drawBars(); drawScatter();
+let rz; new ResizeObserver(() => { clearTimeout(rz); rz = setTimeout(() => { drawBars(); drawScatter(); }, 120); }).observe(document.querySelector(".wrap"));
+</script>
+</body>
+</html>

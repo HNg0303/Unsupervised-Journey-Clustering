@@ -12,6 +12,9 @@
     "schema.evolution": "basic",
     "tasks.max": "1",
 
+    "flush.max.retries": "30",
+    "flush.retry.delay.ms": "10000",
+
     "transforms": "unwrap,route",
     "transforms.unwrap.type": "io.debezium.connector.mongodb.transforms.ExtractNewDocumentState",
     "transforms.unwrap.flatten.struct": "true",

@@ -5,7 +5,9 @@
 #     -> Debezium JDBC sink (Kafka Connect)
 #     -> PostgreSQL table  <- daily Airflow job reads here
 #
-# Start:   docker compose up -d --build
+# Start:   docker compose up -d --build --wait
+#          (connect-ops registers the connectors and restarts FAILED tasks,
+#           Kafka UI at http://localhost:8081)
 # Airflow: docker compose --profile airflow up -d
 name: local-cdc
 
@@ -68,6 +70,35 @@ services:
       interval: 5s
       timeout: 5s
       retries: 60
+
+  # Registers connectors/*.json, then every 30s restarts any connector or task
+  # that is FAILED (e.g. the JDBC sink after a long PostgreSQL outage).
+  connect-ops:
+    image: python:3.12-slim
+    command:
+      - python
+      - /ops/scripts/connect_ops.py
+      - --connect-url=http://connect:8083
+      - --connectors-dir=/ops/connectors
+      - --watch
+    depends_on:
+      connect: {condition: service_healthy}
+    volumes:
+      - ./scripts:/ops/scripts:ro
+      - ./connectors:/ops/connectors:ro
+    restart: unless-stopped
+
+  # Web UI to browse topics, messages, consumer groups and connectors.
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:latest
+    ports: ["8081:8080"]
+    depends_on:
+      kafka: {condition: service_healthy}
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: connect
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://connect:8083
 
   postgres:
     image: postgres:16

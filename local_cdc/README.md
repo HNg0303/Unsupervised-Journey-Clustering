@@ -40,9 +40,19 @@ Cần Docker (Compose v2) và Python 3.10+.
 cd local_cdc
 pip install pymongo psycopg2-binary
 
-# 1. Bật MongoDB, Kafka, Kafka Connect, PostgreSQL (lần đầu build image Connect,
-#    tải plugin Debezium 3.6 từ Maven Central)
+# 1. Bật MongoDB, Kafka, Kafka Connect, PostgreSQL, Kafka UI (lần đầu build image
+#    Connect, tải plugin Debezium 3.6 từ Maven Central). Service connect-ops tự
+#    đăng ký source + sink connector ngay khi Connect sẵn sàng.
 docker compose up -d --build --wait
+docker compose logs connect-ops
+#   registered mongo-source / registered postgres-sink
+#   mongo-source: connector=RUNNING tasks=RUNNING
+#   postgres-sink: connector=RUNNING tasks=RUNNING
+
+# 1b. Kiểm tra nhanh cả đường đi: insert / update / delete 1 document trong Mongo
+#     và chờ thấy đúng trạng thái trong PostgreSQL
+python scripts/smoke_test.py
+#   ok   insert (3.0s) ... ok   update ... ok   delete ... smoke test passed
 
 # 2. Tạo SQL dump mẫu (4.999 event từ test_data_android.csv trong repo)
 python scripts/make_sample_sql.py            # -> sample/raw_events.sql
@@ -51,10 +61,8 @@ python scripts/make_sample_sql.py            # -> sample/raw_events.sql
 python scripts/sql_to_mongo.py sample/raw_events.sql --nest-prefix segmentation_ --dry-run 2
 python scripts/sql_to_mongo.py sample/raw_events.sql --nest-prefix segmentation_ --drop
 
-# 4. Đăng ký source + sink connector qua REST API của Kafka Connect
-./scripts/register_connectors.sh
-#   mongo-source: connector=RUNNING tasks=RUNNING
-#   postgres-sink: connector=RUNNING tasks=RUNNING
+# 4. (Không bắt buộc) Sửa file trong connectors/ rồi áp lại config bằng tay
+python scripts/connect_ops.py        # hoặc ./scripts/register_connectors.sh
 
 # 5. Kiểm tra data đã xuống PostgreSQL
 docker compose exec postgres psql -U cdc -d analytics -c "select count(*), min(client_time), max(client_time) from events"
@@ -93,6 +101,13 @@ python scripts/sql_to_mongo.py sample/raw_events.sql --nest-prefix segmentation_
 
 ## Quan sát từng tầng
 
+Cách dễ nhất là Kafka UI (Kafbat) ở http://localhost:8081: tab **Topics** để xem
+message trong `app.tracking.events`, **Consumers** để xem consumer group
+`connect-postgres-sink` đọc tới offset nào (lag), **Kafka Connect** để xem trạng
+thái, config và restart connector.
+
+Hoặc bằng dòng lệnh:
+
 ```bash
 # Document gốc trong MongoDB (segmentation là sub-document)
 docker compose exec mongo mongosh --quiet tracking --eval 'db.events.findOne()'
@@ -126,9 +141,12 @@ PostgreSQL. Kafka là chỗ giữ các thay đổi đó (ở đây 7 ngày) nên
 - PostgreSQL hoặc sink chết vài giờ không mất data: event vẫn nằm trong topic, sink
   chạy lại sẽ đọc tiếp từ offset đã commit. Thử: `docker compose stop postgres`,
   insert vài document, `docker compose start postgres`. Sink task chuyển sang
-  `FAILED` khi mất kết nối, nên phải restart nó rồi mới thấy các dòng mới:
-  `curl -X POST "localhost:8083/connectors/postgres-sink/restart?includeTasks=true&onlyFailed=true"`.
-  Ở công ty, theo dõi trạng thái `FAILED` này là việc của team vận hành Connect.
+  `FAILED` gần như ngay khi mất kết nối (lỗi xảy ra lúc kiểm tra bảng, trước bước
+  flush nên `flush.max.retries` không che được), và Kafka Connect không tự restart
+  task. Service `connect-ops` kiểm tra mỗi 30 giây và restart task `FAILED`
+  (`docker compose logs connect-ops`), nên khi PostgreSQL lên lại thì các dòng mới
+  tự xuống, không cần làm gì. Ở công ty, theo dõi trạng thái `FAILED` này là việc
+  của team vận hành Connect.
 - Một luồng thay đổi phục vụ được nhiều nơi đọc (PostgreSQL, data lake, service realtime)
   mà MongoDB chỉ bị đọc một lần.
 - Thứ tự thay đổi của từng document được giữ nhờ partition theo key.

@@ -1,0 +1,25 @@
+{
+  "name": "postgres-sink",
+  "config": {
+    "connector.class": "io.debezium.connector.jdbc.JdbcSinkConnector",
+    "topics": "app.tracking.events",
+    "connection.url": "jdbc:postgresql://postgres:5432/analytics",
+    "connection.username": "cdc",
+    "connection.password": "cdc",
+    "insert.mode": "upsert",
+    "primary.key.mode": "record_key",
+    "delete.enabled": "true",
+    "schema.evolution": "basic",
+    "tasks.max": "1",
+
+    "transforms": "unwrap,route",
+    "transforms.unwrap.type": "io.debezium.connector.mongodb.transforms.ExtractNewDocumentState",
+    "transforms.unwrap.flatten.struct": "true",
+    "transforms.unwrap.flatten.struct.delimiter": "_",
+    "transforms.unwrap.add.fields": "op,source.ts_ms",
+    "transforms.unwrap.delete.tombstone.handling.mode": "rewrite",
+    "transforms.route.type": "org.apache.kafka.connect.transforms.RegexRouter",
+    "transforms.route.regex": "app\\.tracking\\.(.*)",
+    "transforms.route.replacement": "$1"
+  }
+}

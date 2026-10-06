@@ -1,613 +1,292 @@
-# HiFPT Journey Clustering: Unsupervised Clickstream Intelligence
+# HiFPT Journey Clustering
 
-> **Production-grade unsupervised journey clustering, multi-channel anomaly detection, UX friction discovery, and edge inference for high-volume mobile clickstream telemetry.**
+**Unsupervised discovery of user journeys from large-scale mobile clickstream telemetry.**
 
----
+The project has two halves:
 
-## Table of Contents
-
-- [1. Executive Overview](#1-executive-overview)
-  - [The Core Problem](#the-core-problem)
-  - [The Solution & Business Value](#the-solution--business-value)
-  - [Key Technical Innovations](#key-technical-innovations)
-- [2. End-to-End Architecture & Data Contract](#2-end-to-end-architecture--data-contract)
-  - [System Flow Diagram](#system-flow-diagram)
-  - [Strict Data Separation & Lifecycle Rules](#strict-data-separation--lifecycle-rules)
-- [3. Core Machine Learning & Algorithmic Pipeline (`src/`)](#3-core-machine-learning--algorithmic-pipeline-src)
-  - [Stage 1: Asymmetric Canonicalisation (`canonize.py`)](#stage-1-asymmetric-canonicalisation-canonizepy)
-  - [Stage 2 & 3: Multi-Resolution Semantics & Tokenisation (`tokens.py`, `semantics.py`, `taxonomy.py`)](#stage-2--3-multi-resolution-semantics--tokenisation-tokenspy-semanticspy-taxonomypy)
-  - [Stage 4: Journey Segmentation (`segment.py`)](#stage-4-journey-segmentation-segmentpy)
-  - [Stage 5: Sequence Normalisation & Postprocessing (`postprocess.py`)](#stage-5-sequence-normalisation--postprocessing-postprocesspy)
-  - [Stage 6: Multi-Channel Journey Representation (`features.py`)](#stage-6-multi-channel-journey-representation-featurespy)
-  - [Stage 7: Density Clustering & Markov Companion (`cluster.py`, `prefixspan.py`)](#stage-7-density-clustering--markov-companion-clusterpy-prefixspanpy)
-  - [Stage 8: Inference & Dual-Channel Anomaly Scoring (`score.py`)](#stage-8-inference--dual-channel-anomaly-scoring-scorepy)
-  - [Aggregate Pipelines and Storage (`pipelines.py`, `storage.py`)](#aggregate-pipelines-and-storage-pipelinespy-storagepy)
-- [4. Repository Structure & Component Meaning](#4-repository-structure--component-meaning)
-  - [Root Files](#root-files)
-  - [`src/` — Core Engine & Machine Learning Pipeline](#src--core-engine--machine-learning-pipeline)
-  - [`scripts/` — Pipeline Orchestration, ETL & Scoring](#scripts--pipeline-orchestration-etl--scoring)
-  - [`dashboard/` — Interactive Streamlit Presentation Layer](#dashboard--interactive-streamlit-presentation-layer)
-  - [`mobile/android/` — On-Device Kotlin & ONNX Clickstream Simulator](#mobileandroid--on-device-kotlin--onnx-clickstream-simulator)
-  - [`docs/` — Business & Technical Documentation](#docs--business--technical-documentation)
-  - [`visualize/` — Process Mining & Sankey Path Visualization](#visualize--process-mining--sankey-path-visualization)
-  - [`utils/` — Data Cleaning & Event Utilities](#utils--data-cleaning--event-utilities)
-  - [`tests/` — Automated Test Suite](#tests--automated-test-suite)
-  - [`notebooks/` — Exploratory Data Analysis & Prototyping](#notebooks--exploratory-data-analysis--prototyping)
-  - [`data/` & `output/` — Lake & Artifact Storage Layout](#data--output--lake--artifact-storage-layout)
-- [5. Step-by-Step Execution Guide](#5-step-by-step-execution-guide)
-  - [0. Installation & Prerequisites](#0-installation--prerequisites)
-  - [1. Partition Large Raw Clickstream CSVs](#1-partition-large-raw-clickstream-csvs)
-  - [2. Train Models & Evaluate Holdout](#2-train-models--evaluate-holdout)
-  - [3. Batch Score Full-Data or Run Smoke Tests](#3-batch-score-full-data-or-run-smoke-tests)
-  - [4. Name Clusters with the Business Taxonomy](#4-name-clusters-with-the-business-taxonomy)
-  - [5. Deploy & Simulate On-Device Mobile Inference (Android)](#5-deploy--simulate-on-device-mobile-inference-android)
-- [6. Data Contracts & Output Schemas](#6-data-contracts--output-schemas)
-- [7. Core Design Philosophy & Engineering Principles](#7-core-design-philosophy--engineering-principles)
-
----
-
-## 1. Executive Overview
-
-### The Core Problem
-
-Modern mobile applications such as HiFPT capture massive volumes of raw clickstream logs: every screen view, tab switch, and button click produces a telemetry record. Over millions of events across hundreds of thousands of users, this telemetry presents significant challenges:
-
-1. **Unstructured Stream Noise**: Clickstream logs are continuous, flat, and noisy. They do not naturally delineate where a user's task begins or ends.
-2. **Asymmetric Event Schemas**: Depending on whether an event is a `View` or an `Action`, screen and target identifiers appear in different columns (`segment_name` vs `screen_name`), causing disjoint vocabularies.
-3. **Cross-Platform Discrepancies**: iOS and Android use completely different screen identifiers for the same business feature (e.g., `FsListConnectedDeviceVC` on iOS vs `internet_fprotect_screen/management_device/management_device_screen` on Android).
-4. **Distorted Session Definitions**: Technical `session_id`s in clickstream data can span up to 30+ hours and contain thousands of mixed, unrelated user tasks.
-5. **Lack of Ground-Truth Labels**: Manual labeling of millions of user sessions is economically and operationally impossible.
-
-### The Solution & Business Value
-
-**HiFPT Journey Clustering** is an end-to-end, unsupervised machine learning framework that automatically parses, segments, vectorises, clusters, and names user clickstreams into discrete, semantically meaningful **User Journeys**.
-
-```
-... 47 raw, unstructured log records ...
-                ↓
-"Customer is paying postpaid bill via VNPay"
-"Customer is performing guest OTP authentication"
-"Customer is upgrading Internet package (Experiencing UX friction / backtracking)"
-```
-
-| Business Capability | Operational Impact |
-|---|---|
-| **Automated Intent Discovery** | Identifies what users set out to accomplish without requiring pre-labeled training data. |
-| **Cross-Platform Parity** | Multi-resolution semantic ladders bridge iOS and Android naming into unified behavioral concepts. |
-| **Dual-Channel Anomaly Detection** | Combines geometric outlier detection (distance to cluster centroid) with generative sequence likelihoods (Markov transition chains) to catch abnormal user flows. |
-| **Proactive Friction Detection** | Quantifies UX struggle (backtracking rate, cyclic loops, revisit ratios, dwell gaps) to pinpoint UI bottlenecks. |
-| **Next-Action Prediction** | Uses fitted transition probability matrices to forecast the user's next step for proactive support or smart nudges. |
-| **Edge-Ready Inference** | Deploys on-device via ONNX Runtime and Kotlin for zero-latency, privacy-preserving real-time journey classification. |
-
-### Key Technical Innovations
-
-- **Role-Correct Canonicalisation**: Dynamically aligns column meanings between `View` and `Action` events while masking volatile dynamic parameters (IDs, UUIDs, hex tokens, contract codes, non-semantic query strings).
-- **Multi-Resolution Semantic Ladder**: Employs 5 resolution levels (`Exact`, `L3 Intent`, `L2 Coarse`, `L1 Family`, `Operation Stage`) so cross-platform equivalents align in embedding space.
-- **Rule & Entropy-Based Boundary Detection**: Combines domain rules ($\tau = 90$s idle gap, root screen return, login/logout events, length caps) with optional statistical branching entropy $H(\text{next} \mid \text{context})$ to segment raw sessions into cohesive journeys.
-- **Multi-Channel Hybrid Representation**: Fuses sequence $n$-gram TF-IDF + Truncated SVD with semantic channel SVDs and an 11-metric numeric behavioral block.
-- **Density-Based Archetype Learning**: Uses HDBSCAN to identify natural journey shapes without forcing arbitrary $k$ clusters, explicitly isolating noise/outliers into cluster `-1`.
-- **Out-of-Core Scalability**: Built with PyArrow and DuckDB to process multi-gigabyte clickstream datasets with bounded memory usage and automatic disk spilling.
-
----
-
-## 2. End-to-End Architecture & Data Contract
-
-### System Flow Diagram
-
-```mermaid
-flowchart TD
-    subgraph S0["0. Raw Data Ingestion"]
-        RAW["data/giga_data/<br>Raw CSV Exports (Android / iOS)"]
-        PART_SCRIPT["scripts/partition_raw_events.py"]
-        LAKE_EVENTS["data/lake/raw_events/<br>Session-Safe Parquet Partitions"]
-        RAW --> PART_SCRIPT --> LAKE_EVENTS
-    end
-
-    subgraph S1["1. Segmentation & Modeling Engine (src/)"]
-        CANON["canonize.py<br>Role-Correct Canonicalisation"]
-        TOKENS["tokens.py & semantics.py<br>Multi-Resolution Ladder (L1-L3, Op)"]
-        SEG["segment.py<br>Journey Segmentation (Idle gap, Root return, Auth)"]
-        POST["postprocess.py<br>Deduplication & Loop Collapsing"]
-        FEAT["features.py<br>Multi-Channel TF-IDF + SVD + Numeric Block"]
-        CLUST["cluster.py<br>HDBSCAN + Markov Companion Bank"]
-        
-        LAKE_EVENTS --> CANON --> TOKENS --> SEG --> POST --> FEAT --> CLUST
-    end
-
-    subgraph S2["2. Training & Inference Outputs"]
-        RUN_SCRIPT["scripts/run_partitioned_journey_pipeline.py"]
-        TRAIN_OUT["output/partitioned_runs/latest/<br>Fitted Model, Scorer, SVD, Vectorizers"]
-        SCORE_SCRIPT["scripts/score_partitioned_events.py"]
-        SCORED_PARQUET["output/scores/<bundle>/<platform>/<br>Partitioned Scored Journeys"]
-        
-        CLUST --> RUN_SCRIPT --> TRAIN_OUT
-        TRAIN_OUT --> SCORE_SCRIPT
-        LAKE_EVENTS --> SCORE_SCRIPT --> SCORED_PARQUET
-    end
-
-    subgraph S3["3. Taxonomy Naming"]
-        NGRAMS["Training cluster n-grams"]
-        TAXONOMY["Three-level business taxonomy"]
-        NAMING["scripts/taxonomy_cluster_naming_pipeline.py"]
-        NAMED["Named score CSV + mapping + audit"]
-
-        NGRAMS --> NAMING
-        TAXONOMY --> NAMING
-        SCORED_PARQUET --> NAMING --> NAMED
-    end
-
-    subgraph S5["5. Mobile Edge Deployment"]
-        ONNX_EXP["output/mobile/android/<br>ONNX Model + Preprocessing + Markov JSON"]
-        ANDROID_APP["mobile/android/<br>Kotlin Clickstream Processor & Replay Simulator"]
-        
-        TRAIN_OUT --> ONNX_EXP --> ANDROID_APP
-    end
-```
-
-### Strict Data Separation & Lifecycle Rules
-
-The codebase enforces strict isolation between raw data, fitted model artifacts, scoring partitions, business naming, and downstream analytical consumers:
-
-1. **The Model Unit is One Journey Row**: Models and scorers operate on individual segmented journeys, never on raw events directly or aggregated customer records.
-2. **The Analytics Unit is `customer_id`**: Customer retention, footprint, churn, and loyalty metrics aggregate journeys by customer identifier.
-3. **Immutable Analytical Anchor (`*_all_named.csv`)**: Downstream post-analyses must **only** read the authoritative `*_all_named.csv` generated by joining scored journeys with the human/LLM-reviewed `Cluster_naming.csv`. Raw event lake partitions or unnamed score partitions are never used for shareholder KPIs.
-4. **Decoupled Dashboard Presentation**: The Streamlit dashboard (`dashboard/app.py`) **never** performs full-table multi-gigabyte scans on launch. It strictly consumes pre-computed summary tables (`html_dashboard_summary/`, `shareholder_analysis/`, and bounded audit samples).
-5. **No Synthetic Counts**: EDA statistics are calculated from actual raw event profiling (`eda_raw.py`), never approximated from Parquet metadata footers.
-
----
-
-## 3. Core Machine Learning & Algorithmic Pipeline (`src/`)
-
-### Stage 1: Asymmetric Canonicalisation (`src/journey_clustering/canonize.py`)
-
-Clickstream logging formats frequently invert column meanings depending on the event type:
-- When `event_type == "View"`: `segment_name` contains the screen name, while `screen_name` is `NULL`.
-- When `event_type == "Action"`: `screen_name` contains the screen name, while `segment_name` contains the action path within that screen (e.g., `Home/Nav_profile`).
-
-If concatenated naively, `View` and `Action` events reside in disjoint token spaces. `canonize.py` resolves this into a role-correct triple `(event_type, screen, target)`:
-- **OS Namespacing**: Screens are namespaced by OS (e.g., `Android::android/Home` vs `iOS::HomeVC`) preventing false token collisions.
-- **Dynamic Parameter Masking**: Replaces runtime instance IDs with type placeholders:
-  - Digits $\to$ `{id}`
-  - UUIDs / 24-hex hashes $\to$ `{uuid}`
-  - Contract / Order codes (e.g., `SGABP2073`, `HNIJH0026HQV`) $\to$ `{code}`
-- **URL Parameter Filtering**: Webview URLs retain only semantic parameters defined in `SEMANTIC_QUERY_KEYS` (`tab`, `step`, `type`, `mode`, `status`, `view`, `cat_id`) while stripping instance identifiers (`contractNo`, `orderId`, `utm_*`, `timestamp`).
-
----
-
-### Stage 2 & 3: Multi-Resolution Semantics & Tokenisation (`src/journey_clustering/tokens.py`, `src/journey_clustering/semantics.py`, `src/journey_clustering/taxonomy.py`)
-
-A single user action is mapped across a 5-level semantic ladder:
-
-| Level | Representation Example | Meaning / Granularity |
-|---|---|---|
-| **Exact** | `action@ManageModemVC#do_action/MODEM_TURN_ON_OFF` | Verbatim event token (high precision, high variance) |
-| **L3 Intent** | `internet/modem/modem/toggle` | `family / module / object / operation` |
-| **L2 Coarse** | `internet/modem` | `family / module` |
-| **L1 Family** | `internet` | High-level business domain |
-| **Operation** | `configure:toggle` | `stage : operation` |
-
-- **Semantic Enrichment**: Structural path rules map disparate OS implementations (e.g., iOS `FsListConnectedDeviceVC` and Android `internet_fprotect_screen/management_device`) to the exact same coarse token `internet/device`.
-- **Rare-Token Backoff**: Tokens appearing in fewer than `min_journey_df = 3` journeys automatically degrade to their coarser semantic form ($L3 \to L2 \to L1 \to \text{<rare>}$), eliminating the singleton long tail without discarding user activity.
-
----
-
-### Stage 4: Journey Segmentation (`src/journey_clustering/segment.py`)
-
-Raw telemetry `session_id`s do not represent single user goals (spans reach 30+ hours). `segment.py` divides sessions into cohesive journeys using two complementary methodologies:
-
-```mermaid
-graph TD
-    EVT["Incoming Event Stream"] --> CHK_SESS{"New session_id?"}
-    CHK_SESS -- Yes --> CUT["Cut Journey Boundary"]
-    CHK_SESS -- No --> CHK_IDLE{"Idle gap > 90s?"}
-    CHK_IDLE -- Yes --> CUT
-    CHK_IDLE -- No --> CHK_ROOT{"Returned to Root/Hub Screen<br>& Journey Length >= 6?"}
-    CHK_ROOT -- Yes --> CUT
-    CHK_ROOT -- No --> CHK_AUTH{"Auth Action Triggered?<br>(login/logout/signin)"}
-    CHK_AUTH -- Yes --> CUT
-    CHK_AUTH -- No --> CHK_LEN{"Journey Length == 80?"}
-    CHK_LEN -- Yes --> CUT
-    CHK_LEN -- No --> ACC["Accumulate to Current Journey"]
-```
-
-1. **L0 Rule-Based Segmentation (Deterministic Production Baseline)**:
-   - **Session Change**: Transition to a new `session_id`.
-   - **Idle Inactivity Gap**: Inter-event duration $\Delta t > 90$s ($\tau = 90$s corresponds to empirical $p97.5$ pause threshold).
-   - **Root / Hub Return**: User returns to a main navigation hub (`HomeVC`, `HOME`, `HomeGuestVC`) after at least $k = 6$ intermediate actions.
-   - **Auth State Transition**: Explicit login/logout action targets (`continue_login`, `sign_out`, `signin_success`).
-   - **Hard Length Cap**: Caps journeys at 80 events to prevent unbounded accumulation.
-2. **L1 Branching Entropy (Statistical Refinement, Opt-in)**:
-   - Computes context conditional entropy $H(\text{next} \mid \text{context}) = -\sum p \log p$. Within a single task flow, screen transitions are highly predictable (low entropy); at goal boundaries, choice branching spikes (high entropy). Cuts are made when entropy crosses a calibrated percentile threshold.
-
----
-
-### Stage 5: Sequence Normalisation & Postprocessing (`src/journey_clustering/postprocess.py`)
-
-Before vectorisation, sequence noise is reduced while retaining behavioural signals:
-- **Consecutive Deduplication**: Collapses repeated taps on identical tokens (e.g., $A \to A \to A \to A$), recording the count in `n_dedup_removed`.
-- **Cyclic Loop Detection**: Detects periodic ping-pong loops (e.g., $A \to B \to A \to B$) for periods $p \in [2, 4]$, collapsing them while recording `n_loop_removed`.
-- **Screen Filtering Policies**: Configurable removal of OS container chrome (`drop_chrome`) and launch splash screens (`drop_boot`).
-
----
-
-### Stage 6: Multi-Channel Journey Representation (`src/journey_clustering/features.py`)
-
-Journeys are converted into a rich vector space fusing sequence order, semantic intent, and behavioural metrics:
-
-```mermaid
-graph LR
-    subgraph Primary["Primary Sequence Channel (Weight 1.0)"]
-        P_TOK["Cleaned Exact Tokens<br>+ &lt;bos&gt; / &lt;eos&gt;"] --> P_TFIDF["TF-IDF (1..3 n-grams)"] --> P_SVD["Truncated SVD (64)"] --> P_NORM["L2 Normalise"]
-    end
-
-    subgraph Semantic["Semantic Intent Channels"]
-        S_COARSE["Coarse L2 Tokens"] --> S_TF1["TF-IDF + SVD"] --> S_W1["Weight 0.45"]
-        S_INTENT["Intent L3 Tokens"] --> S_TF2["TF-IDF + SVD"] --> S_W2["Weight 0.30"]
-        S_OP["Operation Tokens"] --> S_TF3["TF-IDF + SVD"] --> S_W3["Weight 0.20"]
-    end
-
-    subgraph Numeric["Numeric Behavioural Block (Weight 0.35)"]
-        NUM_RAW["11 Behavioural Metrics:<br>Length, Unique Tokens, Action Ratio,<br>Back Rate, Revisit Ratio, Loops,<br>Dedup Count, Span Seconds, Gaps"] --> NUM_LOG["log1p Damping"] --> NUM_SCALE["StandardScaler"]
-    end
-
-    P_NORM --> CONCAT["Weighted Concatenation"]
-    S_W1 --> CONCAT
-    S_W2 --> CONCAT
-    S_W3 --> CONCAT
-    NUM_SCALE --> CONCAT
-    CONCAT --> GLOBAL_PCA["Optional Global PCA (48)"] --> FINAL_EMB["Final Journey Embedding Vector"]
-```
-
-- **Boundary Sentinels**: Injects `<bos>` (beginning-of-sequence) and `<eos>` (end-of-sequence) tokens so journey entry and exit points become explicit discriminative features.
-- **Log1p Damped Behavioural Metrics**: Features with skewed distributions (`span_seconds`, `n_loop_removed`, `median_gap_s`) are $\log(1+x)$ transformed before standard scaling.
-- **Strict $L_2$ Normalisation**: Every block is $L_2$-normalised prior to weighting so vocabulary sizes and SVD ranks cannot artificially dominate Euclidean distance.
-
----
-
-### Stage 7: Density Clustering & Markov Companion (`src/journey_clustering/cluster.py`, `src/journey_clustering/prefixspan.py`)
-
-Two companion models are fitted to answer distinct analytical questions:
-
-1. **HDBSCAN Density Clustering ("What journey archetypes exist?")**:
-   - Discovers clusters of arbitrary geometric shape without enforcing an arbitrary $k$.
-   - **Explicit Noise Labeling**: Assigns irregular, unstructured journeys to cluster `-1` (Noise) rather than forcing them into artificial centroids.
-   - Internal validation indices: Silhouette Score, Davies-Bouldin Index, Calinski-Harabasz Index.
-   - Baseline validation: Sweeps $k$-Means across a $k \in [6, 30]$ grid to verify cluster boundaries.
-2. **Cluster-Specific Markov Chain Bank ("How typical is this journey within its archetype?")**:
-   - Fits a first-order smoothed Markov transition matrix for each discovered cluster, plus a global background chain:
-     $$P(t_i \mid t_{i-1}) = \frac{C(t_{i-1}, t_i) + \alpha}{\sum_v (C(t_{i-1}, v) + \alpha)}$$
-   - Computes sequence log-likelihood:
-     $$\log \mathcal{L}(S) = \sum_{i=1}^{|S|-1} \log P(t_{i+1} \mid t_i)$$
-   - Provides calibrated anomaly scoring and next-action transition forecasts.
-3. **PrefixSpan Pattern Mining (Route B Sequential Discovery)**:
-   - Mines frequent closed sequential action patterns across journeys with support pruning, extracting deterministic sub-path patterns.
-
----
-
-### Stage 8: Inference & Dual-Channel Anomaly Scoring (`src/journey_clustering/score.py`)
-
-The `JourneyScorer` scores new journeys across multiple independent dimensions:
-
-```mermaid
-graph TD
-    NEW_J["Unseen Journey Event Stream"] --> SCORER["JourneyScorer Pipeline"]
-    
-    SCORER --> ASSIGN["Nearest Centroid Assignment"]
-    ASSIGN --> DIST["Geometric Distance to Centroid"]
-    
-    SCORER --> MARKOV["Cluster Markov Model Evaluation"]
-    MARKOV --> LOGPROB["Transition Log-Probability Score"]
-    
-    SCORER --> RULES["Behavioural Friction Rule Checks"]
-    RULES --> FLAGS["Friction Flags:<br>excessive_backtrack, high_loops,<br>high_revisits, long_dwell_gap"]
-    
-    DIST --> CALIB{"Exceeds distance_p95?"}
-    LOGPROB --> MARKOV_ANOM{"Below markov_p05?"}
-    
-    CALIB -- Yes --> ANOM_GEO["Flag: Geometric Anomaly"]
-    MARKOV_ANOM -- Yes --> ANOM_MARKOV["Flag: Generative Anomaly"]
-```
-
-- **Geometric Anomaly**: Journey falls outside the 95th percentile distance to its cluster centroid (unusual overall journey structure).
-- **Generative Anomaly**: Sequence exhibits low Markov transition log-probability (unusual internal screen transition sequence).
-- **UX Friction Flags**: Automated rule checks for high backtracking (`back_rate > p90`), excessive loops (`n_loop_removed > p90`), high revisit ratio (`revisit_ratio > p90`), or excessive duration (`span_seconds > p95`).
-
----
-
-### Aggregate Pipelines and Storage (`src/journey_clustering/pipelines.py`, `src/journey_clustering/storage.py`)
-
-`pipelines.py` is the application-facing orchestration boundary. Its two main
-entry points are `prepare_event_partition` for raw events → journeys and
-`fit_global_journey_model` for prepared journeys → fitted model artifacts.
-Low-level Parquet and partition-identity helpers live separately in `storage.py`.
-
-- **Session-Safe Partitioning**: Uses deterministic hashing `stable_session_bucket(platform, session_id)` ensuring that events belonging to the same session are **never split across partition boundaries**.
-- **Chronological Holdout Split**: Partitions whole sessions chronologically into train ($80\%$) and holdout ($20\%$) sets, guaranteeing zero data leakage across train/test splits.
-- **Bounded Memory Streaming**: Employs PyArrow Parquet streaming and chunked readers, allowing multi-gigabyte datasets (e.g. 6M+ rows) to execute reliably on standard workstations.
-
----
-
-## 4. Repository Structure & Component Meaning
+- **Data pipeline.** App events flow from MongoDB through Kafka into SQL. A custom sink
+  connector pulls them from Kafka, and an Airflow cron job runs every day to summarise and
+  cluster user behaviour.
+- **ML pipeline.** Data processing, then model development, then monitoring for data and
+  model drift. It turns raw clicks into named, scored user journeys without any labels.
 
 ```text
-Unsupervised-Journey-Clustering/
-├── dashboard/                  # Streamlit multi-page analytics presentation application
-│   ├── app.py                  # Main entry point and page router
-│   ├── lib.py                  # Caching, metric computation, chart formatting utilities
-│   ├── prepare_dashboard_data.py # Out-of-core data extractor for fast dashboard loading
-│   ├── README.md               # Dashboard data source contracts & documentation
-│   └── views/                  # Dedicated dashboard view modules
-│       ├── page_overview.py    # Executive overview, headline KPIs & platform comparison
-│       ├── page_eda.py         # Raw clickstream EDA & event profiling
-│       ├── page_training.py    # Training hyperparameters, SVD variance & validation
-│       ├── page_clusters.py    # Learned journey catalog, signatures & Markov graphs
-│       ├── page_inference.py   # Production inference distribution & anomaly explorer
-│       └── page_customer_based.py # Customer-level footprint, journeys & focus deep-dives
-│
-├── data/                       # Clickstream data repository
-│   ├── giga_data/              # Raw multi-gigabyte Android/iOS CSV log exports
-│   ├── lake/                   # Session-safe Parquet data lake
-│   │   ├── raw_events/         # Partitioned raw events (partition_raw_events.py)
-│   │   └── journeys/           # Pre-materialised partitioned journey datasets
-│   └── production_data/        # Reference/sample production datasets
-│
-├── docs/                       # Comprehensive project documentation
-│   ├── 0_Solution_For_Stakeholders.md # Non-technical executive summary & methodology
-│   ├── 1_Data_Exploration.md   # Initial clickstream data exploration findings
-│   ├── 2_Session_Based_EDA.md  # Session length & duration analysis
-│   ├── 3_Exact_Tokenization_and_Sequences.md # Token ladder & vocabulary audit
-│   ├── 4_Clustering_Two_Routes.md # Route A (HDBSCAN) vs Route B (PrefixSpan)
-│   ├── 5_Cluster_Names.md      # Cluster profiles, naming & representative traces
-│   ├── 6_Android_Cluster_Class_Mapping.md # Android cluster-to-business class mappings
-│   ├── 7_Cluster_Noise_Postprocessing.md # Noise assignment & recovery strategies
-│   ├── 8_Reusable_Cluster_Naming_Prompt.md # LLM prompting templates for cluster naming
-│   ├── 9_Semantic_Enrichment.md # Domain taxonomy & semantic parser rules
-│   ├── 10_Large_Data_Processing_and_Continuous_Learning_Plan.md # Big data scaling plan
-│   ├── 11_Inference_Result_Column_Metadata.md # Column-level schema specifications
-│   ├── Data_Exploration_and_Tokenization.md # Technical tokenization guide
-│   └── Journey_Approach_Validation.md # Methodological validation report
-│
-├── mobile/                     # Mobile on-device edge AI integration
-│   └── android/                # Native Android Studio clickstream simulator & edge runner
-│       ├── app/                # Android application module (Kotlin + ONNX Runtime)
-│       │   └── src/main/assets/ # Deployed ONNX model, Markov JSON & preprocessing assets
-│       ├── JourneyOnnxClassifier.kt # Kotlin ONNX wrapper & journey classifier
-│       └── README.md           # Android bundle deployment & simulator instructions
-│
-├── notebooks/                  # Interactive exploratory Jupyter notebooks
-│   ├── 1_data_exploration.ipynb # Initial data parsing & column exploration
-│   ├── 2_session_based_eda.ipynb # Session boundaries & duration distributions
-│   ├── 3_Tokenization.ipynb    # Multi-resolution tokenization experiments
-│   ├── 4_explore_result.ipynb  # Clustering result analysis & visualizations
-│   ├── 5_edit_data.ipynb       # Data transformation scratchpad
-│   ├── clean_data.ipynb        # Data cleansing workflows
-│   └── eda.ipynb               # End-to-end exploratory data analysis
-│
-├── output/                     # Generated artifacts, models, scores & analyses
-│   ├── partitioned_runs/       # Trained model runs by platform (latest/android, latest/ios)
-│   ├── scores/                 # Partitioned scoring outputs & shareholder analyses
-│   │   └── <bundle_name>/      # Bundle root containing named anchors & post-analyses
-│   ├── dashboard_cache/        # Cached summary datasets for Streamlit
-│   └── mobile/                 # Exported ONNX models, JSON configs & manifests
-│
-├── scripts/                    # CLI execution entrypoints & pipeline orchestrators
-│   ├── partition_raw_events.py # Chunks raw CSVs into session-safe Parquet partitions
-│   ├── run_partitioned_journey_pipeline.py # Trains and validates platform models
-│   ├── score_partitioned_events.py # High-throughput batch scoring on full data
-│   └── taxonomy_cluster_naming_pipeline.py # Taxonomy mapping, audit, and score naming
-│
-├── src/
-│   └── journey_clustering/     # Installable reusable domain package
-│       ├── config.py           # Central dataclass configuration
-│       ├── preprocessing.py    # Production schema normalization
-│       ├── canonize.py         # Canonicalisation and parameter masking
-│       ├── semantics.py        # Structural paths to business semantics
-│       ├── taxonomy.py         # Controlled business taxonomy
-│       ├── tokens.py           # Multi-resolution token construction
-│       ├── segment.py          # Session-to-journey boundaries
-│       ├── postprocess.py      # Sequence cleanup and aggregation
-│       ├── features.py         # Multi-channel feature representation
-│       ├── cluster.py          # Clustering and Markov companion models
-│       ├── prefixspan.py       # Sequential-pattern mining
-│       ├── score.py            # Frozen-model inference
-│       ├── hierarchical_score.py # Hierarchical inference
-│       ├── pipelines.py        # Aggregate prepare-partition and fit-model flows
-│       ├── storage.py          # Parquet and partition-identity primitives
-│       ├── experiment.py       # Experiment identity and safe splitting
-│       ├── cluster_mapping.py  # Business-name mapping
-│       ├── cluster_postprocess.py # Noise reassignment and refinement
-│       ├── naming.py           # Evidence-based taxonomy naming logic
-│       ├── export_mobile.py    # Mobile artifact export
-│       └── timing.py           # Observable stage helpers
-│
-├── tests/                      # Unit, integration, and parity test suite
-│   ├── test_cluster_mapping.py # Tests for cluster mapping resolvers
-│   ├── test_cluster_postprocess.py # Tests for noise postprocessing
-│   ├── test_hierarchical_score.py # Tests for hierarchical scoring engine
-│   ├── test_pipelines.py       # Tests for aggregate flows and storage helpers
-│   ├── test_production_pipeline.py # Tests for production schema adapters
-│   ├── test_taxonomy_cluster_naming_pipeline.py # Tests for taxonomy naming
-│   ├── test_run_journey_pipeline.py # Integration test for end-to-end pipeline
-│   ├── test_semantics.py       # Tests for semantic annotation & taxonomy rules
-│   └── test_tokens_and_features.py # Tests for tokenization, SVD & feature vectorizers
-│
-├── utils/                      # Data cleansing & raw log conversion utilities
-│   ├── clean_data.py           # Data normalization & cleanup functions
-│   ├── exact_event_analysis.py # Detailed event log exploration & vocabulary auditing
-│   └── json_to_csv.py          # Utilities to convert Extended JSON MongoDB dumps to CSV
-│
-├── visualize/                  # Process mining & interactive path visualization
-│   └── pm4py_visualize.py      # Generates interactive multi-level Sankey & journey HTML
-│
-├── requirements.txt            # Core Python dependencies
-├── requirements-onnx.txt       # ONNX export & runtime dependencies
-├── loyalty.json                # Loyalty analysis metadata & schema specification
-└── README.md                   # Comprehensive project documentation (this file)
+... 47 raw, unlabeled log records ...
+                 ↓
+"Paying postpaid bill via VNPay"
+"Guest OTP authentication"
+"Upgrading Internet package"  ⚠ friction: excessive backtracking
 ```
+
+| Scale (Jun–Aug 2026 run) | |
+|---|---|
+| Raw events processed | **253.5 M** (Android + iOS) |
+| Journeys scored | **17.2 M** (7.2 M Android · 9.95 M iOS) |
+| Training journeys per platform | ~800 K, bounded at ~6 GB peak RSS |
+| Journey archetypes discovered | **1,364** Android · **1,404** iOS |
+| Business taxonomy | 16 families · 85 sub-modules · 486 detail intents |
+| Unassigned journeys after scoring | ≈ 5 % |
 
 ---
 
-## 5. Step-by-Step Execution Guide
+## Contents
 
-### 0. Installation & Prerequisites
+1. [Research direction](#1-research-direction)
+2. [Data pipeline](#2-data-pipeline)
+3. [ML pipeline](#3-ml-pipeline)
+4. [Quickstart](#4-quickstart)
+5. [Outputs](#5-outputs)
+6. [Repository layout](#6-repository-layout)
+7. [Documentation](#7-documentation)
 
-Ensure Python 3.11+ is installed. Clone the repository and install the package:
+---
+
+## 1. Research direction
+
+**Core question:** *Can we recover what users are trying to do in an app, at scale, using only
+unlabeled click logs?*
+
+| Challenge | Why it matters | How this project handles it |
+|---|---|---|
+| **No ground truth** | Hand-labeling millions of sessions is infeasible | Density clustering finds the structure; people and LLMs only *name* clusters afterwards |
+| **Sessions ≠ goals** | A technical `session_id` can last 30+ hours and mix unrelated tasks | Rule-based journey segmentation, with branching entropy as an optional refinement |
+| **Asymmetric schemas** | `View` and `Action` events store the screen in different columns | Role-correct canonicalisation into `(event_type, screen, target)` |
+| **Platform divergence** | iOS `FsListConnectedDeviceVC` and Android `internet_fprotect_screen/…` are the same feature | A 5-level semantic ladder aligns both platforms in one embedding space |
+| **Long-tail vocabulary** | Dynamic IDs, URLs and rare screens explode the token space | ID/UUID/code masking and rare-token backoff (`Exact → L3 → L2 → L1`) |
+
+**Research questions**
+
+- **RQ1 – Segmentation:** Which boundary signals give journeys that each have one coherent intent? → [`docs/2`](docs/2_Session_Based_EDA.md), [`Journey_Approach_Validation`](docs/Journey_Approach_Validation.md)
+- **RQ2 – Representation:** How should sequence order, semantic intent and behavioural dynamics be fused so that no one channel dominates distance? → [`docs/3`](docs/3_Exact_Tokenization_and_Sequences.md), [`docs/9`](docs/9_Semantic_Enrichment.md)
+- **RQ3 – Archetype discovery:** Density clustering (HDBSCAN) compared with sequential pattern mining (PrefixSpan) → [`docs/4`](docs/4_Clustering_Two_Routes.md)
+- **RQ4 – Typicality:** Can geometric distance and Markov likelihood together separate normal journeys from anomalous or high-friction ones? → [`score.py`](src/journey_clustering/score.py)
+- **RQ5 – Interpretability:** How do we map thousands of clusters to a stable business taxonomy with auditable evidence? → [`docs/5`](docs/5_Cluster_Names.md), [`docs/8`](docs/8_Reusable_Cluster_Naming_Prompt.md)
+
+**Open directions:** stable cluster identities across retrains, champion/challenger promotion
+driven by drift, entropy-based segmentation as the default, and neural sequence encoders as a
+further representation channel.
+
+---
+
+## 2. Data pipeline
+
+**MongoDB → Kafka → SQL**, with a custom sink connector and a daily Airflow cron job.
+
+```mermaid
+flowchart LR
+    APP[HiFPT app<br/>Android · iOS] --> M[(MongoDB<br/>raw click events)]
+    M -->|change stream| K[(Kafka cluster<br/>clickstream topics)]
+    K -->|pull| SC[Sink connector]
+    SC --> SQL[(SQL<br/>event tables)]
+
+    subgraph DAG["Airflow · daily cron"]
+        direction LR
+        E[Extract<br/>yesterday's events] --> PR[Process<br/>journeys]
+        PR --> CL[Cluster & score<br/>frozen model]
+        CL --> SU[Summarise<br/>daily behaviour]
+    end
+
+    SQL --> E
+    SU --> OUT[Dashboard · labeling app<br/>daily summary tables]
+```
+
+### Ingestion: sink connector
+
+The mobile app writes events to **MongoDB**, and those events are published to a **Kafka**
+cluster. The **sink connector** pulls from the clickstream topics and writes them to **SQL**
+event tables. This keeps the analytical store separate from the operational database, and
+the batch layer never queries MongoDB or Kafka directly. Every landed record follows this
+raw contract:
+
+```text
+_id, device_id, device_created_at, session_id, customer_id, platform, key, segmentation_name, client_time
+```
+
+### Orchestration: daily Airflow cron job
+
+An Airflow DAG runs once a day. Each task runs a CLI from this repo inside its Docker image
+([`Dockerfile`](Dockerfile)), so each task can be retried on its own and behaves the same in
+development and production.
+
+| Task | Command | Guarantee |
+|---|---|---|
+| 1. Extract | daily SQL export by event date | Starts only after the sink has committed the full day |
+| 2. Partition | `journey-partition` | Hashing on `(platform, session_id)` keeps each session in **one** bucket, so journeys never split across files |
+| 3. Cluster & score (Android ∥ iOS) | `journey-infer --model-run <champion>` | Frozen model; every row stores `model_version` and `source_partition` |
+| 4. Name | `journey-name` | Joins scores with the reviewed taxonomy mapping, the only source for business KPIs |
+| 5. Summarise | `python dashboard/prepare_dashboard_data.py` | Writes daily KPIs, cluster mix, friction and next-action tables; consumers never scan the full data |
+
+### Engineering properties
+
+- **Out-of-core.** PyArrow streaming and DuckDB keep memory bounded on inputs with 250 M+ rows.
+- **Idempotent, versioned runs.** Data (`DATA_ID`) and model (`RUN_ID`) are versioned independently, so a rerun of the same day reuses existing partitions.
+- **Layer separation.** Raw events, journeys, models, scores and names each live in their own layer and can be recomputed independently.
+
+---
+
+## 3. ML pipeline
+
+**Data processing → Model development → Monitoring**
+
+```mermaid
+flowchart LR
+    subgraph DP["1 · Data processing"]
+        A[Canonicalise] --> B[Semantic ladder] --> C[Segment] --> D[Clean]
+    end
+    subgraph MD["2 · Model development"]
+        E[Embed] --> F[HDBSCAN<br/>+ Markov bank] --> G[Validate] --> H[Name clusters]
+    end
+    subgraph MO["3 · Monitoring"]
+        I[Data drift] --> K{Retrain?}
+        J[Model drift] --> K
+    end
+    D --> E
+    H --> S[Daily scoring] --> I & J
+    K -.->|candidate| E
+```
+
+### 3.1 Data processing
+
+| Step | Module | What it does |
+|---|---|---|
+| Canonicalise | `canonize.py` | Fixes the column swap between `View` and `Action`; namespaces screens by OS; masks `{id}`, `{uuid}` and `{code}`; keeps only semantic URL params |
+| Semantic ladder | `semantics.py`, `taxonomy.py`, `tokens.py` | Maps each event to `family/module/object/operation`; tokens seen in fewer than 3 journeys back off to a coarser level |
+| Segment | `segment.py` | Cuts on new session, idle gap > 90 s (empirical p97.5), return to the home hub after ≥ 6 events, login/logout, or 80 events. Optional cut on high branching entropy *H(next \| context)* |
+| Clean | `postprocess.py` | Collapses `A→A→A` and `A→B→A→B` (period 2–4) and keeps the counts as friction signals |
+| Split | `experiment.py`, `storage.py` | Chronological 80/20 holdout on whole sessions, so no session appears in both train and test |
+
+### 3.2 Model development
+
+| Step | Module | What it does |
+|---|---|---|
+| Embed | `features.py` | Primary n-gram TF-IDF → SVD (w = 1.0), coarse/intent/operation channels (0.45 / 0.30 / 0.20) and 11 log-damped behavioural metrics (0.35). Each block is L2-normalised, then projected with global PCA to 48 dims |
+| Cluster | `cluster.py`, `prefixspan.py` | HDBSCAN (`min_cluster_size=100`, `min_samples=5`, EOM) labels irregular journeys as noise instead of forcing *k*. A k-means sweep (k = 6–30) serves as a baseline |
+| Markov bank | `cluster.py` | A smoothed first-order transition chain per cluster, used for likelihood scoring and next-action prediction |
+| Score | `score.py`, `cluster_postprocess.py` | Assigns the nearest centroid. Flags **geometric** anomalies (distance > p95), **generative** anomalies (log-prob < p05), and friction (backtracking, loops, revisits, dwell time) |
+| Name | `naming.py`, `cluster_mapping.py` | Matches cluster n-grams to the 3-level taxonomy using evidence and coverage thresholds. Writes an audit trail and a review queue of unresolved clusters ([labeling app](cluster_labeling_app/)) |
+| Export | `export_mobile.py` | Ships the same model to Android (Kotlin + ONNX Runtime) and iOS (Swift) for on-device scoring |
+
+**Validation (HDBSCAN, ~800 K journeys per platform)**
+
+| Platform | Clusters | Silhouette | Davies–Bouldin | Calinski–Harabasz | Fit-time noise |
+|---|---|---|---|---|---|
+| Android | 1,363 | 0.361 | 1.29 | 8,729 | 42.8 % |
+| iOS | 1,403 | 0.357 | 1.25 | 7,619 | 44.6 % |
+
+At fit time HDBSCAN deliberately leaves noise unassigned. At inference, nearest-centroid
+assignment plus noise post-processing ([`docs/7`](docs/7_Cluster_Noise_Postprocessing.md))
+cuts the unassigned share to about 5 %.
+
+### 3.3 Monitoring
+
+Every daily scoring run is compared with the training reference for the champion model.
+
+| Type | Signals | Example trigger |
+|---|---|---|
+| **Data drift** | Schema and missing columns; row volume; unknown or new-token rate; boundary-reason mix; journey length, span, gap and back-rate distributions | New-token rate > 3 % |
+| **Model drift** | Unassigned rate; centroid-distance distribution; Markov log-prob distribution; cluster population shift (PSI); anomaly and friction rates by platform and app version | Cluster PSI > 0.2, or median distance up > 20 % |
+
+A trigger has to persist across several daily windows before it starts candidate
+training; a schema break is the exception. **Drift starts retraining but never deploys a model
+on its own.** A challenger replaces the champion only after it passes holdout,
+noise-share, cluster-stability and business-coverage gates. Previous models stay available for
+rollback. Full design in
+[`docs/10`](docs/10_Large_Data_Processing_and_Continuous_Learning_Plan.md).
+
+---
+
+## 4. Quickstart
 
 ```bash
-# Clone the repository
 git clone https://github.com/HNg0303/Unsupervised-Journey-Clustering.git
 cd Unsupervised-Journey-Clustering
-
-# Create and activate a virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install the package, pipeline dependencies, dashboard, and test tools
+python -m venv .venv && source .venv/bin/activate
 pip install -e ".[pipeline,dashboard,dev]"
-
-# (Optional) Install ONNX dependencies for edge export
-pip install -r requirements-onnx.txt
 ```
 
----
-
-### 1. Partition Large Raw Clickstream CSVs
-
-Large raw CSV log exports in `data/giga_data/` should be partitioned into session-safe Parquet files. This reads CSVs in chunks and guarantees that all events for a given session reside in the same partition:
+**End-to-end run** (partition → train → infer → name):
 
 ```bash
-journey-partition \
-  --input data/giga_data \
-  --output data/lake/raw_events \
-  --chunk-size 200000 \
-  --partitions-per-platform 16
+RAW_INPUT=data/giga_data/678 MAX_TRAINING_JOURNEYS=500000 scripts/run_full_pipeline.sh
 ```
 
----
-
-### 2. Train Models & Evaluate Holdout
-
-Fit the vectorizers, Truncated SVD, HDBSCAN clusterer, and Markov companion chains per platform using partitioned data:
+**Individual stages:**
 
 ```bash
-journey-train \
-  --input data/lake/raw_events \
-  --journeys-root data/lake/journeys \
-  --output-root output/partitioned_runs \
-  --run-name latest \
-  --mode all \
-  --max-training-journeys 500000 \
-  --test-size 0.2 \
-  --min-cluster-size 100 \
-  --min-samples 5 \
-  --svd-dim 48 \
-  --global-pca-components 48 \
-  --idle-gap 90.0
+journey-partition --input data/giga_data --output data/lake/raw_events
+journey-train     --input data/lake/raw_events --journeys-root data/lake/journeys \
+                  --output-root output/partitioned_runs --run-name latest --mode all
+journey-infer     --input data/lake/raw_events --platform android \
+                  --model-run output/partitioned_runs/latest/android --output-root output/scores/latest
+journey-name      --taxonomy <taxonomy.csv> --android-ngrams <…_cluster_ngrams.csv> --output-dir output/scores/taxonomy_naming
 ```
 
-*Outputs written to `output/partitioned_runs/latest/{android,ios}/`:*
-- `journey_scorer.pkl`: Complete fitted `JourneyScorer` object.
-- `vectorizer.pkl`: Multi-channel TF-IDF and SVD vectorizer.
-- `cluster_catalog.csv`: Cluster statistics, centroids, and top representative sequences.
-- `cluster_mapping.json`: Cluster ID to business mapping skeleton.
-- `holdout_evaluation.json`: Validation metrics on unseen holdout sessions.
-
----
-
-### 3. Batch Score Full-Data or Run Smoke Tests
-
-Score millions of raw events or a single CSV smoke test using the trained model:
+**Docker** (the image the Airflow tasks run):
 
 ```bash
-# Full dataset batch scoring (Partitioned Parquet)
-journey-infer \
-  --input data/lake/raw_events \
-  --platform android \
-  --model-run output/partitioned_runs/latest/android \
-  --output-root output/scores/pca48_ngrams12_500
-
-# Direct CSV Smoke Test (Exports scored Parquet/CSV directly)
-journey-infer \
-  --input data/giga_data/android_events_t3-2026.csv \
-  --platform android \
-  --model-run output/partitioned_runs/latest/android \
-  --output-root output/scores/pca48_ngrams12_500 \
-  --parquet
+docker build -t journey-clustering .
+docker run --rm -v "$PWD/data:/workspace/data" -v "$PWD/output:/workspace/outputs" \
+  journey-clustering journey-infer --help
 ```
 
----
-
-### 4. Name Clusters with the Business Taxonomy
-
-Run the canonical naming entry point against the cluster n-grams emitted by
-training. The reusable implementation lives in
-`journey_clustering.naming`; the script only provides the CLI.
+**Apps and tests:**
 
 ```bash
-journey-name \
-  --taxonomy path/to/hifpt_journey_taxonomy_3_levels.csv \
-  --android-ngrams output/partitioned_runs/latest/android/android_cluster_ngrams.csv \
-  --ios-ngrams output/partitioned_runs/latest/ios/ios_cluster_ngrams.csv \
-  --output-dir output/scores/taxonomy_naming \
-  --android-input output/scores/android_scores.csv \
-  --android-output output/scores/android_scores_taxonomy_named.csv \
-  --ios-input output/scores/ios_scores.csv \
-  --ios-output output/scores/ios_scores_taxonomy_named.csv
+streamlit run dashboard/app.py                  # analytics dashboard
+streamlit run cluster_labeling_app/app.py       # taxonomy review tool
+pytest                                          # unit and integration tests
 ```
 
-The command writes the taxonomy audit, cluster mapping, optional named score
-CSVs, shareholder catalogs, unresolved-cluster review queue, and run summary.
+---
+
+## 5. Outputs
+
+Each scored journey is one row ([full column reference](docs/11_Inference_Result_Column_Metadata.md)):
+
+| Group | Columns |
+|---|---|
+| Identity | `journey_id`, `session_id`, `customer_id`, `platform`, `start_ts`, `end_ts`, `model_version`, `source_partition` |
+| Segmentation | `boundary_reason`, `n_events_raw`, `n_events_final`, `n_dedup_removed`, `n_loop_removed` |
+| Behaviour | `action_ratio`, `back_rate`, `revisit_ratio`, `span_seconds`, `median_gap_s`, `p90_gap_s` |
+| Archetype | `cluster`, `cluster_name`, `business_family`, `business_submodule`, `class_code` |
+| Anomaly | `centroid_distance`, `markov_logprob`, `is_anomaly_geom`, `is_anomaly_markov`, `anomaly_score` |
+| Friction & next step | `friction_flags`, `next_action`, `sequence` |
+
+A model run writes `journey_scorer.pkl`, `cluster_catalog`, `cluster_ngrams`, a k-means
+baseline sweep, holdout scores, `run_config.json` and per-stage timings.
 
 ---
 
-### 5. Deploy & Simulate On-Device Mobile Inference (Android)
+## 6. Repository layout
 
-The repository provides a complete Android Studio clickstream simulator and Kotlin edge inference runner in `mobile/android/`:
-
-1. Open `mobile/android` in **Android Studio**.
-2. Synchronize Gradle with project files (`com.microsoft.onnxruntime:onnxruntime-android:1.20.0`).
-3. Deploy the exported bundle assets into `app/src/main/assets/`:
-   - `journey_classifier.onnx`
-   - `preprocessing.json`
-   - `class_mapping.json`
-   - `markov.json`
-   - `friction_config.json`
-   - `manifest.json`
-4. Run the application on an Android emulator (API 26+) to simulate live clickstream playback at variable speeds (`0.25x` to `10x`) with real-time on-device classification, friction detection, and next-action prediction.
-
----
-
-## 6. Data Contracts & Output Schemas
-
-Every scored journey produced by `JourneyScorer` conforms to a standardized schema. Detailed below are the primary field groups (refer to [`docs/11_Inference_Result_Column_Metadata.md`](file:///Users/hoangnguyen/Desktop/hifpt-journey/Unsupervised-Journey-Clustering/docs/11_Inference_Result_Column_Metadata.md) for full column metadata):
-
-| Group | Key Columns | Description |
-|---|---|---|
-| **Identity & Provenance** | `journey_id`, `session_id`, `customer_id`, `platform`, `start_ts`, `end_ts`, `model_version`, `source_partition` | Unique identifiers, timestamps, session links, and model lineage. |
-| **Segmentation Metrics** | `boundary_reason`, `n_events_raw`, `n_events_final`, `n_unique_tokens`, `n_dedup_removed`, `n_loop_removed` | Trigger reason for journey cut (`idle_gap`, `root_return`, `auth_change`) and event filtering counts. |
-| **Behavioural Metrics** | `action_ratio`, `back_rate`, `revisit_ratio`, `span_seconds`, `median_gap_s`, `p90_gap_s`, `max_gap_s` | Quantified user interaction characteristics and timing dynamics. |
-| **Journey Archetype** | `cluster`, `cluster_name`, `business_family`, `business_submodule`, `class_code` | Assigned cluster ID, Vietnamese business name, and taxonomy classification. |
-| **Anomaly & Scoring** | `centroid_distance`, `markov_logprob`, `is_anomaly_geom`, `is_anomaly_markov`, `anomaly_score` | Distance to cluster center, Markov transition likelihood, and boolean anomaly flags. |
-| **UX Friction Signals** | `friction_flags` | String of detected friction signals (`excessive_backtrack`, `high_loops`, `high_revisits`, `long_dwell_gap`). |
-| **Next Action & Path** | `next_action`, `sequence`, `first_token`, `last_token` | Predicted next user action and clean ordered token transition sequence. |
+```text
+src/journey_clustering/   Core package: canonize → tokens → segment → features → cluster → score → naming
+  cli/                    journey-partition / journey-train / journey-infer entry points
+scripts/                  Pipeline wrappers (run_full_pipeline.sh, partition, train, score, naming)
+dashboard/                Streamlit analytics: overview, EDA, training, clusters, inference, customers
+cluster_labeling_app/     Streamlit + Supabase/SQLite tool for reviewing taxonomy and cluster names
+mobile/android/           Kotlin + ONNX Runtime on-device scorer and clickstream replay simulator
+mobile/ios/               Swift package with no external dependencies, ported from the same pipeline
+docs/                     Research notes, EDA, methodology, data contracts
+notebooks/                Exploration and prototyping
+tests/                    Unit, integration and parity tests
+Dockerfile                Multi-stage runtime image for the batch jobs
+```
 
 ---
 
-## 7. Core Design Philosophy & Engineering Principles
+## 7. Documentation
 
-1. **Unsupervised First, Human Labeling Second**:
-   Algorithms discover the underlying natural cluster structure from mathematical representations. Domain experts and LLMs only assign meaningful business names to discovered clusters.
-2. **Out-of-Core by Default**:
-   All pipeline steps (ETL, training, scoring, post-analysis) are designed to stream data via PyArrow and DuckDB. Large multi-gigabyte datasets process with constant, bounded memory envelopes.
-3. **Decoupled Architecture**:
-   Raw event logs, trained models, batch inference outputs, business mappings, and presentation layers are strictly isolated. Any layer can be re-run or updated without triggering end-to-end recomputation.
-4. **Reproducibility & Traceability**:
-   Pipeline parameters are centralized in dataclasses (`src/journey_clustering/config.py`). Scored rows retain their `model_version` and `source_partition` provenance.
-5. **Production & Edge Parity**:
-   The Python feature extraction pipeline and the Kotlin Android mobile runner share identical tokenization rules, parameter masking algorithms, and model formats (ONNX + JSON contracts).
-
----
+| Topic | Document |
+|---|---|
+| Stakeholder summary | [`0_Solution_For_Stakeholders`](docs/0_Solution_For_Stakeholders.md) |
+| Data exploration & session EDA | [`1_Data_Exploration`](docs/1_Data_Exploration.md) · [`2_Session_Based_EDA`](docs/2_Session_Based_EDA.md) |
+| Tokenisation & semantics | [`3_Exact_Tokenization_and_Sequences`](docs/3_Exact_Tokenization_and_Sequences.md) · [`9_Semantic_Enrichment`](docs/9_Semantic_Enrichment.md) |
+| Clustering routes & noise | [`4_Clustering_Two_Routes`](docs/4_Clustering_Two_Routes.md) · [`7_Cluster_Noise_Postprocessing`](docs/7_Cluster_Noise_Postprocessing.md) |
+| Cluster naming | [`5_Cluster_Names`](docs/5_Cluster_Names.md) · [`8_Reusable_Cluster_Naming_Prompt`](docs/8_Reusable_Cluster_Naming_Prompt.md) |
+| Scale, drift & continuous learning | [`10_Large_Data_Processing_and_Continuous_Learning_Plan`](docs/10_Large_Data_Processing_and_Continuous_Learning_Plan.md) |
+| Output schema | [`11_Inference_Result_Column_Metadata`](docs/11_Inference_Result_Column_Metadata.md) |
 
 ## License
 
-This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
+Apache License 2.0. See [LICENSE](LICENSE).

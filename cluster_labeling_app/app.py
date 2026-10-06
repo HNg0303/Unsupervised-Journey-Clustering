@@ -20,13 +20,11 @@ from core import (
     export_named_clusters_csv,
     export_taxonomy_csv,
     filter_named_clusters,
-    load_platform_evidence,
     normalize_taxonomy,
     taxonomy_choices,
     validate_taxonomy,
 )
 APP_DIR = Path(__file__).resolve().parent
-ASSET_DIR = APP_DIR / "assets"
 DB_PATH = Path(os.environ.get("HIFPT_SQLITE_PATH", APP_DIR / "db.sqlite")).resolve()
 PLATFORM_LABELS = {"android": "Android", "ios": "iOS"}
 CONFIDENCE_ORDER = ["low", "medium", "high", "not_applicable"]
@@ -101,33 +99,29 @@ st.markdown(
 )
 
 
-def asset_signature() -> str:
-    """Changes whenever refresh_clusters.py swaps in a new model's assets."""
-
-    names = ["cluster_mapping.csv"] + [
-        f"{platform}_{kind}"
-        for platform in PLATFORMS
-        for kind in ("cluster_catalog.json", "cluster_ngrams.csv", "shareholder_catalog.json")
-    ]
-    return "-".join(str((ASSET_DIR / name).stat().st_mtime_ns) for name in names)
-
-
-@st.cache_data(show_spinner="Đang đọc catalog và n-grams…", max_entries=1)
-def load_evidence(signature: str) -> dict[str, object]:
+@st.cache_data(show_spinner="Đang đọc catalog và n-grams từ database…", max_entries=1)
+def load_evidence(model_version: str) -> dict[str, object]:
+    # Keyed by model_version: evidence only changes when refresh_clusters.py publishes.
     return {
-        platform: load_platform_evidence(ASSET_DIR, platform)
+        platform: database_api.load_cluster_evidence(DATABASE_TARGET, platform)
         for platform in PLATFORMS
     }
 
 
-@st.cache_resource(show_spinner="Đang khởi tạo database…")
+@st.cache_resource(show_spinner="Đang kiểm tra database…")
 def initialize_database_once() -> None:
-    database_api.initialize_database(DATABASE_TARGET, ASSET_DIR)
+    # No asset_dir: the app never seeds from local files, it only checks the schema/data.
+    database_api.initialize_database(DATABASE_TARGET)
 
 
 # Every widget interaction reruns the script, so reads are cached instead of hitting the
 # database each time. Writes clear the cache; the TTL picks up other reviewers' edits.
 READ_CACHE_TTL_SECONDS = 30
+
+
+@st.cache_data(ttl=READ_CACHE_TTL_SECONDS, show_spinner=False)
+def cached_model_version() -> str:
+    return database_api.load_model_version(DATABASE_TARGET)
 
 
 @st.cache_data(ttl=READ_CACHE_TTL_SECONDS, show_spinner=False)
@@ -162,6 +156,7 @@ def cached_recent_audit(limit: int) -> pd.DataFrame:
 
 def invalidate_reads() -> None:
     for cached in (
+        cached_model_version,
         cached_stats,
         cached_taxonomy,
         cached_taxonomy_choices,
@@ -173,24 +168,24 @@ def invalidate_reads() -> None:
 
 
 @st.cache_resource
-def last_asset_signature() -> dict[str, str]:
+def last_model_version() -> dict[str, str]:
     return {}
 
 
 try:
-    ASSET_SIGNATURE = asset_signature()
-    seen = last_asset_signature()
-    if seen.get("value") not in (None, ASSET_SIGNATURE):
-        # New model: cached rows still hold the old cluster IDs.
+    initialize_database_once()
+    MODEL_VERSION = cached_model_version()
+    seen = last_model_version()
+    if seen.get("value") not in (None, MODEL_VERSION):
+        # New model published: cached rows still hold the old cluster IDs.
         invalidate_reads()
-    seen["value"] = ASSET_SIGNATURE
-    if st.session_state.get("asset_signature") != ASSET_SIGNATURE:
+    seen["value"] = MODEL_VERSION
+    if st.session_state.get("model_version") != MODEL_VERSION:
         # Drafts are keyed by cluster ID, which means nothing across models.
         for key in [key for key in st.session_state if str(key).startswith("map::")]:
             del st.session_state[key]
-        st.session_state["asset_signature"] = ASSET_SIGNATURE
-    EVIDENCE = load_evidence(ASSET_SIGNATURE)
-    initialize_database_once()
+        st.session_state["model_version"] = MODEL_VERSION
+    EVIDENCE = load_evidence(MODEL_VERSION)
 except Exception as error:  # pragma: no cover - deployment diagnostics
     st.error(f"Không thể khởi tạo dữ liệu ứng dụng: {error}")
     st.stop()
@@ -484,6 +479,7 @@ with st.sidebar:
     st.code(DATABASE_LOCATION, language=None)
     stats = cached_stats()
     st.caption(
+        f"Model: {MODEL_VERSION or 'chưa ghi'}\n\n"
         f"{stats['taxonomy_features']:,} taxonomy details\n\n"
         f"{stats['android_clusters']:,} Android clusters\n\n"
         f"{stats['ios_clusters']:,} iOS clusters\n\n"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -31,7 +32,7 @@ TAXONOMY_ALIASES = {
 
 @dataclass(frozen=True)
 class PlatformEvidence:
-    """Raw model evidence retained outside the editable SQLite tables."""
+    """Read-only model evidence published alongside named_clusters."""
 
     catalog: pd.DataFrame
     ngrams: pd.DataFrame
@@ -155,15 +156,18 @@ def cluster_name(family: str, submodule: str, detail: str = "") -> str:
     return " | ".join(value for value in (family, submodule, detail) if value)
 
 
-def load_platform_evidence(asset_dir: Path, platform: str) -> PlatformEvidence:
+def build_platform_evidence(
+    platform: str, catalog: pd.DataFrame, ngrams: pd.DataFrame
+) -> PlatformEvidence:
+    """Validate and normalise one platform's catalog and n-grams."""
+
     if platform not in PLATFORMS:
         raise ValueError(f"platform không hỗ trợ: {platform}")
-    catalog = pd.read_json(asset_dir / f"{platform}_cluster_catalog.json")
     catalog = catalog.rename(columns={"cluster": "cluster_id"})
     catalog["cluster_id"] = pd.to_numeric(catalog["cluster_id"], errors="raise").astype(int)
     if catalog["cluster_id"].duplicated().any():
         raise ValueError(f"{platform}: catalog có cluster_id bị trùng")
-    ngrams = pd.read_csv(asset_dir / f"{platform}_cluster_ngrams.csv", encoding="utf-8-sig")
+    ngrams = ngrams.copy()
     ngrams["cluster"] = pd.to_numeric(ngrams["cluster"], errors="raise").astype(int)
     ngrams["rank"] = pd.to_numeric(ngrams["rank"], errors="raise").astype(int)
     ngrams["lift"] = pd.to_numeric(ngrams["lift"], errors="coerce")
@@ -177,6 +181,51 @@ def load_platform_evidence(asset_dir: Path, platform: str) -> PlatformEvidence:
         catalog.sort_values("cluster_id").reset_index(drop=True),
         ngrams.sort_values(["cluster", "rank"]).reset_index(drop=True),
     )
+
+
+def load_platform_evidence(asset_dir: Path, platform: str) -> PlatformEvidence:
+    """Read evidence from pipeline files (publish step only; the app reads the database)."""
+
+    return build_platform_evidence(
+        platform,
+        pd.read_json(asset_dir / f"{platform}_cluster_catalog.json"),
+        pd.read_csv(asset_dir / f"{platform}_cluster_ngrams.csv", encoding="utf-8-sig"),
+    )
+
+
+def evidence_records(evidence: PlatformEvidence) -> list[dict[str, object]]:
+    """One JSON-safe record per cluster: {cluster_id, catalog, ngrams}."""
+
+    def records(frame: pd.DataFrame) -> list[dict[str, object]]:
+        return json.loads(frame.to_json(orient="records", force_ascii=False))
+
+    ngram_columns = ["rank", "ngram", "lift", "cluster_mass"]
+    grouped = {
+        int(cluster_id): records(group[ngram_columns])
+        for cluster_id, group in evidence.ngrams.groupby("cluster")
+    }
+    return [
+        {
+            "cluster_id": int(row["cluster_id"]),
+            "catalog": row,
+            "ngrams": grouped.get(int(row["cluster_id"]), []),
+        }
+        for row in records(evidence.catalog)
+    ]
+
+
+def evidence_from_records(platform: str, rows: Iterable[dict[str, object]]) -> PlatformEvidence:
+    """Rebuild PlatformEvidence from database rows written by evidence_records()."""
+
+    rows = list(rows)
+    catalog = pd.DataFrame([{**row["catalog"], "cluster_id": row["cluster_id"]} for row in rows])
+    ngrams = pd.DataFrame(
+        [{**ngram, "cluster": row["cluster_id"]} for row in rows for ngram in row["ngrams"]],
+        columns=["cluster", "rank", "ngram", "lift", "cluster_mass"],
+    )
+    if catalog.empty:
+        raise ValueError(f"{platform}: database chưa có cluster_evidence")
+    return build_platform_evidence(platform, catalog, ngrams)
 
 
 def catalog_row(catalog: pd.DataFrame, cluster_id: int) -> pd.Series:

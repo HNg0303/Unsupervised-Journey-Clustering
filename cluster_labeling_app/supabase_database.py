@@ -11,8 +11,26 @@ from typing import Any, Iterable
 import pandas as pd
 from supabase import Client, create_client
 
-from core import PLATFORMS, clean_text, cluster_name, normalize_taxonomy, validate_taxonomy
-from database import _read_csv, check_cluster_taxonomy, read_named_cluster_assets, utc_now
+from core import (
+    PLATFORMS,
+    PlatformEvidence,
+    clean_text,
+    cluster_name,
+    evidence_from_records,
+    normalize_taxonomy,
+    validate_taxonomy,
+)
+from database import (
+    EMPTY_DATABASE_MESSAGE,
+    MISSING_EVIDENCE_MESSAGE,
+    _evidence_counts,
+    _read_csv,
+    check_cluster_taxonomy,
+    cluster_key_set,
+    read_cluster_evidence_assets,
+    read_named_cluster_assets,
+    utc_now,
+)
 
 
 @dataclass(frozen=True)
@@ -72,8 +90,16 @@ def _chunks(rows: list[dict[str, Any]], size: int = 250):
         yield rows[start : start + size]
 
 
-def initialize_database(target: SupabaseTarget, asset_dir: Path) -> dict[str, int]:
-    """Check the Supabase schema and seed it once when it is completely empty."""
+def initialize_database(
+    target: SupabaseTarget,
+    asset_dir: Path | None = None,
+    model_version: str = "",
+    source: str = "",
+) -> dict[str, int]:
+    """Check the Supabase schema; seed only when publishing into an empty database.
+
+    The app calls this without asset_dir, so the deployed app never reads local files.
+    """
 
     client = _client(target)
     try:
@@ -83,22 +109,29 @@ def initialize_database(target: SupabaseTarget, asset_dir: Path) -> dict[str, in
         cluster_ids = _rows(
             client.table("named_clusters").select("cluster_id").limit(1).execute()
         )
+        evidence_ids = _rows(
+            client.table("cluster_evidence").select("cluster_id").limit(1).execute()
+        )
     except Exception as error:
         raise ValueError(
             "Không đọc được schema Supabase. Hãy chạy supabase_schema.sql trong SQL Editor "
             "và cấu hình SUPABASE_SECRET_KEY trong Streamlit Secrets."
         ) from error
     if not taxonomy_ids and not cluster_ids:
-        _seed_database(client, asset_dir)
+        if asset_dir is None:
+            raise ValueError(EMPTY_DATABASE_MESSAGE)
+        _seed_database(client, asset_dir, model_version, source)
     elif not taxonomy_ids or not cluster_ids:
         raise ValueError("Supabase chỉ được seed một phần; cần kiểm tra taxonomy_features/named_clusters")
+    elif asset_dir is None and not evidence_ids:
+        raise ValueError(MISSING_EVIDENCE_MESSAGE)
     client.table("app_metadata").upsert(
         {"key": "schema_version", "value": "1"}, on_conflict="key"
     ).execute()
     return database_stats(target)
 
 
-def _seed_database(client: Client, asset_dir: Path) -> None:
+def _seed_database(client: Client, asset_dir: Path, model_version: str, source: str) -> None:
     timestamp = utc_now()
     taxonomy_source = _read_csv(asset_dir / "taxonomy_features.csv")
     taxonomy_rows = [
@@ -115,21 +148,124 @@ def _seed_database(client: Client, asset_dir: Path) -> None:
         }
         for index, row in enumerate(taxonomy_source)
     ]
+    cluster_rows = read_named_cluster_assets(asset_dir, timestamp)
+    evidence = read_cluster_evidence_assets(
+        asset_dir, cluster_key_set(cluster_rows), model_version, timestamp
+    )
     for batch in _chunks(taxonomy_rows):
         client.table("taxonomy_features").upsert(batch, on_conflict="taxonomy_id").execute()
-
-    cluster_rows = read_named_cluster_assets(asset_dir, timestamp)
     for batch in _chunks(cluster_rows):
         client.table("named_clusters").upsert(
             batch, on_conflict="platform,cluster_id"
         ).execute()
+    _replace_evidence(client, evidence)
     client.table("app_metadata").upsert(
         [
             {"key": "seeded_at", "value": timestamp},
             {"key": "seed_source", "value": "taxonomy_naming"},
+            {"key": "model_version", "value": model_version},
         ],
         on_conflict="key",
     ).execute()
+    _audit_rows(
+        client,
+        [
+            {
+                "entity_type": "database_seed",
+                "entity_key": model_version,
+                "old_value": {},
+                "new_value": {
+                    "model_version": model_version,
+                    "taxonomy_features": len(taxonomy_rows),
+                    **{
+                        platform: sum(row["platform"] == platform for row in cluster_rows)
+                        for platform in PLATFORMS
+                    },
+                    **_evidence_counts(evidence),
+                    "source": source,
+                },
+                "changed_at": timestamp,
+            }
+        ],
+    )
+
+
+def _replace_evidence(client: Client, rows: list[dict[str, Any]]) -> None:
+    """Upsert new evidence first, then delete stale cluster IDs (no multi-request transaction)."""
+
+    for batch in _chunks(rows, size=200):
+        client.table("cluster_evidence").upsert(batch, on_conflict="platform,cluster_id").execute()
+    _delete_stale(client, "cluster_evidence", rows)
+
+
+def _delete_stale(client: Client, table: str, rows: list[dict[str, Any]]) -> None:
+    for platform in PLATFORMS:
+        keep = {row["cluster_id"] for row in rows if row["platform"] == platform}
+        existing = _fetch_all(client, table, "cluster_id", filters=(("platform", platform),))
+        stale = sorted({row["cluster_id"] for row in existing} - keep)
+        for start in range(0, len(stale), 200):
+            client.table(table).delete().eq("platform", platform).in_(
+                "cluster_id", stale[start : start + 200]
+            ).execute()
+
+
+def has_named_clusters(target: SupabaseTarget) -> bool:
+    return bool(_rows(_client(target).table("named_clusters").select("cluster_id").limit(1).execute()))
+
+
+def load_model_version(target: SupabaseTarget) -> str:
+    rows = _rows(
+        _client(target).table("app_metadata").select("value").eq("key", "model_version").execute()
+    )
+    return rows[0]["value"] if rows else ""
+
+
+def load_cluster_evidence(target: SupabaseTarget, platform: str) -> PlatformEvidence:
+    if platform not in PLATFORMS:
+        raise ValueError(platform)
+    rows = _fetch_all(
+        _client(target),
+        "cluster_evidence",
+        "cluster_id,catalog,ngrams",
+        filters=(("platform", platform),),
+        order="cluster_id",
+    )
+    return evidence_from_records(platform, rows)
+
+
+def publish_evidence(
+    target: SupabaseTarget, asset_dir: Path, model_version: str, source: str = ""
+) -> dict[str, int]:
+    """Load catalog/n-grams for the deployed model without touching reviewed named_clusters."""
+
+    client = _client(target)
+    keys = {
+        (row["platform"], int(row["cluster_id"]))
+        for row in _fetch_all(client, "named_clusters", "platform,cluster_id")
+    }
+    if not keys:
+        raise ValueError(EMPTY_DATABASE_MESSAGE)
+    timestamp = utc_now()
+    evidence = read_cluster_evidence_assets(asset_dir, keys, model_version, timestamp)
+    _replace_evidence(client, evidence)
+    if not load_model_version(target):
+        client.table("app_metadata").upsert(
+            {"key": "model_version", "value": model_version}, on_conflict="key"
+        ).execute()
+    counts = _evidence_counts(evidence)
+    _audit_rows(
+        client,
+        [
+            {
+                "entity_type": "evidence_refresh",
+                "entity_key": model_version,
+                "old_value": {},
+                "new_value": {"model_version": model_version, **counts, "source": source},
+                "changed_at": timestamp,
+            }
+        ],
+    )
+    return counts
 
 
 def database_stats(target: SupabaseTarget) -> dict[str, int]:
@@ -413,9 +549,9 @@ def update_named_cluster(
 
 
 def replace_named_clusters(
-    target: SupabaseTarget, asset_dir: Path, model_version: str
+    target: SupabaseTarget, asset_dir: Path, model_version: str, source: str = ""
 ) -> dict[str, int]:
-    """Swap named_clusters for a newly trained model; taxonomy and audit history are kept.
+    """Swap named_clusters and cluster_evidence for a new model; taxonomy and audit are kept.
 
     PostgREST has no multi-request transaction, so new rows are upserted before stale
     cluster IDs are deleted: a failure midway never leaves the table empty.
@@ -423,6 +559,9 @@ def replace_named_clusters(
 
     timestamp = utc_now()
     rows = read_named_cluster_assets(asset_dir, timestamp)
+    evidence = read_cluster_evidence_assets(
+        asset_dir, cluster_key_set(rows), model_version, timestamp
+    )
     problems = check_cluster_taxonomy(rows, load_taxonomy(target))
     if problems:
         raise ValueError(
@@ -439,18 +578,11 @@ def replace_named_clusters(
     }
     for batch in _chunks(rows):
         client.table("named_clusters").upsert(batch, on_conflict="platform,cluster_id").execute()
-    new_counts: dict[str, int] = {}
-    for platform in PLATFORMS:
-        keep = {row["cluster_id"] for row in rows if row["platform"] == platform}
-        new_counts[platform] = len(keep)
-        existing = _fetch_all(
-            client, "named_clusters", "cluster_id", filters=(("platform", platform),)
-        )
-        stale = sorted({row["cluster_id"] for row in existing} - keep)
-        for start in range(0, len(stale), 200):
-            client.table("named_clusters").delete().eq("platform", platform).in_(
-                "cluster_id", stale[start : start + 200]
-            ).execute()
+    _delete_stale(client, "named_clusters", rows)
+    _replace_evidence(client, evidence)
+    new_counts = {
+        platform: sum(row["platform"] == platform for row in rows) for platform in PLATFORMS
+    }
     client.table("app_metadata").upsert(
         {"key": "model_version", "value": model_version}, on_conflict="key"
     ).execute()
@@ -464,7 +596,12 @@ def replace_named_clusters(
                     "model_version": previous[0]["value"] if previous else "",
                     **old_counts,
                 },
-                "new_value": {"model_version": model_version, **new_counts},
+                "new_value": {
+                    "model_version": model_version,
+                    **new_counts,
+                    **_evidence_counts(evidence),
+                    "source": source,
+                },
                 "changed_at": timestamp,
             }
         ],

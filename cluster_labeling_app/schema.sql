@@ -43,6 +43,16 @@ CREATE TABLE IF NOT EXISTS named_clusters (
         ON UPDATE CASCADE ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS cluster_evidence (
+    platform TEXT NOT NULL CHECK (platform IN ('android', 'ios')),
+    cluster_id INTEGER NOT NULL,
+    model_version TEXT NOT NULL,
+    catalog TEXT NOT NULL,
+    ngrams TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (platform, cluster_id)
+);
+
 CREATE TABLE IF NOT EXISTS change_audit (
     audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_type TEXT NOT NULL,

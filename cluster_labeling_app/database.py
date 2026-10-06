@@ -13,15 +13,27 @@ import pandas as pd
 
 from core import (
     PLATFORMS,
+    PlatformEvidence,
     as_bool,
     clean_text,
     cluster_name,
+    evidence_from_records,
+    evidence_records,
+    load_platform_evidence,
     normalize_taxonomy,
     validate_taxonomy,
 )
 
 
 SCHEMA_VERSION = "1"
+EMPTY_DATABASE_MESSAGE = (
+    "Database chưa có dữ liệu. Publish một model bằng refresh_clusters.py "
+    "(xem README); app không đọc file local."
+)
+MISSING_EVIDENCE_MESSAGE = (
+    "Bảng cluster_evidence đang rỗng. Chạy refresh_clusters.py --evidence-only cho model "
+    "đang deploy để nạp catalog/n-grams mà không ghi đè nhãn đã review."
+)
 
 
 def utc_now() -> str:
@@ -82,6 +94,16 @@ def _create_schema(connection: sqlite3.Connection) -> None:
                 ON UPDATE CASCADE ON DELETE SET NULL
         );
 
+        CREATE TABLE IF NOT EXISTS cluster_evidence (
+            platform TEXT NOT NULL CHECK (platform IN ('android', 'ios')),
+            cluster_id INTEGER NOT NULL,
+            model_version TEXT NOT NULL,
+            catalog TEXT NOT NULL,
+            ngrams TEXT NOT NULL DEFAULT '[]',
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (platform, cluster_id)
+        );
+
         CREATE TABLE IF NOT EXISTS change_audit (
             audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
             entity_type TEXT NOT NULL,
@@ -116,8 +138,14 @@ def _read_catalog(path: Path) -> dict[int, dict[str, Any]]:
     return {int(row["cluster_id"]): row for row in platforms[0].get("clusters", [])}
 
 
-def initialize_database(db_path: Path, asset_dir: Path) -> dict[str, int]:
-    """Create and seed the database once; existing business edits are preserved."""
+def initialize_database(
+    db_path: Path, asset_dir: Path | None = None, model_version: str = "", source: str = ""
+) -> dict[str, int]:
+    """Create the schema; seed only when publishing (asset_dir given) into an empty database.
+
+    The app calls this without asset_dir, so it never reads local files. Existing business
+    edits are always preserved.
+    """
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with connect(db_path) as connection:
@@ -134,9 +162,15 @@ def initialize_database(db_path: Path, asset_dir: Path) -> dict[str, int]:
         ).fetchone()[0]
         cluster_count = connection.execute("SELECT COUNT(*) FROM named_clusters").fetchone()[0]
         if taxonomy_count == 0 and cluster_count == 0:
-            _seed_database(connection, asset_dir)
+            if asset_dir is None:
+                raise ValueError(EMPTY_DATABASE_MESSAGE)
+            _seed_database(connection, asset_dir, model_version, source)
         elif taxonomy_count == 0 or cluster_count == 0:
             raise ValueError("SQLite database chỉ được seed một phần; cần kiểm tra lại file")
+        elif asset_dir is None and not connection.execute(
+            "SELECT 1 FROM cluster_evidence LIMIT 1"
+        ).fetchone():
+            raise ValueError(MISSING_EVIDENCE_MESSAGE)
         connection.execute(
             "INSERT OR REPLACE INTO app_metadata(key, value) VALUES('schema_version', ?)",
             (SCHEMA_VERSION,),
@@ -216,6 +250,31 @@ def read_named_cluster_assets(asset_dir: Path, timestamp: str) -> list[dict[str,
     return rows
 
 
+def read_cluster_evidence_assets(
+    asset_dir: Path, cluster_keys: set[tuple[str, int]], model_version: str, timestamp: str
+) -> list[dict[str, Any]]:
+    """Catalog + n-grams per cluster; every named cluster must have evidence."""
+
+    rows: list[dict[str, Any]] = []
+    for platform in PLATFORMS:
+        records = evidence_records(load_platform_evidence(asset_dir, platform))
+        available = {record["cluster_id"] for record in records}
+        absent = sorted(key[1] for key in cluster_keys if key[0] == platform and key[1] not in available)
+        if absent:
+            raise ValueError(
+                f"{platform}: {len(absent)} named cluster không có evidence, ví dụ {absent[:10]}"
+            )
+        rows.extend(
+            {"platform": platform, **record, "model_version": model_version, "updated_at": timestamp}
+            for record in records
+        )
+    return rows
+
+
+def cluster_key_set(rows: list[dict[str, Any]]) -> set[tuple[str, int]]:
+    return {(row["platform"], int(row["cluster_id"])) for row in rows}
+
+
 def check_cluster_taxonomy(
     rows: list[dict[str, Any]], taxonomy: pd.DataFrame
 ) -> list[str]:
@@ -250,13 +309,47 @@ def _insert_named_clusters(connection: sqlite3.Connection, rows: list[dict[str, 
     )
 
 
+def _replace_evidence(connection: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
+    connection.execute("DELETE FROM cluster_evidence")
+    connection.executemany(
+        """
+        INSERT INTO cluster_evidence(platform, cluster_id, model_version, catalog, ngrams, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                row["platform"],
+                row["cluster_id"],
+                row["model_version"],
+                json.dumps(row["catalog"], ensure_ascii=False),
+                json.dumps(row["ngrams"], ensure_ascii=False),
+                row["updated_at"],
+            )
+            for row in rows
+        ],
+    )
+
+
+def _evidence_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        f"{platform}_evidence": sum(row["platform"] == platform for row in rows)
+        for platform in PLATFORMS
+    }
+
+
 def replace_named_clusters(
-    db_path: Path, asset_dir: Path, model_version: str
+    db_path: Path, asset_dir: Path, model_version: str, source: str = ""
 ) -> dict[str, int]:
-    """Swap named_clusters for a newly trained model; taxonomy and audit history are kept."""
+    """Swap named_clusters and cluster_evidence for a newly trained model.
+
+    Taxonomy and audit history are kept; the swap is recorded as a cluster_refresh audit row.
+    """
 
     timestamp = utc_now()
     rows = read_named_cluster_assets(asset_dir, timestamp)
+    evidence = read_cluster_evidence_assets(
+        asset_dir, cluster_key_set(rows), model_version, timestamp
+    )
     problems = check_cluster_taxonomy(rows, load_taxonomy(db_path))
     if problems:
         raise ValueError(
@@ -275,6 +368,7 @@ def replace_named_clusters(
         )
         connection.execute("DELETE FROM named_clusters")
         _insert_named_clusters(connection, rows)
+        _replace_evidence(connection, evidence)
         new_counts = {
             platform: sum(row["platform"] == platform for row in rows) for platform in PLATFORMS
         }
@@ -287,13 +381,88 @@ def replace_named_clusters(
             "cluster_refresh",
             model_version,
             {"model_version": previous[0] if previous else "", **old_counts},
-            {"model_version": model_version, **new_counts},
+            {
+                "model_version": model_version,
+                **new_counts,
+                **_evidence_counts(evidence),
+                "source": source,
+            },
             timestamp,
         )
     return new_counts
 
 
-def _seed_database(connection: sqlite3.Connection, asset_dir: Path) -> None:
+def publish_evidence(
+    db_path: Path, asset_dir: Path, model_version: str, source: str = ""
+) -> dict[str, int]:
+    """Load catalog/n-grams for the deployed model without touching reviewed named_clusters."""
+
+    timestamp = utc_now()
+    with connect(db_path) as connection:
+        keys = {
+            (row[0], int(row[1]))
+            for row in connection.execute("SELECT platform, cluster_id FROM named_clusters")
+        }
+    if not keys:
+        raise ValueError(EMPTY_DATABASE_MESSAGE)
+    evidence = read_cluster_evidence_assets(asset_dir, keys, model_version, timestamp)
+    with connect(db_path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        _replace_evidence(connection, evidence)
+        connection.execute(
+            "INSERT OR IGNORE INTO app_metadata(key, value) VALUES('model_version', ?)",
+            (model_version,),
+        )
+        counts = _evidence_counts(evidence)
+        _audit(
+            connection,
+            "evidence_refresh",
+            model_version,
+            {},
+            {"model_version": model_version, **counts, "source": source},
+            timestamp,
+        )
+    return counts
+
+
+def has_named_clusters(db_path: Path) -> bool:
+    with connect(db_path) as connection:
+        _create_schema(connection)
+        return connection.execute("SELECT 1 FROM named_clusters LIMIT 1").fetchone() is not None
+
+
+def load_model_version(db_path: Path) -> str:
+    with connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT value FROM app_metadata WHERE key = 'model_version'"
+        ).fetchone()
+    return row[0] if row else ""
+
+
+def load_cluster_evidence(db_path: Path, platform: str) -> PlatformEvidence:
+    if platform not in PLATFORMS:
+        raise ValueError(platform)
+    with connect(db_path) as connection:
+        rows = connection.execute(
+            "SELECT cluster_id, catalog, ngrams FROM cluster_evidence WHERE platform = ?",
+            (platform,),
+        ).fetchall()
+    return evidence_from_records(
+        platform,
+        (
+            {
+                "cluster_id": int(row["cluster_id"]),
+                "catalog": json.loads(row["catalog"]),
+                "ngrams": json.loads(row["ngrams"]),
+            }
+            for row in rows
+        ),
+    )
+
+
+def _seed_database(
+    connection: sqlite3.Connection, asset_dir: Path, model_version: str, source: str
+) -> None:
     timestamp = utc_now()
     taxonomy_rows = _read_csv(asset_dir / "taxonomy_features.csv")
     if not taxonomy_rows:
@@ -318,9 +487,32 @@ def _seed_database(connection: sqlite3.Connection, asset_dir: Path) -> None:
             for index, row in enumerate(taxonomy_rows)
         ],
     )
-    _insert_named_clusters(connection, read_named_cluster_assets(asset_dir, timestamp))
-    connection.execute(
-        "INSERT INTO app_metadata(key, value) VALUES('seeded_at', ?)", (timestamp,)
+    rows = read_named_cluster_assets(asset_dir, timestamp)
+    evidence = read_cluster_evidence_assets(
+        asset_dir, cluster_key_set(rows), model_version, timestamp
+    )
+    _insert_named_clusters(connection, rows)
+    _replace_evidence(connection, evidence)
+    connection.executemany(
+        "INSERT OR REPLACE INTO app_metadata(key, value) VALUES(?, ?)",
+        [("seeded_at", timestamp), ("model_version", model_version)],
+    )
+    _audit(
+        connection,
+        "database_seed",
+        model_version,
+        {},
+        {
+            "model_version": model_version,
+            "taxonomy_features": len(taxonomy_rows),
+            **{
+                platform: sum(row["platform"] == platform for row in rows)
+                for platform in PLATFORMS
+            },
+            **_evidence_counts(evidence),
+            "source": source,
+        },
+        timestamp,
     )
 
 

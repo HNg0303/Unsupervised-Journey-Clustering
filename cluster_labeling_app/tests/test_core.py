@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import sys
 import tempfile
 import unittest
@@ -9,9 +10,24 @@ import pandas as pd
 
 
 APP_DIR = Path(__file__).resolve().parents[1]
-ASSET_DIR = APP_DIR / "assets"
+REPO_ROOT = APP_DIR.parent
 sys.path.insert(0, str(APP_DIR))
-# Cluster counts change with every retrained model; take them from the bundled mapping.
+
+from refresh_clusters import DEFAULT_TAXONOMY, source_files  # noqa: E402
+
+# Tests publish the newest local pipeline run into a throwaway SQLite database, the same way
+# refresh_clusters.py does; the app itself never reads these files.
+SCORES_RUN = max(
+    (REPO_ROOT / "output" / "scores").glob("*/*/taxonomy_naming/cluster_mapping.csv"),
+    key=lambda path: path.stat().st_mtime,
+).parents[1]
+TRAINING_RUN = REPO_ROOT / "output" / "partitioned_runs" / SCORES_RUN.parent.name / SCORES_RUN.name
+_STAGING = tempfile.TemporaryDirectory()
+ASSET_DIR = Path(_STAGING.name)
+for _name, _path in source_files(TRAINING_RUN, SCORES_RUN).items():
+    shutil.copy2(_path, ASSET_DIR / _name)
+shutil.copy2(DEFAULT_TAXONOMY, ASSET_DIR / "taxonomy_features.csv")
+# Cluster counts change with every retrained model; take them from the mapping.
 MAPPING_COUNTS = (
     pd.read_csv(ASSET_DIR / "cluster_mapping.csv", encoding="utf-8-sig")["platform"]
     .value_counts()
@@ -20,6 +36,7 @@ MAPPING_COUNTS = (
 
 from core import (  # noqa: E402
     assignment_status,
+    catalog_row,
     cluster_ngrams,
     export_named_clusters_csv,
     export_taxonomy_csv,
@@ -30,8 +47,12 @@ from core import (  # noqa: E402
     validate_taxonomy,
 )
 from database import (  # noqa: E402
+    connect,
     database_stats,
     initialize_database,
+    load_cluster_evidence,
+    load_model_version,
+    publish_evidence,
     replace_named_clusters,
     load_named_clusters,
     load_recent_audit,
@@ -101,7 +122,7 @@ class DatabaseTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tempdir.name) / "review.sqlite"
-        initialize_database(self.db_path, ASSET_DIR)
+        initialize_database(self.db_path, ASSET_DIR, "seed_model", "test")
 
     def tearDown(self) -> None:
         self.tempdir.cleanup()
@@ -115,6 +136,52 @@ class DatabaseTests(unittest.TestCase):
         self.assertFalse(load_named_clusters(self.db_path, "android").cluster_id.duplicated().any())
         # Reinitialization must preserve the same database instead of reseeding it.
         self.assertEqual(initialize_database(self.db_path, ASSET_DIR), stats)
+        # The app initializes without files and must not need them.
+        self.assertEqual(initialize_database(self.db_path), stats)
+        self.assertEqual(load_model_version(self.db_path), "seed_model")
+        self.assertEqual(load_recent_audit(self.db_path).iloc[0].entity_type, "database_seed")
+
+    def test_app_never_seeds_from_files(self) -> None:
+        empty = Path(self.tempdir.name) / "empty.sqlite"
+        with self.assertRaisesRegex(ValueError, "chưa có dữ liệu"):
+            initialize_database(empty)
+
+    def test_evidence_round_trips_through_database(self) -> None:
+        for platform in MAPPING_COUNTS:
+            stored = load_cluster_evidence(self.db_path, platform)
+            source = load_platform_evidence(ASSET_DIR, platform)
+            self.assertEqual(len(stored.catalog), len(source.catalog))
+            cluster_id = int(source.catalog.iloc[-1].cluster_id)
+            self.assertEqual(
+                catalog_row(stored.catalog, cluster_id)["medoid_path"],
+                catalog_row(source.catalog, cluster_id)["medoid_path"],
+            )
+            self.assertEqual(
+                cluster_ngrams(stored.ngrams, cluster_id).ngram.tolist(),
+                cluster_ngrams(source.ngrams, cluster_id).ngram.tolist(),
+            )
+
+    def test_evidence_only_keeps_reviewed_labels(self) -> None:
+        update_named_cluster(
+            self.db_path,
+            "android",
+            0,
+            family="Chưa phân loại",
+            submodule="",
+            detail="",
+            confidence="high",
+            needs_review=False,
+        )
+        with connect(self.db_path) as connection:
+            connection.execute("DELETE FROM cluster_evidence")
+        with self.assertRaisesRegex(ValueError, "cluster_evidence"):
+            initialize_database(self.db_path)
+        counts = publish_evidence(self.db_path, ASSET_DIR, "seed_model", "test")
+        self.assertEqual(counts["android_evidence"], MAPPING_COUNTS["android"])
+        initialize_database(self.db_path)
+        row = load_named_clusters(self.db_path, "android").set_index("cluster_id").loc[0]
+        self.assertEqual(row.business_family, "Chưa phân loại")
+        self.assertEqual(load_recent_audit(self.db_path).iloc[0].entity_type, "evidence_refresh")
 
     def test_replace_named_clusters_keeps_taxonomy_and_audit(self) -> None:
         android = load_named_clusters(self.db_path, "android")
@@ -153,7 +220,7 @@ class DatabaseTests(unittest.TestCase):
         self.assertTrue(changed.business_detail.endswith(" QA"))
         self.assertEqual(changed.naming_source, "business_review_taxonomy_update")
         self.assertTrue(bool(changed.needs_review))
-        self.assertEqual(len(load_recent_audit(self.db_path)), 1)
+        self.assertEqual(len(load_recent_audit(self.db_path)), 2)
 
     def test_new_taxonomy_row_gets_stable_custom_id(self) -> None:
         taxonomy = load_taxonomy(self.db_path)
@@ -185,7 +252,7 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(row.taxonomy_id, target.taxonomy_id)
         self.assertEqual(row.naming_source, "business_review")
         self.assertFalse(bool(row.needs_review))
-        self.assertEqual(len(load_recent_audit(self.db_path)), 1)
+        self.assertEqual(len(load_recent_audit(self.db_path)), 2)
 
     def test_filter_and_mapping_export(self) -> None:
         frame = load_named_clusters(self.db_path, "ios")

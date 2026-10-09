@@ -124,9 +124,14 @@ import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 
 root, target = Path(sys.argv[1]), Path(sys.argv[2])
-files = sorted(root.glob("model_version=*/platform=*/*.parquet"))
+# Partitions without journeys carry no typed columns; take the schema from a
+# non-empty one so the merged CSV keeps every column.
+files = [
+    path for path in sorted(root.glob("model_version=*/platform=*/*.parquet"))
+    if pq.ParquetFile(path).metadata.num_rows
+]
 if not files:
-    raise SystemExit(f"no scored parquet files below {root}")
+    raise SystemExit(f"no scored journeys below {root}")
 schema = pq.read_schema(files[0]).remove_metadata()
 tmp = target.with_name(f".{target.name}.tmp")
 rows = 0
@@ -142,6 +147,8 @@ PY
 fi
 
 # 4. Name clusters with the 3-level business taxonomy (both platforms at once).
+#    Names are written once per cluster (<platform>_cluster_mapping.csv), not into
+#    every scored row; rows join to them on (model_version, platform, cluster_id).
 if [[ -z "${SKIP_NAMING:-}" ]]; then
   log "[4/4] taxonomy naming -> ${SCORES}/taxonomy_naming"
   naming_args=()
@@ -151,7 +158,7 @@ if [[ -z "${SKIP_NAMING:-}" ]]; then
   for platform in "${PLATFORM_LIST[@]}"; do
     naming_args+=(
       --"${platform}"-input "${SCORES}/${platform}/${platform}_scores.csv"
-      --"${platform}"-output "${SCORES}/${platform}/${platform}_scores_taxonomy_named.csv"
+      --"${platform}"-mapping-output "${SCORES}/${platform}/${platform}_cluster_mapping.csv"
       --"${platform}"-catalog-output "${SCORES}/${platform}/${platform}_taxonomy_shareholder_catalog.json"
     )
   done

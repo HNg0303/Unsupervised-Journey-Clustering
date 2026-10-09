@@ -2,133 +2,124 @@
 
 This document defines the columns in the scored journey inference result. It
 applies to the partitioned parquet files under `output/scores/` and to the
-concatenated inspection file such as `output/inspection/android_all.parquet`.
+merged `<platform>_scores.csv` written by `scripts/run_full_pipeline.sh`. The
+columns and their order are those of the `journey_summary` database table
+(`OUTPUT_COLUMNS` in `src/journey_clustering/cli/infer.py`).
 
 The logical grain is **one row per journey**. A session may contain multiple
-journeys. The stable inference identity is `(journey_id, model_version)`.
+journeys. Business names are not repeated on every row: each journey carries
+the HiFPT sitemap `taxonomy_id` of its cluster, and the names live once per id
+in `journey_sitemap_taxonomy` (`taxonomy/hifpt_sitemap_taxonomy.csv`).
 
 ## Important conventions
 
-- Timestamps are UTC-aware timestamps when written by the partitioned scorer.
+- Timestamps are UTC.
 - Ratios and shares are stored as decimals between `0` and `1`, not percentages.
-- `cluster = -1` means the primary scorer did not accept the journey into a
-  fitted cluster. For downstream grouping, prefer `effective_cluster_key`.
-- `effective_cluster_key = UNKNOWN` means unresolved; values such as `C:21`
-  identify the effective cluster namespace and ID.
-- `cluster_name`, `cluster_name_en`, and business-family fields are intended to
-  be descriptive labels joined from the frozen model mapping. In the currently
-  inspected scored files, these fields can contain the unresolved fallback for
-  rows that actually have a valid cluster; for reliable reporting, group by
-  `effective_cluster_key` and rejoin the frozen mapping before displaying names.
-  Cluster IDs are stable only within a model version; names and IDs can change
-  after retraining.
+- `cluster_id = -1` means the scorer did not accept the journey into a fitted
+  cluster. Cluster IDs are stable only within a model version; names and IDs can
+  change after retraining.
+- `journey_id` restarts with every partition run. Combine runs on
+  `(batch date, model_version, journey_id)`.
 - Empty strings and nulls are both possible for optional tokens, predictions,
   identifiers, and friction fields.
 
-## Identity and provenance
+## Columns
 
 | Column | Logical type | Metadata |
 |---|---|---|
-| `journey_id` | string, required | Unique journey identifier. In partitioned inference it is prefixed with the source partition, for example `platform=android_bucket=000_part-00000::J000002`. Deduplicate using `(journey_id, model_version)` when combining reruns. |
-| `session_id` | string, required | Original application session identifier. One session can contain multiple segmented journeys. Use `nunique` for session coverage, not row count. |
-| `device_id` | string, nullable | Device identifier inherited from the source data. May be absent or anonymized. Use `nunique` only after handling nulls. |
-| `customer_id` | string, nullable | Customer/account identifier inherited from the source data. May be absent, anonymous, or shared across sessions. Treat as sensitive data. |
-| `os` | string | Operating system/platform carried by the journey, normally `android` or `ios`. |
-| `platform` | string, required | Runtime scoring platform written by the partitioned scorer. Normally matches `os`; use this field to select the platform output. |
-| `start_ts` | timestamp UTC | Timestamp of the first event in the journey. |
-| `end_ts` | timestamp UTC | Timestamp of the last event in the journey. |
-| `scored_at` | timestamp UTC | Time at which the journey was scored and written to the result. This is processing time, not user activity time. |
-| `model_version` | string, required | Frozen model/run identifier used for scoring. Always retain this when comparing results across runs. |
-| `source_partition` | string | Input partition from which the journey was produced. Useful for lineage, replay, and partition-level monitoring. |
+| `model_version` | string, required | Frozen model/run identifier used for scoring. |
+| `platform` | string, required | `android` or `ios`. |
+| `cluster_id` | integer | Fitted cluster label; `-1` = not accepted (too far from every centroid). |
+| `taxonomy_id` | string, nullable | HiFPT sitemap id of the cluster's reviewed name: feature `M05.06.03`, submodule `M05.06` or module `M05`. Empty for cluster `-1` and before the clusters are named. |
+| `journey_id` | string, required | Journey identifier prefixed with its source partition, e.g. `platform=android_bucket=000_part-00000::J000002`. |
+| `session_id` | string, required | Application session; one session can contain several journeys. |
+| `device_id` | string, nullable | Device identifier. |
+| `customer_id` | string, nullable | Customer/account identifier. Sensitive. |
+| `start_ts`, `end_ts` | timestamp UTC | First and last event of the journey. Duration = `end_ts - start_ts`. |
+| `boundary_reason` | string | Why the journey started: `session_start`, `idle_gap`, `root_return`, `auth_change`, `length_cap`. |
+| `n_events_raw` | integer | Events before sequence cleanup. |
+| `n_events_final` | integer | Events after duplicate/cycle cleanup and screen filtering; the modelled length. |
+| `n_loop_removed` | integer | Events removed when repeated cycles were collapsed; `> 0` means a loop. |
+| `action_ratio` | float `[0, 1]` | Share of cleaned events that are actions rather than views. |
+| `back_rate` | float `[0, 1]` | Share of cleaned events that are back navigation. |
+| `revisit_ratio` | float `[0, 1]` | `1 - unique_tokens / n_events_final`. |
+| `median_gap_s`, `p90_gap_s`, `max_gap_s` | float, seconds | Median, 90th percentile and maximum gap between consecutive events. |
+| `entry_token`, `exit_token` | string, nullable | First and last cleaned token. |
+| `sequence` | string | Cleaned ordered token path, tokens separated by ` -> `. |
+| `distance_to_centroid` | float | Distance to the nearest fitted centroid; lower is more similar. |
+| `markov_logprob` | float | Length-normalised log-probability of the sequence under the cluster's transition model; more negative is less typical. |
+| `geometric_anomaly` | boolean | Too far from every centroid (this is also why `cluster_id = -1`). |
+| `generative_anomaly` | boolean | Markov log-probability below the fitted 5th percentile. |
+| `severe_anomaly` | boolean | Geometric anomaly and log-probability below the 1st percentile. |
+| `friction_flags` | pipe-delimited string, nullable | User-experience friction: `excessive_back`, `navigation_loop`, `screen_thrash`, `slow_journey`. Split on `|` before counting. |
+| `next_action` | string, nullable | Most likely next token under the cluster's Markov model. |
+| `next_action_share` | float, nullable | Observed share of that next token; a support score, not a calibrated probability. |
+| `scored_at` | timestamp UTC | When the partition was scored (processing time). |
 
-## Journey segmentation and size
+## Columns removed from earlier exports
 
-| Column | Logical type | Metadata |
-|---|---|---|
-| `boundary_reason` | string | Reason that the journey started. Typical values are `session_start`, `idle_gap`, `root_return`, `auth_change`, and `length_cap`; empty means no boundary reason was recorded at that row. |
-| `n_events_raw` | integer | Number of events in the journey before sequence cleanup. |
-| `n_events_final` | integer | Number of events remaining after duplicate/cycle cleanup and configured screen filtering. This is the modelled journey length. |
-| `n_unique_tokens` | integer | Number of distinct tokens in the cleaned journey sequence. |
-| `n_dropped_screens` | integer | Number of screens/events removed by configured screen filtering, such as OS chrome or boot-screen removal. |
-| `n_dedup_removed` | integer | Number of consecutive duplicate events removed during cleanup. |
-| `n_loop_removed` | integer | Number of events removed when repeated cycles were collapsed. Values greater than zero indicate detected repeated loops. |
+Older bundles carry extra columns. They were dropped because they duplicate or
+derive from the columns above:
 
-## Behavioural metrics
+| Removed | Use instead |
+|---|---|
+| `os` | `platform` |
+| `cluster` | `cluster_id` |
+| `span_seconds` | `end_ts - start_ts` |
+| `n_unique_tokens` | `round(n_events_final * (1 - revisit_ratio))` |
+| `n_dropped_screens`, `n_dedup_removed` | `n_events_raw - n_events_final - n_loop_removed` (both together) |
+| `nearest_cluster`, `distance_limit` | model internals; `geometric_anomaly` carries the decision |
+| `effective_cluster_key`, `assignment_type` | `cluster_id` (`-1` = unassigned) |
+| `effective_markov_logprob`, `effective_next_action`, `effective_next_action_share` | `markov_logprob`, `next_action`, `next_action_share` (single-model copies) |
+| `behavioral_friction_flags` | `friction_flags` (now holds the behavioural flags only) |
+| `unknown_archetype`, `improbable_transitions` flags | `geometric_anomaly`, `generative_anomaly` |
+| `source_partition` | prefix of `journey_id` before `::` |
+| `cluster_name`, `cluster_name_en`, `business_family`, `business_family_code`, `naming_confidence`, … | `taxonomy_id`, join `journey_sitemap_taxonomy` |
 
-| Column | Logical type | Range/unit | Metadata |
-|---|---|---|---|
-| `action_ratio` | float | `[0, 1]` | Fraction of cleaned events that are actions/taps rather than views. Aggregate with a mean or median. |
-| `back_rate` | float | `[0, 1]` | Fraction of cleaned events classified as back-navigation actions. Higher values indicate more backtracking. |
-| `revisit_ratio` | float | `[0, 1]` | `1 - unique_tokens / n_events_final`. Higher values indicate repeated visits to previously seen screens/tokens. |
-| `span_seconds` | float | seconds | Elapsed time from the first to the last event in the journey. This is not necessarily active user time. |
-| `median_gap_s` | float | seconds | Median gap between consecutive events in the journey. `0` when there are no gaps. |
-| `p90_gap_s` | float | seconds | 90th percentile of consecutive-event gaps. Useful for identifying long pauses. |
-| `max_gap_s` | float | seconds | Maximum gap between consecutive events. |
+## Business names: HiFPT sitemap taxonomy
 
-## Journey endpoints and sequence
+`journey_sitemap_taxonomy` holds the HiFPT sitemap taxonomy, one row per
+module, submodule and feature (16 + 85 + 486 = 587 ids). It is exported from the
+sitemap JSON with `journey-sitemap` into `taxonomy/hifpt_sitemap_taxonomy.csv`.
 
-| Column | Logical type | Metadata |
-|---|---|---|
-| `entry_token` | string, nullable | First cleaned token in the journey, for example `view@HOME`. Use `value_counts()` for entry-path analysis. |
-| `exit_token` | string, nullable | Last cleaned token in the journey. Use `value_counts()` for exit/drop-off analysis. |
-| `sequence` | string | Cleaned ordered token path. Tokens are separated by ` -> `. This is a display/export representation; split on that separator only when the token format is known to contain no unescaped separator. |
+| Column | Metadata |
+|---|---|
+| `taxonomy_id` | `M05` (module), `M05.06` (submodule) or `M05.06.03` (feature). Primary key. |
+| `business_family` | Module, level 1. |
+| `business_submodule` | Submodule, level 2; empty on module rows. |
+| `business_detail` | Feature, level 3; empty on module and submodule rows. |
 
-## Cluster assignment and distance
+### Per-cluster file `journey_cluster_taxonomy.csv`
 
-| Column | Logical type | Metadata |
-|---|---|---|
-| `cluster` | integer | Primary fitted cluster label. `-1` means rejected as noise/unassigned by the primary scorer after the distance threshold. |
-| `nearest_cluster` | integer | Closest fitted cluster before applying the acceptance/distance limit. It can be a valid cluster even when `cluster = -1`. Do not use it as the accepted assignment. |
-| `distance_to_centroid` | float | Distance from the journey representation to the selected nearest cluster centroid. Lower is more geometrically similar. |
-| `distance_limit` | float | Maximum accepted distance for the assignment. A journey with `distance_to_centroid > distance_limit` becomes geometrically anomalous and normally receives `cluster = -1`. |
-| `effective_cluster_key` | string | Downstream grouping key. Examples: `C:21` for a primary C cluster, `B:7` for a secondary B assignment, and `UNKNOWN` for unresolved journeys. |
-| `assignment_type` | string | Assignment route. Common values include `C_primary`, `B_secondary_inference`, `B_existing_secondary`, `B_borderline_secondary`, `unassigned_novel`, `rare_recurring_pattern`, and `friction_candidate`. |
+One row per `(model_version, platform, cluster_id)` with its `taxonomy_id`,
+built by `scripts/build_cluster_taxonomy.py` from the reviewed names exported by
+the cluster labeling app (`<platform>_named_clusters.csv`). It is a file of the
+model run, not a database table. The script refuses names that do not belong to
+the scored model (cluster IDs, journey count per cluster and n-gram evidence
+must match the run's shareholder catalog) or to the sitemap: a given
+`taxonomy_id` must carry its sitemap names, and a cluster named only to level 1
+or 2 gets the module or submodule id. Cluster `-1` keeps the noise name
+"Chưa phân loại | Journey hỗn hợp/nhiễu" and no id.
 
-For cluster-level aggregation, group by `effective_cluster_key`, not by the
-human-readable name. Join names from the matching frozen catalog after grouping.
+### Putting `taxonomy_id` on journeys
 
-## Markov likelihood and anomaly signals
+- At scoring time: `journey-infer ... --cluster-taxonomy <run>/journey_cluster_taxonomy.csv`.
+- On existing scores (`scripts/map_cluster_names.py`, library
+  `journey_clustering.cluster_mapping`), reading 200,000 rows at a time:
 
-| Column | Logical type | Metadata |
-|---|---|---|
-| `markov_logprob` | float | Length-normalized log-probability of the journey sequence under the assigned/nearest cluster transition model. More negative values indicate less typical transitions. |
-| `effective_markov_logprob` | float | Markov score associated with the effective assignment after any hierarchical fallback. Use this for operational reporting. |
-| `geometric_anomaly` | boolean | `true` when the journey is too far from the accepted centroid according to the fitted distance threshold. |
-| `generative_anomaly` | boolean | `true` when the journey's Markov log-probability is below the fitted generative threshold. |
-| `severe_anomaly` | boolean | `true` when both geometric and generative anomaly conditions are met. |
+```bash
+journey-map --scores-run output/scores/678/678_20260929_090904 [--with-names]
+# -> <run>/android/android_journeys_named.csv, <run>/ios/ios_journeys_named.csv
+```
 
-The anomaly booleans are model-relative flags, not probabilities. Report them
-as journey shares, for example `mean(geometric_anomaly)`.
-
-## Friction and next-action signals
-
-| Column | Logical type | Metadata |
-|---|---|---|
-| `friction_flags` | pipe-delimited string, nullable | Full rule-based signal list. Possible flags include `excessive_back`, `navigation_loop`, `screen_thrash`, `slow_journey`, `unknown_archetype`, and `improbable_transitions`. Multiple flags are separated by `|`. |
-| `behavioral_friction_flags` | pipe-delimited string, nullable | Operational friction subset after removing assignment/model-diagnostic flags such as `unknown_archetype` and `improbable_transitions`. Use this for user-experience friction reporting. |
-| `next_action` | string, nullable | Most likely next token predicted by the fitted Markov model for the journey's effective cluster. Empty when no prediction is available. |
-| `next_action_share` | float, nullable | Observed share of the predicted next action among matching transitions. Not a calibrated probability; use as a ranking/support score. |
-| `effective_next_action` | string, nullable | Next-action prediction associated with the effective assignment after hierarchical fallback. |
-| `effective_next_action_share` | float, nullable | Support/share associated with `effective_next_action`. |
-
-To count friction flags, split the selected column on `|` and explode before
-calling `value_counts()`. Do not count the raw string values as individual
-flags.
-
-## Human-readable cluster labels
-
-| Column | Logical type | Metadata |
-|---|---|---|
-| `cluster_name` | string | Vietnamese human-readable name for the effective cluster. The unresolved fallback is `Hành trình chưa phân loại / hỗn hợp`. |
-| `cluster_name_en` | string | English human-readable name for the effective cluster. The unresolved fallback is `Unclassified / mixed journeys`. |
-| `business_family` | string | Human-readable business-family label emitted by the scorer. In the current Android parquet it is Vietnamese for the unresolved fallback, for example `chưa phân loại`; do not assume the column language is stable across scoring paths. |
-| `business_family_code` | string | Stable machine-oriented business-family code, such as `unknown`, `support`, `contracts`, or `device_management`. |
-| `naming_confidence` | string | Confidence of the catalog naming decision, normally `high`, `medium`, `low`, `unknown`, or `not_applicable`. This describes label quality, not model assignment confidence. |
+`--with-names` adds the three sitemap names after `taxonomy_id`. Journeys of
+a cluster the file does not know get no id, and names from another
+`model_version` are refused. Older exports with a `cluster` column are
+accepted. In the database the names are a join on `taxonomy_id`.
 
 ## Recommended aggregation fields
 
-For a shareholder-style cluster summary, use the following metrics per
-`effective_cluster_key`:
+Per `(model_version, platform, cluster_id)` or per `taxonomy_id`, then join the names:
 
 ```text
 journey_count              = count(journey_id)
@@ -136,7 +127,7 @@ journey_share              = journey_count / total journeys
 session_count              = nunique(session_id)
 device_count               = nunique(device_id)
 median_journey_length      = median(n_events_final)
-median_duration_seconds    = median(span_seconds)
+median_duration_seconds    = median(end_ts - start_ts)
 mean_action_ratio          = mean(action_ratio)
 mean_back_rate             = mean(back_rate)
 mean_revisit_ratio         = mean(revisit_ratio)
@@ -148,16 +139,11 @@ top_entry_token            = mode(entry_token)
 top_exit_token             = mode(exit_token)
 ```
 
-The static representative journey and ranked n-gram evidence should continue
-to come from the matching model catalog. The inference parquet contains the
-observed journey sequence, but it does not contain the original fitted TF-IDF
-vocabulary needed to reproduce the catalog's exact n-gram lift values.
-
 ## Source of definitions
 
 - Journey construction and behavioural fields: `src/journey_clustering/postprocess.py`.
 - Cluster assignment, anomaly, friction, and next-action fields: `src/journey_clustering/score.py`.
-- Partitioned inference metadata: `scripts/score_partitioned_events.py`.
-- Training catalog aggregation: `src/journey_clustering/cluster.py`.
-- Taxonomy naming and score decoration: `src/journey_clustering/naming.py`, exposed by
-  `scripts/taxonomy_cluster_naming_pipeline.py`.
+- Published column set and order: `src/journey_clustering/cli/infer.py`.
+- Taxonomy naming per cluster: `src/journey_clustering/naming.py`.
+- Reviewed name table: `src/journey_clustering/cli/cluster_taxonomy.py`.
+- Sitemap taxonomy and `taxonomy_id` on journeys: `src/journey_clustering/cluster_mapping.py`, `src/journey_clustering/cli/map_clusters.py`, `src/journey_clustering/cli/sitemap_taxonomy.py`.

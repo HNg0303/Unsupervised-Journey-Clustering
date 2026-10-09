@@ -17,14 +17,15 @@ Example:
     --ios-ngrams /path/to/ios_cluster_ngrams.csv \
     --output-dir output/scores/taxonomy_naming \
     --android-input /path/to/android_scores.csv \
-    --android-output /path/to/android_scores_taxonomy_named.csv \
     --ios-input /path/to/ios_scores.csv \
-    --ios-output /path/to/ios_scores_taxonomy_named.csv \
     --overwrite
 
-When a score input/output pair is supplied, the pipeline also creates a
-shareholder catalog beside the named score CSV. Use the corresponding
-``--*-catalog-output`` argument to choose another location.
+Names are not written into every scored row. When a score input is supplied,
+the pipeline counts its journeys per cluster and writes, beside that CSV, the
+platform's cluster name table ``<platform>_cluster_mapping.csv`` and the
+shareholder catalog ``<platform>_taxonomy_shareholder_catalog.json``. Use the
+``--*-mapping-output`` and ``--*-catalog-output`` arguments to choose other
+locations. Rows join to names on (model_version, platform, cluster_id).
 """
 
 from __future__ import annotations
@@ -41,16 +42,6 @@ from pathlib import Path
 
 
 PLATFORMS = ("android", "ios")
-APPLIED_COLUMNS = (
-    "taxonomy_id", "cluster_name", "business_family", "business_submodule",
-    "business_detail", "naming_confidence", "naming_source", "needs_review",
-)
-STALE_SEMANTIC_COLUMNS = {
-    *APPLIED_COLUMNS,
-    "module", "submodule", "detail", "cluster_name_en",
-    "business_family_code", "canonical_level_2_code", "mapping_function_code",
-    "function_code",
-}
 TAXONOMY_ROW = re.compile(
     r"^\|\s*(M\d{2}\.\d{2}\.\d{2})\s*\|\s*([^|]+?)\s*\|\s*"
     r"([^|]+?)\s*\|\s*([^|]+?)\s*\|"
@@ -602,78 +593,52 @@ def write_shareholder_catalog(
     temporary.replace(path)
 
 
-def apply_mapping_to_scores(
+def catalog_scores(
     input_path: Path,
-    output_path: Path,
+    mapping_path: Path,
     catalog_path: Path,
     platform: str,
     mapping_rows: list[dict[str, object]],
     overwrite: bool,
 ) -> dict[str, object]:
-    """Stream a score CSV, add taxonomy names, and create its catalog."""
-    if input_path.resolve() == output_path.resolve():
-        raise ValueError("input and output score paths must be different")
-    for path in (output_path, catalog_path):
+    """Count a score CSV per cluster and write the platform's name table and catalog."""
+    for path in (mapping_path, catalog_path):
         if path.exists() and not overwrite:
             raise ValueError(f"output exists: {path}; pass --overwrite")
+    platform_rows = [row for row in mapping_rows if row["platform"] == platform]
     platform_mapping = {
         int(row["cluster_id"]): {key: str(value) for key, value in row.items()}
-        for row in mapping_rows if row["platform"] == platform
+        for row in platform_rows
     }
     if not platform_mapping:
         raise ValueError(f"mapping has no rows for platform {platform!r}")
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_name(f".{output_path.name}.tmp")
     counts: Counter[int] = Counter()
-    row_count = 0
-    try:
-        with input_path.open(encoding="utf-8-sig", newline="") as source:
-            reader = csv.DictReader(source)
-            input_columns = list(reader.fieldnames or ())
-            cluster_column = "cluster" if "cluster" in input_columns else "cluster_id"
-            if cluster_column not in input_columns:
-                raise ValueError("score input must contain cluster or cluster_id")
-            base_columns = [
-                column for column in input_columns if column not in STALE_SEMANTIC_COLUMNS
-            ]
-            insert_at = base_columns.index(cluster_column) + 1
-            output_columns = (
-                base_columns[:insert_at] + list(APPLIED_COLUMNS) + base_columns[insert_at:]
-            )
-            with temporary.open("w", encoding="utf-8-sig", newline="") as target:
-                writer = csv.DictWriter(
-                    target, fieldnames=output_columns, extrasaction="ignore"
+    with input_path.open(encoding="utf-8-sig", newline="") as source:
+        reader = csv.DictReader(source)
+        input_columns = list(reader.fieldnames or ())
+        cluster_column = "cluster_id" if "cluster_id" in input_columns else "cluster"
+        if cluster_column not in input_columns:
+            raise ValueError("score input must contain cluster_id or cluster")
+        for line_number, row in enumerate(reader, start=2):
+            source_platform = str(row.get("platform", "") or row.get("os", "")).strip().lower()
+            if source_platform and source_platform != platform:
+                raise ValueError(
+                    f"score platform {source_platform!r} != {platform!r} at line {line_number}"
                 )
-                writer.writeheader()
-                for line_number, row in enumerate(reader, start=2):
-                    source_platform = str(row.get("platform", "") or row.get("os", "")).strip().lower()
-                    if source_platform and source_platform != platform:
-                        raise ValueError(
-                            f"score platform {source_platform!r} != {platform!r} at line {line_number}"
-                        )
-                    cluster_id = parse_cluster_id(row.get(cluster_column), f"input line {line_number}")
-                    mapped = platform_mapping.get(cluster_id)
-                    if mapped is None:
-                        raise ValueError(f"cluster {(platform, cluster_id)} absent from mapping")
-                    for column in APPLIED_COLUMNS:
-                        row[column] = mapped[column]
-                    if "platform" in output_columns:
-                        row["platform"] = platform
-                    writer.writerow(row)
-                    counts[cluster_id] += 1
-                    row_count += 1
-        temporary.replace(output_path)
-    finally:
-        temporary.unlink(missing_ok=True)
+            cluster_id = parse_cluster_id(row.get(cluster_column), f"input line {line_number}")
+            if cluster_id not in platform_mapping:
+                raise ValueError(f"cluster {(platform, cluster_id)} absent from mapping")
+            counts[cluster_id] += 1
 
+    write_csv(mapping_path, platform_rows)
     write_shareholder_catalog(catalog_path, platform, platform_mapping, counts)
     return {
         "platform": platform,
         "input": str(input_path),
-        "output": str(output_path),
+        "mapping": str(mapping_path),
         "catalog": str(catalog_path),
-        "rows": row_count,
+        "rows": sum(counts.values()),
         "clusters_in_input": len(counts),
         "noise_rows": counts.get(-1, 0),
     }
@@ -688,11 +653,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-evidence-rows", type=int, default=2)
     parser.add_argument("--min-mass-coverage", type=float, default=0.15)
     parser.add_argument("--min-score-share", type=float, default=0.60)
-    parser.add_argument("--android-input", type=Path, help="Android score CSV to name")
-    parser.add_argument("--android-output", type=Path, help="named Android score CSV")
+    parser.add_argument("--android-input", type=Path, help="Android score CSV to count per cluster")
+    parser.add_argument("--android-mapping-output", type=Path, help="Android cluster name table CSV")
     parser.add_argument("--android-catalog-output", type=Path, help="Android shareholder catalog JSON")
-    parser.add_argument("--ios-input", type=Path, help="iOS score CSV to name")
-    parser.add_argument("--ios-output", type=Path, help="named iOS score CSV")
+    parser.add_argument("--ios-input", type=Path, help="iOS score CSV to count per cluster")
+    parser.add_argument("--ios-mapping-output", type=Path, help="iOS cluster name table CSV")
     parser.add_argument("--ios-catalog-output", type=Path, help="iOS shareholder catalog JSON")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
@@ -705,17 +670,13 @@ def main() -> int:
     if not 0 < args.min_mass_coverage <= 1 or not 0 < args.min_score_share <= 1:
         raise SystemExit("coverage/share thresholds must be in (0, 1]")
     score_args = {
-        "android": (args.android_input, args.android_output, args.android_catalog_output),
-        "ios": (args.ios_input, args.ios_output, args.ios_catalog_output),
+        "android": (args.android_input, args.android_mapping_output, args.android_catalog_output),
+        "ios": (args.ios_input, args.ios_mapping_output, args.ios_catalog_output),
     }
-    for platform, (input_path, output_path, catalog_path) in score_args.items():
-        if bool(input_path) != bool(output_path):
+    for platform, (input_path, mapping_path, catalog_path) in score_args.items():
+        if (mapping_path or catalog_path) and not input_path:
             raise SystemExit(
-                f"--{platform}-input and --{platform}-output must be supplied together"
-            )
-        if catalog_path and not input_path:
-            raise SystemExit(
-                f"--{platform}-catalog-output requires --{platform}-input/output"
+                f"--{platform}-mapping-output/--{platform}-catalog-output require --{platform}-input"
             )
     leaves = parse_taxonomy(args.taxonomy.resolve())
     rows = read_ngrams(args.android_ngrams.resolve(), "android")
@@ -737,17 +698,20 @@ def main() -> int:
     if unresolved:
         write_csv(output_dir / "unresolved_clusters.csv", unresolved)
     applied = []
-    for platform, (input_arg, output_arg, catalog_arg) in score_args.items():
+    for platform, (input_arg, mapping_arg, catalog_arg) in score_args.items():
         if input_arg is None:
             continue
         input_path = input_arg.resolve()
-        output_path = output_arg.resolve()
-        catalog_path = (
-            catalog_arg.resolve()
-            if catalog_arg else output_path.with_suffix(".shareholder_catalog.json")
+        mapping_path = (
+            mapping_arg.resolve() if mapping_arg
+            else input_path.with_name(f"{platform}_cluster_mapping.csv")
         )
-        applied.append(apply_mapping_to_scores(
-            input_path, output_path, catalog_path, platform, mappings, args.overwrite
+        catalog_path = (
+            catalog_arg.resolve() if catalog_arg
+            else input_path.with_name(f"{platform}_taxonomy_shareholder_catalog.json")
+        )
+        applied.append(catalog_scores(
+            input_path, mapping_path, catalog_path, platform, mappings, args.overwrite
         ))
     summary = {
         "taxonomy": {"modules": len({leaf.module for leaf in leaves}),

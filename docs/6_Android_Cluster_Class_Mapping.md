@@ -18,9 +18,11 @@ Cluster `-1` là noise. Cluster không có trong mapping cũng được đưa v�
 
 ## Áp dụng cho inference cuối cùng
 
-Sau khi `score_partitioned_events.py` tạo output journey, dùng mapping nghiệp vụ
-đã review thủ công để tạo file `*_all_named.csv`. Đây là anchor duy nhất cho
-dashboard và post-analysis:
+Sau khi `score_partitioned_events.py` tạo output journey, bước đặt tên ghi tên
+nghiệp vụ một lần cho mỗi cụm (`<platform>_cluster_mapping.csv`), không ghi lại
+vào từng dòng journey. Tên do người duyệt (export `<platform>_named_clusters.csv`
+từ app labeling) được kiểm tra khớp model rồi xuất thành bảng
+`journey_cluster_taxonomy` bằng `scripts/build_cluster_taxonomy.py`:
 
 ```bash
 python scripts/score_partitioned_events.py --input data/giga_data/android_events_t3-2026.csv --platform android \
@@ -31,11 +33,12 @@ python scripts/taxonomy_cluster_naming_pipeline.py \
   --android-ngrams output/partitioned_runs/latest/android/android_cluster_ngrams.csv \
   --ios-ngrams output/partitioned_runs/latest/ios/ios_cluster_ngrams.csv \
   --output-dir output/scores/current/taxonomy_naming \
-  --android-input output/scores/current/android_scores.csv \
-  --android-output output/scores/current/android_scores_taxonomy_named.csv
+  --android-input output/scores/current/android_scores.csv
+# with the run folders of scripts/run_full_pipeline.sh:
+python scripts/build_cluster_taxonomy.py --scores-run output/scores/<RUN_NAME>/<RUN_ID>
 ```
 
-The mapping is joined on `(platform, cluster_id)`. Cluster `-1` is required for
+The mapping is joined on `(model_version, platform, cluster_id)`. Cluster `-1` is required for
 both platforms and unresolved/new clusters fall back to that row instead of
 receiving a guessed business label.
 

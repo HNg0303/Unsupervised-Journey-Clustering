@@ -775,6 +775,7 @@ def load_inference(platform: str, bundle_key: str | None = None) -> pd.DataFrame
 
     # Examples already carry their names.  The fallback normalisation below keeps older
     # cached examples and current bounded examples on the same schema.
+    df = normalize_scored_columns(df)
     if "cluster" in df.columns:
         df["cluster"] = pd.to_numeric(df["cluster"], errors="coerce")
 
@@ -806,6 +807,21 @@ def load_inference(platform: str, bundle_key: str | None = None) -> pd.DataFrame
     return df
 
 
+def normalize_scored_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    """Map the `journey_summary` scored schema onto the names the pages read.
+
+    Current scores publish `cluster_id` and no `span_seconds` (it equals
+    end_ts - start_ts); older exports keep `cluster` and `span_seconds`.
+    """
+    if "cluster" not in frame.columns and "cluster_id" in frame.columns:
+        frame = frame.rename(columns={"cluster_id": "cluster"})
+    if "span_seconds" not in frame.columns and {"start_ts", "end_ts"} <= set(frame.columns):
+        start = pd.to_datetime(frame["start_ts"], errors="coerce", utc=True)
+        end = pd.to_datetime(frame["end_ts"], errors="coerce", utc=True)
+        frame["span_seconds"] = (end - start).dt.total_seconds()
+    return frame
+
+
 @st.cache_data(show_spinner=False)
 def load_inference_sample(platform: str, bundle_key: str | None = None, limit: int = 3000) -> pd.DataFrame:
     """Read a bounded row sample from a monthly Parquet/CSV export.
@@ -819,7 +835,7 @@ def load_inference_sample(platform: str, bundle_key: str | None = None, limit: i
         return pd.DataFrame()
     path = bundle_named_path(bundle, platform)
     columns = [
-        "journey_id", "session_id", "customer_id", "start_ts", "end_ts", "cluster",
+        "journey_id", "session_id", "customer_id", "start_ts", "end_ts", "cluster", "cluster_id",
         "cluster_name", "cluster_name_en", "business_family", "business_family_code",
         "business_submodule", "n_events_final", "span_seconds", "back_rate",
         "friction_flags", "behavioral_friction_flags", "entry_token", "exit_token",
@@ -855,6 +871,7 @@ def load_inference_sample(platform: str, bundle_key: str | None = None, limit: i
             frame = pa.Table.from_batches(batches).to_pandas().head(limit)
         except (ImportError, OSError, ValueError, RuntimeError):
             return pd.DataFrame()
+    frame = normalize_scored_columns(frame)
     if "cluster" in frame.columns:
         frame["cluster"] = pd.to_numeric(frame["cluster"], errors="coerce")
     if "start_ts" in frame.columns:
@@ -881,14 +898,14 @@ def load_journey_detail(platform: str, journey_id: str, bundle_key: str | None =
         # Read only the columns needed by the detail panel from one partition.
         available = pd.read_parquet(path, engine="pyarrow").columns
         columns = [c for c in [
-            "journey_id", "session_id", "customer_id", "start_ts", "end_ts", "cluster",
+            "journey_id", "session_id", "customer_id", "start_ts", "end_ts", "cluster", "cluster_id",
             "cluster_name", "cluster_name_en", "business_family", "business_submodule",
             "n_events_raw", "n_events_final", "span_seconds", "back_rate", "revisit_ratio",
             "friction_flags", "behavioral_friction_flags", "entry_token", "exit_token",
             "next_action", "effective_next_action", "assignment_type", "sequence",
         ] if c in available]
         frame = pd.read_parquet(path, columns=columns, engine="pyarrow")
-        frame = frame[frame["journey_id"].astype(str).eq(str(journey_id))].copy()
+        frame = normalize_scored_columns(frame[frame["journey_id"].astype(str).eq(str(journey_id))].copy())
         if "start_ts" in frame.columns:
             frame["start_ts"] = pd.to_datetime(frame["start_ts"], errors="coerce", utc=True)
         return frame.head(1)

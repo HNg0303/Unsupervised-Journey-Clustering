@@ -193,6 +193,16 @@ class MapClusterNamesTest(unittest.TestCase):
             self.assertEqual(list(names.columns[position + 1:position + 5]), list(cluster_mapping.SITEMAP_COLUMNS))
             self.assertEqual(list(names["business_detail"]), ["Trả hóa đơn", "Trả hóa đơn", ""])
 
+    def test_reviewer_names_copied_as_they_are(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            taxonomy = cluster_mapping.load_cluster_taxonomy(
+                self.write_taxonomy(Path(directory)), platform="android", model_version="m1")
+            taxonomy[7]["cluster_name"] = "Thanh toán | Hóa đơn | Trả hóa đơn"
+            named = cluster_mapping.apply_cluster_taxonomy(
+                scored_frame(), taxonomy, columns=("taxonomy_id", "cluster_name"))
+            self.assertEqual(named.loc[0, "cluster_name"], "Thanh toán | Hóa đơn | Trả hóa đơn")
+            self.assertEqual(list(named.columns).index("cluster_name"), list(named.columns).index("cluster") + 2)
+
     def test_infer_fills_taxonomy_id(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             taxonomy = cluster_mapping.load_cluster_taxonomy(

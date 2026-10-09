@@ -297,12 +297,14 @@ def apply_cluster_taxonomy(
     taxonomy: dict[int, dict[str, Any]],
     *,
     sitemap: dict[str, dict[str, str]] | None = None,
+    columns: tuple[str, ...] | None = None,
     cluster_column: str | None = None,
 ) -> pd.DataFrame:
     """Put ``taxonomy_id`` right after the cluster column.
 
     With ``sitemap`` the three sitemap names follow it, for reading the file
-    without a join. Works on the current output (``cluster_id``) and on older
+    without a join. ``columns`` instead copies those fields of the taxonomy
+    rows as they are (e.g. the reviewer's ``cluster_name``). Works on the current output (``cluster_id``) and on older
     exports (``cluster``). A cluster id the taxonomy does not know gets the -1
     noise entry (no id) instead of a wrong one, and names from another model
     are refused.
@@ -318,6 +320,8 @@ def apply_cluster_taxonomy(
             raise ValueError(f"journeys from model {sorted(other)} but names are for {sorted(names_version)}")
     unknown = taxonomy[-1]
     rows = [taxonomy.get(int(cluster), unknown) for cluster in frame[cluster_column]]
+    if columns is not None:
+        return _apply_rows(frame, rows, columns, cluster_column)
     if sitemap is None:
         return _apply_rows(frame, rows, SITEMAP_COLUMNS[:1], cluster_column)
     empty = dict.fromkeys(SITEMAP_COLUMNS, "")
@@ -342,6 +346,7 @@ def map_scores_file(
     taxonomy: dict[int, dict[str, Any]],
     *,
     sitemap: dict[str, dict[str, str]] | None = None,
+    columns: tuple[str, ...] | None = None,
     chunksize: int = 200_000,
 ) -> dict[str, Any]:
     """Write ``input_path`` (CSV, parquet file or folder) with ``taxonomy_id``.
@@ -359,7 +364,7 @@ def map_scores_file(
     known = set(taxonomy)
     try:
         for index, chunk in enumerate(_read_chunks(input_path, chunksize)):
-            named = apply_cluster_taxonomy(chunk, taxonomy, sitemap=sitemap)
+            named = apply_cluster_taxonomy(chunk, taxonomy, sitemap=sitemap, columns=columns)
             cluster_column = "cluster_id" if "cluster_id" in named.columns else "cluster"
             unknown += int((~named[cluster_column].astype(int).isin(known)).sum())
             ids = named["taxonomy_id"].fillna("").astype(str)

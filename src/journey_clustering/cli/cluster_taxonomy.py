@@ -26,6 +26,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from journey_clustering.cluster_mapping import NOISE_NAME
+
 PLATFORMS = ("android", "ios")
 
 # Column order of the `journey_cluster_taxonomy` database table.
@@ -34,18 +36,6 @@ TAXONOMY_COLUMNS = (
     "business_family", "business_submodule", "business_detail",
     "naming_confidence", "naming_source", "needs_review", "named_at",
 )
-# Cluster -1 holds the journeys no cluster accepted, a mix of every business
-# area, so it always carries the noise name the naming step gives it.
-NOISE_NAME = {
-    "taxonomy_id": "",
-    "cluster_name": "Chưa phân loại | Journey hỗn hợp/nhiễu",
-    "business_family": "Chưa phân loại",
-    "business_submodule": "Journey hỗn hợp/nhiễu",
-    "business_detail": "",
-    "naming_confidence": "low",
-    "naming_source": "noise_cluster",
-    "needs_review": 0,
-}
 
 
 def read_rows(path: Path) -> list[dict[str, str]]:

@@ -22,6 +22,7 @@ journey-train = "journey_clustering.cli.train:main"
 journey-infer = "journey_clustering.cli.infer:main"
 journey-name = "journey_clustering.naming:main"
 journey-cluster-taxonomy = "journey_clustering.cli.cluster_taxonomy:main"
+journey-map = "journey_clustering.cli.map_clusters:main"
 
 [project.optional-dependencies]
 dev = ["pytest"]

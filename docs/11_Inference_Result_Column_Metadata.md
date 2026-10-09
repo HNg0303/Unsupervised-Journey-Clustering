@@ -94,6 +94,23 @@ cluster and the n-gram evidence must match the run's shareholder catalog.
 | `needs_review` | `1` when the name still needs a reviewer. |
 | `named_at` | When the name was last saved in the labeling app. |
 
+### Attaching the names to journeys
+
+`journey-map` (`scripts/map_cluster_names.py`, library
+`journey_clustering.cluster_mapping`) writes a named copy of each platform's
+scores, reading the scores 200,000 rows at a time:
+
+```bash
+journey-map --scores-run output/scores/678/678_20260929_090904
+# -> <run>/android/android_journeys_named.csv, <run>/ios/ios_journeys_named.csv
+```
+
+The eight name fields of the table are inserted right after `cluster_id`.
+Clusters the taxonomy does not know get the cluster `-1` noise name, and names
+from another `model_version` are refused. Older exports with a `cluster`
+column are accepted; their old name columns are replaced. In the database the
+same result is a join on `(model_version, platform, cluster_id)`.
+
 ## Recommended aggregation fields
 
 Per `(model_version, platform, cluster_id)`, then join the names:
@@ -123,3 +140,4 @@ top_exit_token             = mode(exit_token)
 - Published column set and order: `src/journey_clustering/cli/infer.py`.
 - Taxonomy naming per cluster: `src/journey_clustering/naming.py`.
 - Reviewed name table: `src/journey_clustering/cli/cluster_taxonomy.py`.
+- Names attached to journeys: `src/journey_clustering/cluster_mapping.py`, `src/journey_clustering/cli/map_clusters.py`.

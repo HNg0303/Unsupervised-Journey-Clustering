@@ -12,7 +12,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from journey_clustering import naming  # noqa: E402
+from journey_clustering import cluster_mapping, naming  # noqa: E402
 from journey_clustering.cli import cluster_taxonomy, infer  # noqa: E402
 
 
@@ -112,6 +112,49 @@ class ClusterTaxonomyTest(unittest.TestCase):
         self.assertEqual(len(errors), 2)
         missing = cluster_taxonomy.alignment_errors(self.named()[:1], self.catalog, "android")
         self.assertIn("no name", missing[0])
+
+
+class MapClusterNamesTest(unittest.TestCase):
+    def write_taxonomy(self, root: Path) -> Path:
+        named = ClusterTaxonomyTest().named()
+        rows = cluster_taxonomy.taxonomy_rows(named, "m1", "android")
+        rows += cluster_taxonomy.taxonomy_rows(named, "m1", "ios")
+        rows[1].update(cluster_name="Thanh toán | Hóa đơn", business_family="Thanh toán")
+        path = root / "journey_cluster_taxonomy.csv"
+        pd.DataFrame(rows).to_csv(path, index=False)
+        return path
+
+    def test_names_every_journey_of_the_platform(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            taxonomy = cluster_mapping.load_cluster_taxonomy(
+                self.write_taxonomy(root), platform="android", model_version="m1")
+            frame = infer.to_output_schema(pd.concat([scored_frame()] * 3, ignore_index=True))
+            frame.loc[2, "cluster_id"] = 99  # a cluster the names do not know
+            frame["customer_id"] = "6039276"
+            scores = root / "android_scores.csv"
+            frame.to_csv(scores, index=False)
+            result = cluster_mapping.map_scores_file(scores, root / "named.csv", taxonomy, chunksize=2)
+            self.assertEqual((result["rows"], result["unknown_cluster_rows"]), (3, 1))
+            out = pd.read_csv(root / "named.csv", dtype={"customer_id": str})
+            position = list(out.columns).index("cluster_id")
+            self.assertEqual(list(out.columns[position + 1:position + 9]),
+                             list(cluster_mapping.TAXONOMY_NAME_COLUMNS))
+            self.assertEqual(list(out["business_family"]), ["Thanh toán", "Thanh toán", "Chưa phân loại"])
+            self.assertEqual(out.loc[0, "customer_id"], "6039276")
+
+    def test_old_exports_and_other_models(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_taxonomy(Path(directory))
+            taxonomy = cluster_mapping.load_cluster_taxonomy(path, platform="ios", model_version="m1")
+            old = scored_frame().assign(cluster_name="old name")
+            named = cluster_mapping.apply_cluster_taxonomy(old, taxonomy)
+            self.assertEqual(named.loc[0, "cluster_name"], "Pay")
+            self.assertEqual(list(named.columns).count("cluster_name"), 1)
+            with self.assertRaises(ValueError):
+                cluster_mapping.apply_cluster_taxonomy(old.assign(model_version="m2"), taxonomy)
+            with self.assertRaises(ValueError):
+                cluster_mapping.load_cluster_taxonomy(path, platform="ios", model_version="m2")
 
 
 if __name__ == "__main__":

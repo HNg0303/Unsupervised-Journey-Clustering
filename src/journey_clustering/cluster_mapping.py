@@ -1,7 +1,15 @@
-"""Load and apply the business taxonomy assigned to clustering output."""
+"""Load and apply the business taxonomy assigned to clustering output.
+
+The reviewed business names live once per cluster in the
+``journey_cluster_taxonomy`` table (``scripts/build_cluster_taxonomy.py``).
+``load_cluster_taxonomy`` and ``apply_cluster_taxonomy`` attach them to scored
+journeys of either platform, and ``map_scores_file`` does it chunk by chunk for
+the large ``<platform>_scores.csv`` files (CLI: ``journey-map``).
+"""
 
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 from typing import Any
@@ -169,3 +177,145 @@ def apply_cluster_mapping(
     rows = [table.get(int(cluster), unknown) for cluster in out[cluster_column]]
     return _apply_rows(out, rows, MAPPING_COLUMNS, cluster_column)
 
+
+
+# Name fields of `journey_cluster_taxonomy` attached to every journey.
+TAXONOMY_NAME_COLUMNS = (
+    "taxonomy_id",
+    "cluster_name",
+    "business_family",
+    "business_submodule",
+    "business_detail",
+    "naming_confidence",
+    "naming_source",
+    "needs_review",
+)
+# Cluster -1 holds the journeys no cluster accepted, a mix of every business
+# area, so it always carries the noise name.
+NOISE_NAME = {
+    "taxonomy_id": "",
+    "cluster_name": "Chưa phân loại | Journey hỗn hợp/nhiễu",
+    "business_family": "Chưa phân loại",
+    "business_submodule": "Journey hỗn hợp/nhiễu",
+    "business_detail": "",
+    "naming_confidence": "low",
+    "naming_source": "noise_cluster",
+    "needs_review": 0,
+}
+# Identifiers pandas would otherwise read as floats (6039276 -> 6039276.0).
+ID_COLUMNS = ("journey_id", "session_id", "device_id", "customer_id")
+
+
+def _needs_review(value: Any) -> int:
+    return int(str(value).strip().lower() in {"1", "true"})
+
+
+def load_cluster_taxonomy(
+    path: str | Path,
+    *,
+    platform: str,
+    model_version: str | None = None,
+) -> dict[int, dict[str, Any]]:
+    """Load ``cluster_id -> business name`` for one platform.
+
+    ``path`` is the ``journey_cluster_taxonomy.csv`` table (both platforms,
+    filtered by ``platform`` and ``model_version``) or a labeling app export
+    ``<platform>_named_clusters.csv``. Cluster -1 always gets ``NOISE_NAME``.
+    """
+    with Path(path).open(encoding="utf-8-sig", newline="") as handle:
+        records = list(csv.DictReader(handle))
+    if records and "platform" in records[0]:
+        records = [row for row in records if row["platform"] == platform]
+    if model_version is not None and records and "model_version" in records[0]:
+        versions = sorted({row["model_version"] for row in records})
+        records = [row for row in records if row["model_version"] == model_version]
+        if not records:
+            raise ValueError(f"{path} has no {platform} names for model {model_version!r}; it has {versions}")
+    if not records:
+        raise ValueError(f"{path} has no cluster names for platform {platform!r}")
+    table: dict[int, dict[str, Any]] = {}
+    for row in records:
+        cluster_id = int(row["cluster_id"])
+        if cluster_id in table:
+            raise ValueError(f"{path}: cluster {cluster_id} is named twice for {platform}")
+        names = {column: row.get(column, "") or "" for column in TAXONOMY_NAME_COLUMNS}
+        names["needs_review"] = _needs_review(names["needs_review"])
+        names["model_version"] = row.get("model_version", "")
+        table[cluster_id] = names
+    table[-1] = {**table.get(-1, {"model_version": ""}), **NOISE_NAME}
+    return table
+
+
+def apply_cluster_taxonomy(
+    frame: pd.DataFrame,
+    taxonomy: dict[int, dict[str, Any]],
+    *,
+    cluster_column: str | None = None,
+) -> pd.DataFrame:
+    """Insert the business name fields right after the cluster column.
+
+    Works on the current output (``cluster_id``) and on older exports
+    (``cluster``, with name columns that are replaced). A cluster id the
+    taxonomy does not know gets the -1 noise name instead of a wrong one, and
+    names from another model are refused.
+    """
+    if cluster_column is None:
+        cluster_column = next((c for c in ("cluster_id", "cluster") if c in frame.columns), None)
+    if cluster_column is None or cluster_column not in frame.columns:
+        raise KeyError("missing cluster column: expected cluster_id or cluster")
+    names_version = {row["model_version"] for row in taxonomy.values() if row.get("model_version")}
+    if "model_version" in frame.columns and names_version:
+        other = set(frame["model_version"].dropna().astype(str)) - names_version
+        if other:
+            raise ValueError(f"journeys from model {sorted(other)} but names are for {sorted(names_version)}")
+    unknown = taxonomy[-1]
+    rows = [taxonomy.get(int(cluster), unknown) for cluster in frame[cluster_column]]
+    return _apply_rows(frame, rows, TAXONOMY_NAME_COLUMNS, cluster_column)
+
+
+def _read_chunks(path: Path, chunksize: int):
+    if path.is_dir() or path.suffix == ".parquet":
+        import pyarrow.parquet as pq
+
+        files = sorted(path.rglob("*.parquet")) if path.is_dir() else [path]
+        for file in files:
+            for batch in pq.ParquetFile(file).iter_batches(batch_size=chunksize):
+                yield batch.to_pandas()
+        return
+    dtype = {column: "string" for column in ID_COLUMNS}
+    yield from pd.read_csv(path, chunksize=chunksize, dtype=dtype, keep_default_na=True)
+
+
+def map_scores_file(
+    input_path: str | Path,
+    output_path: str | Path,
+    taxonomy: dict[int, dict[str, Any]],
+    *,
+    chunksize: int = 200_000,
+) -> dict[str, Any]:
+    """Write ``input_path`` (CSV, parquet file or folder) with names attached.
+
+    The file is read ``chunksize`` rows at a time, so a multi-GB scores file
+    never sits in memory. Returns the row count and journeys per cluster name.
+    """
+    input_path, output_path = Path(input_path), Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output_path.with_name(f".{output_path.name}.tmp")
+    rows, unknown = 0, 0
+    per_family: dict[str, int] = {}
+    known = set(taxonomy)
+    try:
+        for index, chunk in enumerate(_read_chunks(input_path, chunksize)):
+            named = apply_cluster_taxonomy(chunk, taxonomy)
+            cluster_column = "cluster_id" if "cluster_id" in named.columns else "cluster"
+            unknown += int((~named[cluster_column].astype(int).isin(known)).sum())
+            for family, count in named["business_family"].value_counts().items():
+                per_family[family] = per_family.get(family, 0) + int(count)
+            named.to_csv(temporary, mode="w" if index == 0 else "a", header=index == 0, index=False)
+            rows += len(named)
+        if rows == 0:
+            raise ValueError(f"{input_path} has no journeys")
+        temporary.replace(output_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return {"rows": rows, "unknown_cluster_rows": unknown, "per_business_family": per_family}

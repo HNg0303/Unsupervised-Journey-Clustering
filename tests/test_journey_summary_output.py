@@ -101,6 +101,9 @@ class ClusterTaxonomyTest(unittest.TestCase):
         self.assertEqual(list(rows[0]), list(cluster_taxonomy.TAXONOMY_COLUMNS))
         self.assertEqual((rows[1]["model_version"], rows[1]["cluster_id"], rows[1]["needs_review"]), ("m1", 7, 1))
         self.assertEqual(rows[1]["named_at"], "2026-10-09 03:00:00")
+        # cluster -1 keeps the noise name whatever the reviewer saved
+        self.assertEqual((rows[0]["cluster_name"], rows[0]["naming_source"]), (
+            cluster_taxonomy.NOISE_NAME["cluster_name"], "noise_cluster"))
 
     def test_names_from_another_model_are_rejected(self) -> None:
         errors = cluster_taxonomy.alignment_errors(

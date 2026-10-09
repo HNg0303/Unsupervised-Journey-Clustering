@@ -34,6 +34,18 @@ TAXONOMY_COLUMNS = (
     "business_family", "business_submodule", "business_detail",
     "naming_confidence", "naming_source", "needs_review", "named_at",
 )
+# Cluster -1 holds the journeys no cluster accepted, a mix of every business
+# area, so it always carries the noise name the naming step gives it.
+NOISE_NAME = {
+    "taxonomy_id": "",
+    "cluster_name": "Chưa phân loại | Journey hỗn hợp/nhiễu",
+    "business_family": "Chưa phân loại",
+    "business_submodule": "Journey hỗn hợp/nhiễu",
+    "business_detail": "",
+    "naming_confidence": "low",
+    "naming_source": "noise_cluster",
+    "needs_review": 0,
+}
 
 
 def read_rows(path: Path) -> list[dict[str, str]]:
@@ -109,6 +121,10 @@ def taxonomy_rows(
             "needs_review": int(str(row["needs_review"]).strip().lower() in {"1", "true"}),
             "named_at": utc_datetime(row.get("updated_at", "")),
         })
+        if rows[-1]["cluster_id"] == -1:
+            if rows[-1]["cluster_name"] != NOISE_NAME["cluster_name"]:
+                print(f"{platform}: cluster -1 named {rows[-1]['cluster_name']!r}; using the noise name")
+            rows[-1].update(NOISE_NAME)
     return rows
 
 

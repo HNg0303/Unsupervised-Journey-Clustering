@@ -230,7 +230,7 @@ def load_sitemap(path: str | Path = DEFAULT_SITEMAP) -> dict[str, dict[str, str]
 
 def write_sitemap(sitemap: dict[str, dict[str, str]], path: str | Path) -> None:
     with Path(path).open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(SITEMAP_COLUMNS))
+        writer = csv.DictWriter(handle, fieldnames=list(SITEMAP_COLUMNS), lineterminator="\n")
         writer.writeheader()
         writer.writerows(sitemap.values())
 

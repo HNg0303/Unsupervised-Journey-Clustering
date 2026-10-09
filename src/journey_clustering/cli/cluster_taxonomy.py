@@ -1,15 +1,24 @@
-"""Build the `journey_cluster_taxonomy` table rows from reviewed cluster names.
+"""Build the per-cluster file `journey_cluster_taxonomy.csv` from reviewed names.
+
+It maps every (model_version, platform, cluster_id) to a HiFPT sitemap
+``taxonomy_id``; ``journey-map`` and ``journey-infer --cluster-taxonomy`` use it
+to put that id on each journey.
 
 The reviewed names come from the cluster labeling app export
 (``<platform>_named_clusters.csv``). Before they are published they must belong
-to the same model as the scored journeys, otherwise every join on
-(model_version, platform, cluster_id) attaches a name to the wrong cluster.
+to the same model as the scored journeys, otherwise journeys get the
+taxonomy_id of another cluster.
 The check compares each reviewed cluster with the shareholder catalog the
 naming step wrote from the scores:
 
 * the cluster IDs are the same set;
 * the journey count of every cluster matches (when the export carries ``size``);
 * the n-gram evidence the reviewer saw is the model's evidence (``top_ngrams``).
+
+Every name must also be a node of the HiFPT sitemap taxonomy
+(``taxonomy/hifpt_sitemap_taxonomy.csv``): a given ``taxonomy_id`` must carry
+its sitemap names, and a cluster named only to level 1 or 2 gets the module or
+submodule id. Only cluster -1 (noise) has no id.
 
 Example:
 
@@ -26,11 +35,11 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from journey_clustering.cluster_mapping import NOISE_NAME
+from journey_clustering.cluster_mapping import DEFAULT_SITEMAP, NOISE_NAME, load_sitemap, sitemap_id
 
 PLATFORMS = ("android", "ios")
 
-# Column order of the `journey_cluster_taxonomy` database table.
+# Column order of journey_cluster_taxonomy.csv.
 TAXONOMY_COLUMNS = (
     "model_version", "platform", "cluster_id", "taxonomy_id", "cluster_name",
     "business_family", "business_submodule", "business_detail",
@@ -118,6 +127,20 @@ def taxonomy_rows(
     return rows
 
 
+def attach_sitemap_ids(
+    rows: list[dict[str, object]], sitemap: dict[str, dict[str, str]], platform: str
+) -> list[str]:
+    """Fill or check ``taxonomy_id`` of every named cluster; return the errors."""
+    errors = []
+    for row in rows:
+        if row["cluster_id"] == -1:
+            continue
+        row["taxonomy_id"], error = sitemap_id(row, sitemap)
+        if error:
+            errors.append(f"{platform} cluster {row['cluster_id']}: {error}")
+    return errors
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__.split("\n\n")[0],
@@ -130,6 +153,7 @@ def parse_args() -> argparse.Namespace:
         "--named", type=Path, nargs="*", default=[],
         help="reviewed name exports; default: <scores-run>/<platform>/<platform>_named_clusters.csv",
     )
+    parser.add_argument("--sitemap", type=Path, default=DEFAULT_SITEMAP, help="sitemap taxonomy CSV or JSON")
     parser.add_argument("--output", type=Path, help="default: <scores-run>/journey_cluster_taxonomy.csv")
     return parser.parse_args()
 
@@ -141,6 +165,7 @@ def main() -> int:
     named_paths = {path.name.split("_", 1)[0]: path for path in args.named}
     output = (args.output or run / "journey_cluster_taxonomy.csv").resolve()
 
+    sitemap = load_sitemap(args.sitemap)
     rows: list[dict[str, object]] = []
     errors: list[str] = []
     for platform in args.platforms:
@@ -148,10 +173,12 @@ def main() -> int:
         catalog_path = run / platform / f"{platform}_taxonomy_shareholder_catalog.json"
         named = read_rows(named_path)
         errors += alignment_errors(named, catalog_clusters(catalog_path, platform), platform)
-        rows += taxonomy_rows(named, model_version, platform)
+        platform_rows = taxonomy_rows(named, model_version, platform)
+        errors += attach_sitemap_ids(platform_rows, sitemap, platform)
+        rows += platform_rows
         print(f"{platform}: {len(named):,} named clusters checked against {catalog_path.name}")
     if errors:
-        raise SystemExit("reviewed names do not match the scored model:\n  " + "\n  ".join(errors))
+        raise SystemExit("reviewed names do not match the scored model or the sitemap:\n  " + "\n  ".join(errors))
 
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(f".{output.name}.tmp")

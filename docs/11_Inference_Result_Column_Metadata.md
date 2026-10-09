@@ -7,9 +7,9 @@ columns and their order are those of the `journey_summary` database table
 (`OUTPUT_COLUMNS` in `src/journey_clustering/cli/infer.py`).
 
 The logical grain is **one row per journey**. A session may contain multiple
-journeys. Cluster names are not repeated on every row: they live once per
-cluster in `journey_cluster_taxonomy`, joined on
-`(model_version, platform, cluster_id)`.
+journeys. Business names are not repeated on every row: each journey carries
+the HiFPT sitemap `taxonomy_id` of its cluster, and the names live once per id
+in `journey_sitemap_taxonomy` (`taxonomy/hifpt_sitemap_taxonomy.csv`).
 
 ## Important conventions
 
@@ -30,6 +30,7 @@ cluster in `journey_cluster_taxonomy`, joined on
 | `model_version` | string, required | Frozen model/run identifier used for scoring. |
 | `platform` | string, required | `android` or `ios`. |
 | `cluster_id` | integer | Fitted cluster label; `-1` = not accepted (too far from every centroid). |
+| `taxonomy_id` | string, nullable | HiFPT sitemap id of the cluster's reviewed name: feature `M05.06.03`, submodule `M05.06` or module `M05`. Empty for cluster `-1` and before the clusters are named. |
 | `journey_id` | string, required | Journey identifier prefixed with its source partition, e.g. `platform=android_bucket=000_part-00000::J000002`. |
 | `session_id` | string, required | Application session; one session can contain several journeys. |
 | `device_id` | string, nullable | Device identifier. |
@@ -73,47 +74,52 @@ derive from the columns above:
 | `behavioral_friction_flags` | `friction_flags` (now holds the behavioural flags only) |
 | `unknown_archetype`, `improbable_transitions` flags | `geometric_anomaly`, `generative_anomaly` |
 | `source_partition` | prefix of `journey_id` before `::` |
-| `cluster_name`, `cluster_name_en`, `business_family`, `business_family_code`, `naming_confidence`, … | join `journey_cluster_taxonomy` |
+| `cluster_name`, `cluster_name_en`, `business_family`, `business_family_code`, `naming_confidence`, … | `taxonomy_id`, join `journey_sitemap_taxonomy` |
 
-## Cluster names: `journey_cluster_taxonomy`
+## Business names: HiFPT sitemap taxonomy
 
-One row per `(model_version, platform, cluster_id)`, built by
-`scripts/build_cluster_taxonomy.py` from the reviewed names exported by the
-cluster labeling app (`<platform>_named_clusters.csv`). The script refuses names
-that do not belong to the scored model: the cluster IDs, the journey count per
-cluster and the n-gram evidence must match the run's shareholder catalog.
+`journey_sitemap_taxonomy` holds the HiFPT sitemap taxonomy, one row per
+module, submodule and feature (16 + 85 + 486 = 587 ids). It is exported from the
+sitemap JSON with `journey-sitemap` into `taxonomy/hifpt_sitemap_taxonomy.csv`.
 
 | Column | Metadata |
 |---|---|
-| `model_version`, `platform`, `cluster_id` | Join key to the scored journeys. |
-| `taxonomy_id` | Business taxonomy leaf, e.g. `M05.06.03`; empty when named only to level 2. |
-| `cluster_name` | Full name: level 1 \| level 2 \| level 3. |
-| `business_family`, `business_submodule`, `business_detail` | Taxonomy levels 1, 2 and 3. |
-| `naming_confidence` | `high`, `medium` or `low`. |
-| `naming_source` | How the name was chosen, e.g. `validated_taxonomy_detail`, `business_review`. |
-| `needs_review` | `1` when the name still needs a reviewer. |
-| `named_at` | When the name was last saved in the labeling app. |
+| `taxonomy_id` | `M05` (module), `M05.06` (submodule) or `M05.06.03` (feature). Primary key. |
+| `business_family` | Module, level 1. |
+| `business_submodule` | Submodule, level 2; empty on module rows. |
+| `business_detail` | Feature, level 3; empty on module and submodule rows. |
 
-### Attaching the names to journeys
+### Per-cluster file `journey_cluster_taxonomy.csv`
 
-`journey-map` (`scripts/map_cluster_names.py`, library
-`journey_clustering.cluster_mapping`) writes a named copy of each platform's
-scores, reading the scores 200,000 rows at a time:
+One row per `(model_version, platform, cluster_id)` with its `taxonomy_id`,
+built by `scripts/build_cluster_taxonomy.py` from the reviewed names exported by
+the cluster labeling app (`<platform>_named_clusters.csv`). It is a file of the
+model run, not a database table. The script refuses names that do not belong to
+the scored model (cluster IDs, journey count per cluster and n-gram evidence
+must match the run's shareholder catalog) or to the sitemap: a given
+`taxonomy_id` must carry its sitemap names, and a cluster named only to level 1
+or 2 gets the module or submodule id. Cluster `-1` keeps the noise name
+"Chưa phân loại | Journey hỗn hợp/nhiễu" and no id.
+
+### Putting `taxonomy_id` on journeys
+
+- At scoring time: `journey-infer ... --cluster-taxonomy <run>/journey_cluster_taxonomy.csv`.
+- On existing scores (`scripts/map_cluster_names.py`, library
+  `journey_clustering.cluster_mapping`), reading 200,000 rows at a time:
 
 ```bash
-journey-map --scores-run output/scores/678/678_20260929_090904
+journey-map --scores-run output/scores/678/678_20260929_090904 [--with-names]
 # -> <run>/android/android_journeys_named.csv, <run>/ios/ios_journeys_named.csv
 ```
 
-The eight name fields of the table are inserted right after `cluster_id`.
-Clusters the taxonomy does not know get the cluster `-1` noise name, and names
-from another `model_version` are refused. Older exports with a `cluster`
-column are accepted; their old name columns are replaced. In the database the
-same result is a join on `(model_version, platform, cluster_id)`.
+`--with-names` adds the three sitemap names after `taxonomy_id`. Journeys of
+a cluster the file does not know get no id, and names from another
+`model_version` are refused. Older exports with a `cluster` column are
+accepted. In the database the names are a join on `taxonomy_id`.
 
 ## Recommended aggregation fields
 
-Per `(model_version, platform, cluster_id)`, then join the names:
+Per `(model_version, platform, cluster_id)` or per `taxonomy_id`, then join the names:
 
 ```text
 journey_count              = count(journey_id)
@@ -140,4 +146,4 @@ top_exit_token             = mode(exit_token)
 - Published column set and order: `src/journey_clustering/cli/infer.py`.
 - Taxonomy naming per cluster: `src/journey_clustering/naming.py`.
 - Reviewed name table: `src/journey_clustering/cli/cluster_taxonomy.py`.
-- Names attached to journeys: `src/journey_clustering/cluster_mapping.py`, `src/journey_clustering/cli/map_clusters.py`.
+- Sitemap taxonomy and `taxonomy_id` on journeys: `src/journey_clustering/cluster_mapping.py`, `src/journey_clustering/cli/map_clusters.py`, `src/journey_clustering/cli/sitemap_taxonomy.py`.

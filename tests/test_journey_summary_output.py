@@ -40,6 +40,7 @@ class OutputSchemaTest(unittest.TestCase):
         out = infer.to_output_schema(scored_frame())
         self.assertEqual(list(out.columns), list(infer.OUTPUT_COLUMNS))
         self.assertEqual(out.loc[0, "cluster_id"], 7)
+        self.assertEqual(out.loc[0, "taxonomy_id"], "")  # filled once the clusters are named
         # the two model flags are already the anomaly booleans
         self.assertEqual(out.loc[0, "friction_flags"], "excessive_back")
 
@@ -114,17 +115,63 @@ class ClusterTaxonomyTest(unittest.TestCase):
         self.assertIn("no name", missing[0])
 
 
+SITEMAP_JSON = {"features": [
+    {"module_id": "M10", "module": "Thanh toán", "submodule_id": "M10.01", "submodule": "Hóa đơn",
+     "feature_id": "M10.01.01", "feature": "Xem hóa đơn"},
+    {"module_id": "M10", "module": "Thanh toán", "submodule_id": "M10.01", "submodule": "Hóa đơn",
+     "feature_id": "M10.01.02", "feature": "Trả hóa đơn"},
+]}
+
+
+def sitemap() -> dict[str, dict[str, str]]:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "sitemap.json"
+        path.write_text(json.dumps(SITEMAP_JSON, ensure_ascii=False), encoding="utf-8")
+        return cluster_mapping.load_sitemap(path)
+
+
+class SitemapTaxonomyTest(unittest.TestCase):
+    def test_every_level_gets_an_id(self) -> None:
+        self.assertEqual(list(sitemap()), ["M10", "M10.01", "M10.01.01", "M10.01.02"])
+        self.assertEqual(sitemap()["M10.01"], {
+            "taxonomy_id": "M10.01", "business_family": "Thanh toán",
+            "business_submodule": "Hóa đơn", "business_detail": ""})
+
+    def test_csv_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sitemap.csv"
+            cluster_mapping.write_sitemap(sitemap(), path)
+            self.assertEqual(cluster_mapping.load_sitemap(path), sitemap())
+
+    def test_cluster_names_resolve_to_sitemap_ids(self) -> None:
+        names = {"business_family": "Thanh toán", "business_submodule": "Hóa đơn", "business_detail": ""}
+        self.assertEqual(cluster_mapping.sitemap_id({**names, "taxonomy_id": ""}, sitemap()), ("M10.01", None))
+        given = {**names, "business_detail": "Trả hóa đơn", "taxonomy_id": "M10.01.02"}
+        self.assertEqual(cluster_mapping.sitemap_id(given, sitemap()), ("M10.01.02", None))
+        self.assertIsNotNone(cluster_mapping.sitemap_id({**given, "taxonomy_id": "M10.01.01"}, sitemap())[1])
+        self.assertIsNotNone(cluster_mapping.sitemap_id({**names, "business_family": "Khác"}, sitemap())[1])
+
+    def test_build_fills_ids_and_keeps_noise_without_one(self) -> None:
+        named = ClusterTaxonomyTest().named(business_family="Thanh toán", business_submodule="Hóa đơn")
+        rows = cluster_taxonomy.taxonomy_rows(named, "m1", "android")
+        self.assertEqual(cluster_taxonomy.attach_sitemap_ids(rows, sitemap(), "android"), [])
+        self.assertEqual([row["taxonomy_id"] for row in rows], ["", "M10.01"])
+        bad = cluster_taxonomy.taxonomy_rows(ClusterTaxonomyTest().named(), "m1", "android")
+        self.assertEqual(len(cluster_taxonomy.attach_sitemap_ids(bad, sitemap(), "android")), 1)
+
+
 class MapClusterNamesTest(unittest.TestCase):
     def write_taxonomy(self, root: Path) -> Path:
-        named = ClusterTaxonomyTest().named()
+        named = ClusterTaxonomyTest().named(
+            business_family="Thanh toán", business_submodule="Hóa đơn", business_detail="Trả hóa đơn")
         rows = cluster_taxonomy.taxonomy_rows(named, "m1", "android")
         rows += cluster_taxonomy.taxonomy_rows(named, "m1", "ios")
-        rows[1].update(cluster_name="Thanh toán | Hóa đơn", business_family="Thanh toán")
+        cluster_taxonomy.attach_sitemap_ids(rows, sitemap(), "both")
         path = root / "journey_cluster_taxonomy.csv"
         pd.DataFrame(rows).to_csv(path, index=False)
         return path
 
-    def test_names_every_journey_of_the_platform(self) -> None:
+    def test_every_journey_gets_its_cluster_taxonomy_id(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             taxonomy = cluster_mapping.load_cluster_taxonomy(
@@ -135,27 +182,34 @@ class MapClusterNamesTest(unittest.TestCase):
             scores = root / "android_scores.csv"
             frame.to_csv(scores, index=False)
             result = cluster_mapping.map_scores_file(scores, root / "named.csv", taxonomy, chunksize=2)
-            self.assertEqual((result["rows"], result["unknown_cluster_rows"]), (3, 1))
-            out = pd.read_csv(root / "named.csv", dtype={"customer_id": str})
-            position = list(out.columns).index("cluster_id")
-            self.assertEqual(list(out.columns[position + 1:position + 9]),
-                             list(cluster_mapping.TAXONOMY_NAME_COLUMNS))
-            self.assertEqual(list(out["business_family"]), ["Thanh toán", "Thanh toán", "Chưa phân loại"])
+            self.assertEqual((result["rows"], result["unknown_cluster_rows"], result["rows_without_id"]), (3, 1, 1))
+            out = pd.read_csv(root / "named.csv", dtype={"customer_id": str}, keep_default_na=False)
+            self.assertEqual(list(out.columns), list(infer.OUTPUT_COLUMNS))
+            self.assertEqual(list(out["taxonomy_id"]), ["M10.01.02", "M10.01.02", ""])
             self.assertEqual(out.loc[0, "customer_id"], "6039276")
+            cluster_mapping.map_scores_file(scores, root / "names.csv", taxonomy, sitemap=sitemap())
+            names = pd.read_csv(root / "names.csv", keep_default_na=False)
+            position = list(names.columns).index("cluster_id")
+            self.assertEqual(list(names.columns[position + 1:position + 5]), list(cluster_mapping.SITEMAP_COLUMNS))
+            self.assertEqual(list(names["business_detail"]), ["Trả hóa đơn", "Trả hóa đơn", ""])
+
+    def test_infer_fills_taxonomy_id(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            taxonomy = cluster_mapping.load_cluster_taxonomy(
+                self.write_taxonomy(Path(directory)), platform="android", model_version="m1")
+            self.assertEqual(infer.to_output_schema(scored_frame(), taxonomy).loc[0, "taxonomy_id"], "M10.01.02")
 
     def test_old_exports_and_other_models(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = self.write_taxonomy(Path(directory))
             taxonomy = cluster_mapping.load_cluster_taxonomy(path, platform="ios", model_version="m1")
-            old = scored_frame().assign(cluster_name="old name")
+            old = scored_frame()
             named = cluster_mapping.apply_cluster_taxonomy(old, taxonomy)
-            self.assertEqual(named.loc[0, "cluster_name"], "Pay")
-            self.assertEqual(list(named.columns).count("cluster_name"), 1)
+            self.assertEqual(list(named.columns).index("taxonomy_id"), list(named.columns).index("cluster") + 1)
             with self.assertRaises(ValueError):
                 cluster_mapping.apply_cluster_taxonomy(old.assign(model_version="m2"), taxonomy)
             with self.assertRaises(ValueError):
                 cluster_mapping.load_cluster_taxonomy(path, platform="ios", model_version="m2")
-
 
 if __name__ == "__main__":
     unittest.main()

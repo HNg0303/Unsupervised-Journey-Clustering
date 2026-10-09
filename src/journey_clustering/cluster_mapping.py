@@ -1,10 +1,12 @@
 """Load and apply the business taxonomy assigned to clustering output.
 
-The reviewed business names live once per cluster in the
-``journey_cluster_taxonomy`` table (``scripts/build_cluster_taxonomy.py``).
-``load_cluster_taxonomy`` and ``apply_cluster_taxonomy`` attach them to scored
-journeys of either platform, and ``map_scores_file`` does it chunk by chunk for
-the large ``<platform>_scores.csv`` files (CLI: ``journey-map``).
+Business names follow the HiFPT sitemap taxonomy (module > submodule > feature,
+ids such as ``M05``, ``M05.06`` and ``M05.06.03``). Every reviewed cluster
+points at one sitemap id, at the deepest level the reviewer could name.
+``load_sitemap`` reads that taxonomy, ``load_cluster_taxonomy`` reads the
+per-cluster file of one model, and ``apply_cluster_taxonomy`` /
+``map_scores_file`` put the ``taxonomy_id`` on scored journeys of either
+platform (CLI: ``journey-map``).
 """
 
 from __future__ import annotations
@@ -179,17 +181,10 @@ def apply_cluster_mapping(
 
 
 
-# Name fields of `journey_cluster_taxonomy` attached to every journey.
-TAXONOMY_NAME_COLUMNS = (
-    "taxonomy_id",
-    "cluster_name",
-    "business_family",
-    "business_submodule",
-    "business_detail",
-    "naming_confidence",
-    "naming_source",
-    "needs_review",
-)
+# Repository copy of the HiFPT sitemap taxonomy (`journey_sitemap_taxonomy` table).
+DEFAULT_SITEMAP = Path(__file__).resolve().parents[2] / "taxonomy" / "hifpt_sitemap_taxonomy.csv"
+# Columns of the `journey_sitemap_taxonomy` table: id, module, submodule, feature.
+SITEMAP_COLUMNS = ("taxonomy_id", "business_family", "business_submodule", "business_detail")
 # Cluster -1 holds the journeys no cluster accepted, a mix of every business
 # area, so it always carries the noise name.
 NOISE_NAME = {
@@ -206,8 +201,61 @@ NOISE_NAME = {
 ID_COLUMNS = ("journey_id", "session_id", "device_id", "customer_id")
 
 
-def _needs_review(value: Any) -> int:
-    return int(str(value).strip().lower() in {"1", "true"})
+def load_sitemap(path: str | Path = DEFAULT_SITEMAP) -> dict[str, dict[str, str]]:
+    """Return ``taxonomy_id -> names`` for every module, submodule and feature.
+
+    ``path`` is the sitemap JSON (``features`` list with module_id, module,
+    submodule_id, submodule, feature_id, feature) or the CSV ``write_sitemap``
+    produces from it. Modules and submodules get their own rows so a cluster
+    named only to level 1 or 2 still has an id.
+    """
+    path = Path(path)
+    if path.suffix.lower() == ".json":
+        rows: dict[str, dict[str, str]] = {}
+        for item in _load_json(path)["features"]:
+            levels = (
+                (item["module_id"], item["module"], "", ""),
+                (item["submodule_id"], item["module"], item["submodule"], ""),
+                (item["feature_id"], item["module"], item["submodule"], item["feature"]),
+            )
+            for row in levels:
+                named = dict(zip(SITEMAP_COLUMNS, (value.strip() for value in row)))
+                if rows.setdefault(named["taxonomy_id"], named) != named:
+                    raise ValueError(f"{path}: id {named['taxonomy_id']} has two different names")
+    else:
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            rows = {row["taxonomy_id"]: {c: row[c] or "" for c in SITEMAP_COLUMNS} for row in csv.DictReader(handle)}
+    return dict(sorted(rows.items()))
+
+
+def write_sitemap(sitemap: dict[str, dict[str, str]], path: str | Path) -> None:
+    with Path(path).open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(SITEMAP_COLUMNS))
+        writer.writeheader()
+        writer.writerows(sitemap.values())
+
+
+def sitemap_id(row: dict[str, Any], sitemap: dict[str, dict[str, str]]) -> tuple[str, str | None]:
+    """Return the sitemap id of a named cluster, or an error.
+
+    A given ``taxonomy_id`` must exist and carry the same three names. Without
+    one, the names are looked up: a cluster named to level 2 gets the
+    submodule id, a cluster named to level 1 the module id.
+    """
+    names = tuple((row.get(column) or "").strip() for column in SITEMAP_COLUMNS[1:])
+    given = (row.get("taxonomy_id") or "").strip()
+    if given:
+        expected = sitemap.get(given)
+        if expected is None:
+            return given, f"taxonomy_id {given} is not in the sitemap"
+        if tuple(expected[c] for c in SITEMAP_COLUMNS[1:]) != names:
+            return given, f"taxonomy_id {given} is {expected['business_family']} | " \
+                f"{expected['business_submodule']} | {expected['business_detail']}, not {' | '.join(names)}"
+        return given, None
+    for taxonomy_id, expected in sitemap.items():
+        if tuple(expected[c] for c in SITEMAP_COLUMNS[1:]) == names:
+            return taxonomy_id, None
+    return "", f"names {' | '.join(names)} are not in the sitemap"
 
 
 def load_cluster_taxonomy(
@@ -216,11 +264,11 @@ def load_cluster_taxonomy(
     platform: str,
     model_version: str | None = None,
 ) -> dict[int, dict[str, Any]]:
-    """Load ``cluster_id -> business name`` for one platform.
+    """Load ``cluster_id -> taxonomy_id`` (plus names) for one platform.
 
-    ``path`` is the ``journey_cluster_taxonomy.csv`` table (both platforms,
-    filtered by ``platform`` and ``model_version``) or a labeling app export
-    ``<platform>_named_clusters.csv``. Cluster -1 always gets ``NOISE_NAME``.
+    ``path`` is the per-cluster file ``journey_cluster_taxonomy.csv`` (both
+    platforms, filtered by ``platform`` and ``model_version``) built by
+    ``journey-cluster-taxonomy``. Cluster -1 always gets ``NOISE_NAME`` (no id).
     """
     with Path(path).open(encoding="utf-8-sig", newline="") as handle:
         records = list(csv.DictReader(handle))
@@ -238,10 +286,8 @@ def load_cluster_taxonomy(
         cluster_id = int(row["cluster_id"])
         if cluster_id in table:
             raise ValueError(f"{path}: cluster {cluster_id} is named twice for {platform}")
-        names = {column: row.get(column, "") or "" for column in TAXONOMY_NAME_COLUMNS}
-        names["needs_review"] = _needs_review(names["needs_review"])
-        names["model_version"] = row.get("model_version", "")
-        table[cluster_id] = names
+        table[cluster_id] = {column: row.get(column, "") or "" for column in SITEMAP_COLUMNS}
+        table[cluster_id]["model_version"] = row.get("model_version", "")
     table[-1] = {**table.get(-1, {"model_version": ""}), **NOISE_NAME}
     return table
 
@@ -250,14 +296,16 @@ def apply_cluster_taxonomy(
     frame: pd.DataFrame,
     taxonomy: dict[int, dict[str, Any]],
     *,
+    sitemap: dict[str, dict[str, str]] | None = None,
     cluster_column: str | None = None,
 ) -> pd.DataFrame:
-    """Insert the business name fields right after the cluster column.
+    """Put ``taxonomy_id`` right after the cluster column.
 
-    Works on the current output (``cluster_id``) and on older exports
-    (``cluster``, with name columns that are replaced). A cluster id the
-    taxonomy does not know gets the -1 noise name instead of a wrong one, and
-    names from another model are refused.
+    With ``sitemap`` the three sitemap names follow it, for reading the file
+    without a join. Works on the current output (``cluster_id``) and on older
+    exports (``cluster``). A cluster id the taxonomy does not know gets the -1
+    noise entry (no id) instead of a wrong one, and names from another model
+    are refused.
     """
     if cluster_column is None:
         cluster_column = next((c for c in ("cluster_id", "cluster") if c in frame.columns), None)
@@ -270,9 +318,11 @@ def apply_cluster_taxonomy(
             raise ValueError(f"journeys from model {sorted(other)} but names are for {sorted(names_version)}")
     unknown = taxonomy[-1]
     rows = [taxonomy.get(int(cluster), unknown) for cluster in frame[cluster_column]]
-    return _apply_rows(frame, rows, TAXONOMY_NAME_COLUMNS, cluster_column)
-
-
+    if sitemap is None:
+        return _apply_rows(frame, rows, SITEMAP_COLUMNS[:1], cluster_column)
+    empty = dict.fromkeys(SITEMAP_COLUMNS, "")
+    named = [sitemap.get(row["taxonomy_id"], empty) for row in rows]
+    return _apply_rows(frame, named, SITEMAP_COLUMNS, cluster_column)
 def _read_chunks(path: Path, chunksize: int):
     if path.is_dir() or path.suffix == ".parquet":
         import pyarrow.parquet as pq
@@ -291,26 +341,31 @@ def map_scores_file(
     output_path: str | Path,
     taxonomy: dict[int, dict[str, Any]],
     *,
+    sitemap: dict[str, dict[str, str]] | None = None,
     chunksize: int = 200_000,
 ) -> dict[str, Any]:
-    """Write ``input_path`` (CSV, parquet file or folder) with names attached.
+    """Write ``input_path`` (CSV, parquet file or folder) with ``taxonomy_id``.
 
     The file is read ``chunksize`` rows at a time, so a multi-GB scores file
-    never sits in memory. Returns the row count and journeys per cluster name.
+    never sits in memory. Returns the row count, the journeys of clusters the
+    taxonomy does not know, those left without an id (cluster -1) and the
+    journeys per sitemap module.
     """
     input_path, output_path = Path(input_path), Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_path.with_name(f".{output_path.name}.tmp")
-    rows, unknown = 0, 0
-    per_family: dict[str, int] = {}
+    rows, unknown, without_id = 0, 0, 0
+    per_module: dict[str, int] = {}
     known = set(taxonomy)
     try:
         for index, chunk in enumerate(_read_chunks(input_path, chunksize)):
-            named = apply_cluster_taxonomy(chunk, taxonomy)
+            named = apply_cluster_taxonomy(chunk, taxonomy, sitemap=sitemap)
             cluster_column = "cluster_id" if "cluster_id" in named.columns else "cluster"
             unknown += int((~named[cluster_column].astype(int).isin(known)).sum())
-            for family, count in named["business_family"].value_counts().items():
-                per_family[family] = per_family.get(family, 0) + int(count)
+            ids = named["taxonomy_id"].fillna("").astype(str)
+            without_id += int(ids.eq("").sum())
+            for module, count in ids[ids.ne("")].str[:3].value_counts().items():
+                per_module[module] = per_module.get(module, 0) + int(count)
             named.to_csv(temporary, mode="w" if index == 0 else "a", header=index == 0, index=False)
             rows += len(named)
         if rows == 0:
@@ -318,4 +373,4 @@ def map_scores_file(
         temporary.replace(output_path)
     finally:
         temporary.unlink(missing_ok=True)
-    return {"rows": rows, "unknown_cluster_rows": unknown, "per_business_family": per_family}
+    return {"rows": rows, "unknown_cluster_rows": unknown, "rows_without_id": without_id, "per_module": per_module}

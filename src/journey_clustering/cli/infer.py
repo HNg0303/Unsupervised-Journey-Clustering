@@ -23,21 +23,23 @@ from pathlib import Path
 
 import pandas as pd
 
+from ..cluster_mapping import load_cluster_taxonomy
 from ..storage import parquet_files, safe_partition_id, write_parquet
 from ..preprocessing import normalize_platform, normalize_production_columns
 from ..score import JourneyScorer
 
 
 # Row schema of the scored journey output, in the column order of the
-# `journey_summary` database table. Cluster names are not repeated per row: they
-# live in the per-cluster taxonomy table joined on (model_version, platform,
-# cluster_id). Columns that duplicate or can be derived from these are left out:
+# `journey_summary` database table. Each row carries the HiFPT sitemap
+# taxonomy_id of its cluster (empty until the clusters are named, see
+# --cluster-taxonomy and journey-map); the names live once per id in the
+# `journey_sitemap_taxonomy` table. Columns that duplicate or can be derived from these are left out:
 # os (= platform), span_seconds (= end_ts - start_ts), n_unique_tokens
 # (from revisit_ratio), n_dropped_screens/n_dedup_removed (diagnostics),
 # nearest_cluster/distance_limit (model internals), source_partition (prefix of
 # journey_id) and the effective_* copies of the single-model scores.
 OUTPUT_COLUMNS = (
-    "model_version", "platform", "cluster_id", "journey_id", "session_id",
+    "model_version", "platform", "cluster_id", "taxonomy_id", "journey_id", "session_id",
     "device_id", "customer_id", "start_ts", "end_ts", "boundary_reason",
     "n_events_raw", "n_events_final", "n_loop_removed",
     "action_ratio", "back_rate", "revisit_ratio",
@@ -70,6 +72,10 @@ def parse_args() -> argparse.Namespace:
         help="training output folder containing <platform>_journey_scorer.pkl",
     )
     parser.add_argument("--model-version", help="default: fitted run folder name")
+    parser.add_argument(
+        "--cluster-taxonomy", type=Path,
+        help="journey_cluster_taxonomy.csv of this model; fills taxonomy_id (empty without it)",
+    )
     parser.add_argument("--output-root", type=Path, default=Path("output/scores"))
     parser.add_argument("--output", type=Path, help="direct output file for CSV input; overrides --output-root")
     parser.add_argument("--resume", action="store_true", help="skip result partitions that already exist")
@@ -115,6 +121,7 @@ def score_raw_partition(
     platform: str,
     model_version: str,
     partition_id: str,
+    taxonomy: dict[int, dict[str, object]] | None = None,
 ) -> pd.DataFrame:
     """Prepare and score one raw input while keeping partition metadata aligned."""
     journeys, sequences, channels = scorer.prepare(raw)
@@ -125,14 +132,24 @@ def score_raw_partition(
         scored["platform"] = platform
         scored["model_version"] = model_version
         scored["scored_at"] = pd.Timestamp.now(tz="UTC")
-    return to_output_schema(scored)
+    return to_output_schema(scored, taxonomy)
 
 
-def to_output_schema(scored: pd.DataFrame) -> pd.DataFrame:
-    """Keep only the published columns, in `journey_summary` order."""
+def to_output_schema(
+    scored: pd.DataFrame, taxonomy: dict[int, dict[str, object]] | None = None
+) -> pd.DataFrame:
+    """Keep only the published columns, in `journey_summary` order.
+
+    ``taxonomy`` (``load_cluster_taxonomy``) gives each cluster its sitemap
+    taxonomy_id; clusters it does not know and cluster -1 get none.
+    """
     if scored.empty:
         return pd.DataFrame(columns=list(OUTPUT_COLUMNS))
     out = scored.rename(columns={"cluster": "cluster_id"})
+    taxonomy = taxonomy or {}
+    out["taxonomy_id"] = [
+        str(taxonomy.get(int(cluster), {}).get("taxonomy_id", "")) for cluster in out["cluster_id"]
+    ]
     out["friction_flags"] = out["friction_flags"].fillna("").map(
         lambda value: "|".join(
             flag for flag in str(value).split("|") if flag and flag not in MODEL_FLAGS
@@ -151,6 +168,11 @@ def main() -> int:
     model_version = args.model_version or default_version
 
     model_version = safe_partition_id(model_version)
+    taxonomy = (
+        load_cluster_taxonomy(resolve(args.cluster_taxonomy), platform=args.platform, model_version=model_version)
+        if args.cluster_taxonomy
+        else None
+    )
     # Keep inference grouped by platform first, matching the canonical bundle layout:
     # output/scores/<run>/<platform>/model_version=<version>/platform=<platform>/...
     result_root = output_root / args.platform / f"model_version={model_version}" / f"platform={args.platform}"
@@ -180,6 +202,7 @@ def main() -> int:
             platform=args.platform,
             model_version=model_version,
             partition_id=partition_id,
+            taxonomy=taxonomy,
         )
         if args.parquet:
             write_parquet(scored, target)
@@ -240,6 +263,7 @@ def main() -> int:
             platform=args.platform,
             model_version=model_version,
             partition_id=partition_id,
+            taxonomy=taxonomy,
         )
         write_parquet(scored, target)
         total_journeys += len(scored)

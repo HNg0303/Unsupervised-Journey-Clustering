@@ -100,6 +100,7 @@ class ClusterTaxonomyTest(unittest.TestCase):
         rows = cluster_taxonomy.taxonomy_rows(named, "m1", "android")
         self.assertEqual(list(rows[0]), list(cluster_taxonomy.TAXONOMY_COLUMNS))
         self.assertEqual((rows[1]["model_version"], rows[1]["cluster_id"], rows[1]["needs_review"]), ("m1", 7, 1))
+        self.assertEqual(rows[1]["named_at"], "2026-10-09 03:00:00")
 
     def test_names_from_another_model_are_rejected(self) -> None:
         errors = cluster_taxonomy.alignment_errors(

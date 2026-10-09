@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 PLATFORMS = ("android", "ios")
@@ -79,6 +80,16 @@ def alignment_errors(
     return errors
 
 
+def utc_datetime(value: str) -> str:
+    """ISO timestamp from the labeling app -> UTC DATETIME text for MariaDB."""
+    if not value:
+        return ""
+    moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(timezone.utc).replace(tzinfo=None)
+    return moment.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def taxonomy_rows(
     named: list[dict[str, str]], model_version: str, platform: str
 ) -> list[dict[str, object]]:
@@ -96,7 +107,7 @@ def taxonomy_rows(
             "naming_confidence": row["naming_confidence"],
             "naming_source": row["naming_source"],
             "needs_review": int(str(row["needs_review"]).strip().lower() in {"1", "true"}),
-            "named_at": row.get("updated_at", ""),
+            "named_at": utc_datetime(row.get("updated_at", "")),
         })
     return rows
 

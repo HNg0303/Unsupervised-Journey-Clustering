@@ -21,7 +21,6 @@ import argparse
 import json
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 from ..storage import parquet_files, safe_partition_id, write_parquet
@@ -29,13 +28,27 @@ from ..preprocessing import normalize_platform, normalize_production_columns
 from ..score import JourneyScorer
 
 
-UNKNOWN_NAME = {
-    "cluster_name": "Hành trình chưa phân loại / hỗn hợp",
-    "cluster_name_en": "Unclassified / mixed journeys",
-    "business_family": "chưa phân loại",
-    "business_family_code": "unknown",
-    "naming_confidence": "not_applicable",
-}
+# Row schema of the scored journey output, in the column order of the
+# `journey_summary` database table. Cluster names are not repeated per row: they
+# live in the per-cluster taxonomy table joined on (model_version, platform,
+# cluster_id). Columns that duplicate or can be derived from these are left out:
+# os (= platform), span_seconds (= end_ts - start_ts), n_unique_tokens
+# (from revisit_ratio), n_dropped_screens/n_dedup_removed (diagnostics),
+# nearest_cluster/distance_limit (model internals), source_partition (prefix of
+# journey_id) and the effective_* copies of the single-model scores.
+OUTPUT_COLUMNS = (
+    "model_version", "platform", "cluster_id", "journey_id", "session_id",
+    "device_id", "customer_id", "start_ts", "end_ts", "boundary_reason",
+    "n_events_raw", "n_events_final", "n_loop_removed",
+    "action_ratio", "back_rate", "revisit_ratio",
+    "median_gap_s", "p90_gap_s", "max_gap_s",
+    "entry_token", "exit_token", "sequence",
+    "distance_to_centroid", "markov_logprob",
+    "geometric_anomaly", "generative_anomaly", "severe_anomaly",
+    "friction_flags", "next_action", "next_action_share", "scored_at",
+)
+# Already expressed by the geometric_anomaly / generative_anomaly columns.
+MODEL_FLAGS = frozenset({"unknown_archetype", "improbable_transitions"})
 
 
 def parse_args() -> argparse.Namespace:
@@ -99,7 +112,6 @@ def score_raw_partition(
     raw: pd.DataFrame,
     *,
     scorer: JourneyScorer,
-    names: dict[int, dict[str, str]],
     platform: str,
     model_version: str,
     partition_id: str,
@@ -107,49 +119,26 @@ def score_raw_partition(
     """Prepare and score one raw input while keeping partition metadata aligned."""
     journeys, sequences, channels = scorer.prepare(raw)
     scored = scorer.score_prepared(journeys, sequences, channels=channels)
-    scored = decorate_single(scored, names)
     if not scored.empty:
         prefix = safe_partition_id(partition_id)
         scored["journey_id"] = [f"{prefix}::{value}" for value in scored["journey_id"]]
         scored["platform"] = platform
         scored["model_version"] = model_version
-        scored["source_partition"] = partition_id
         scored["scored_at"] = pd.Timestamp.now(tz="UTC")
-    return scored
+    return to_output_schema(scored)
 
 
-def load_names(run_dir: Path, platform: str) -> dict[int, dict[str, str]]:
-    path = run_dir / f"{platform}_cluster_name_mapping.json"
-    if not path.exists():
-        return {}
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    rows = payload["clusters"] if isinstance(payload, dict) else payload
-    return {int(row["cluster"]): row for row in rows if row.get("namespace", "C") == "C"}
-
-
-def decorate_single(scored: pd.DataFrame, names: dict[int, dict[str, str]]) -> pd.DataFrame:
+def to_output_schema(scored: pd.DataFrame) -> pd.DataFrame:
+    """Keep only the published columns, in `journey_summary` order."""
     if scored.empty:
-        return scored
-    cluster = scored["cluster"].to_numpy(dtype=int)
-    assigned = cluster != -1
-    scored["effective_cluster_key"] = np.where(
-        assigned, [f"C:{int(value)}" for value in cluster], "UNKNOWN"
-    )
-    scored["assignment_type"] = np.where(assigned, "C_primary", "unassigned_novel")
-    scored["effective_markov_logprob"] = scored["markov_logprob"]
-    scored["effective_next_action"] = scored["next_action"]
-    scored["effective_next_action_share"] = scored["next_action_share"]
-    scored["behavioral_friction_flags"] = scored["friction_flags"].fillna("").map(
+        return pd.DataFrame(columns=list(OUTPUT_COLUMNS))
+    out = scored.rename(columns={"cluster": "cluster_id"})
+    out["friction_flags"] = out["friction_flags"].fillna("").map(
         lambda value: "|".join(
-            flag
-            for flag in str(value).split("|")
-            if flag and flag not in {"unknown_archetype", "improbable_transitions"}
+            flag for flag in str(value).split("|") if flag and flag not in MODEL_FLAGS
         )
     )
-    rows = [names.get(int(value), UNKNOWN_NAME) if ok else UNKNOWN_NAME for value, ok in zip(cluster, assigned)]
-    for column, default in UNKNOWN_NAME.items():
-        scored[column] = [row.get(column, default) for row in rows]
-    return scored
+    return out.loc[:, list(OUTPUT_COLUMNS)]
 
 
 def main() -> int:
@@ -158,7 +147,6 @@ def main() -> int:
     output_root = resolve(args.output_root)
     run_dir = resolve(args.model_run)
     scorer = JourneyScorer.load(run_dir / f"{args.platform}_journey_scorer.pkl")
-    names = load_names(run_dir, args.platform)
     default_version = run_dir.parent.name if run_dir.name == args.platform else run_dir.name
     model_version = args.model_version or default_version
 
@@ -189,7 +177,6 @@ def main() -> int:
         scored = score_raw_partition(
             raw,
             scorer=scorer,
-            names=names,
             platform=args.platform,
             model_version=model_version,
             partition_id=partition_id,
@@ -250,7 +237,6 @@ def main() -> int:
         scored = score_raw_partition(
             raw,
             scorer=scorer,
-            names=names,
             platform=args.platform,
             model_version=model_version,
             partition_id=partition_id,

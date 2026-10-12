@@ -90,3 +90,6 @@ grant usage, select on all sequences in schema public to service_role;
 
 -- Do not add anonymous write policies for this business-review tool.
 -- If Supabase Auth is added later, create narrowly scoped policies for authenticated users.
+
+-- Make PostgREST (the Supabase API) see newly created tables immediately.
+notify pgrst, 'reload schema';

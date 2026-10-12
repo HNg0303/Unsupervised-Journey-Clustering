@@ -96,3 +96,7 @@ node_modules/
 .yarn/cache/
 .yarn/unplugged/
 .pnpm-store/
+
+*.zip
+*.tar.gz
+taxonomy/

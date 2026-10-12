@@ -90,6 +90,31 @@ def _chunks(rows: list[dict[str, Any]], size: int = 250):
         yield rows[start : start + size]
 
 
+def _probe(client: Client, table: str, column: str) -> list[dict[str, Any]]:
+    """Read one row from table, turning PostgREST failures into an actionable message."""
+
+    try:
+        return _rows(client.table(table).select(column).limit(1).execute())
+    except Exception as error:
+        detail = str(error)
+        lowered = detail.lower()
+        if any(s in lowered for s in ("invalid api key", "jwt", "401", "permission denied", "42501")):
+            hint = (
+                "Key không có quyền đọc. Dùng secret key (sb_secret_...) hoặc service_role key, "
+                "không dùng publishable/anon key, và kiểm tra SUPABASE_URL đúng project."
+            )
+        elif any(s in lowered for s in ("pgrst205", "42p01", "could not find the table", "does not exist")):
+            hint = (
+                f"Thiếu bảng {table}. Chạy lại toàn bộ supabase_schema.sql trong SQL Editor "
+                "(an toàn khi chạy lại), rồi khởi động lại app."
+            )
+        else:
+            hint = "Kiểm tra SUPABASE_URL, SUPABASE_SECRET_KEY và chạy lại supabase_schema.sql."
+        raise ValueError(
+            f"Không đọc được bảng Supabase `{table}`. {hint} Chi tiết: {detail[:300]}"
+        ) from error
+
+
 def initialize_database(
     target: SupabaseTarget,
     asset_dir: Path | None = None,
@@ -102,21 +127,9 @@ def initialize_database(
     """
 
     client = _client(target)
-    try:
-        taxonomy_ids = _rows(
-            client.table("taxonomy_features").select("taxonomy_id").limit(1).execute()
-        )
-        cluster_ids = _rows(
-            client.table("named_clusters").select("cluster_id").limit(1).execute()
-        )
-        evidence_ids = _rows(
-            client.table("cluster_evidence").select("cluster_id").limit(1).execute()
-        )
-    except Exception as error:
-        raise ValueError(
-            "Không đọc được schema Supabase. Hãy chạy supabase_schema.sql trong SQL Editor "
-            "và cấu hình SUPABASE_SECRET_KEY trong Streamlit Secrets."
-        ) from error
+    taxonomy_ids = _probe(client, "taxonomy_features", "taxonomy_id")
+    cluster_ids = _probe(client, "named_clusters", "cluster_id")
+    evidence_ids = _probe(client, "cluster_evidence", "cluster_id")
     if not taxonomy_ids and not cluster_ids:
         if asset_dir is None:
             raise ValueError(EMPTY_DATABASE_MESSAGE)

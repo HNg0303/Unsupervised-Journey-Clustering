@@ -1,0 +1,64 @@
+# BẢN GỘP (để sau): 1 container vừa lấy Kafka vừa chạy model. Hiện đang chạy 2 service riêng:
+# event-consumer-fastapi/docker-compose.yml (Kafka) và ../docker-compose.yml (model).
+#
+# journey-service: API chạy liên tục. Mỗi POST /pipeline/runs lấy event Kafka của 1 ngày
+# (từng topic) về storage rồi chạy model -> journey_summary (-> MariaDB nếu bật).
+# Airflow (profile airflow) gọi service mỗi ngày 02:00, mỗi bước là 1 task.
+#
+#   cd Unsupervised-Journey-Clustering/deploy/combined
+#   cp daily.env.example daily.env
+#   docker compose up -d --build                         # chỉ service, http://localhost:8000/docs
+#   docker compose --profile airflow up -d --build       # thêm Airflow, http://localhost:8080
+#   curl -X POST localhost:8000/pipeline/runs -H 'Content-Type: application/json' -d '{"date": "2026-03-25"}'
+#
+# Với Kafka giả lập (event-consumer-fastapi/simulation) thêm file override:
+#   docker compose -f docker-compose.yml -f docker-compose.sim.yml --profile airflow up -d --build
+name: hifpt-journey
+
+services:
+  journey-service:
+    build:
+      context: ../../..                                  # the hifpt-journey folder
+      dockerfile: Unsupervised-Journey-Clustering/deploy/combined/Dockerfile
+    image: hifpt-journey-service:latest
+    env_file: daily.env
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+    volumes:
+      # storage của service: events/date=<ngày>/<topic>.csv, runs/<id>.json + .log
+      - ${STORAGE_PATH:-../../../event-consumer-fastapi/data}:/app/event-consumer-fastapi/data
+      # model (partitioned_runs), tên cụm (scores) và kết quả hằng ngày (daily)
+      - ../../output:/app/Unsupervised-Journey-Clustering/output
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  airflow:
+    profiles: ["airflow"]
+    image: apache/airflow:2.10.5-python3.12
+    command: standalone                                  # webserver + scheduler + SQLite, đủ cho 1 DAG
+    env_file: daily.env                                  # API_KEY của service, nếu có đặt
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Ho_Chi_Minh
+      AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE: Asia/Ho_Chi_Minh
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      JOURNEY_SERVICE_URL: http://journey-service:8000
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - airflow-home:/opt/airflow
+    ports:
+      - "8080:8080"
+    depends_on:
+      journey-service:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  airflow-home:

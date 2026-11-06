@@ -1,0 +1,13 @@
+# Paths are relative to the build context (this repo).
+# Only code enters the image: no data, outputs, models, .env or git metadata.
+**
+!pyproject.toml
+!README.md
+!src/
+!src/**
+!scripts/
+!scripts/**
+!taxonomy/
+!taxonomy/**
+**/__pycache__
+**/*.egg-info

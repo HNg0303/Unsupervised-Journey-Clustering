@@ -1,0 +1,31 @@
+# Service model (chạy riêng): mỗi lần chạy xử lý 1 ngày rồi thoát.
+#   event (do service Kafka lấy về) -> journey-infer (model 678, không train lại)
+#   -> taxonomy_id -> journey_summary.csv (-> MariaDB nếu LOAD_MARIADB=1)
+#
+# Đọc event từ storage của service Kafka (event-consumer-fastapi/docker-compose.yml):
+#   <EVENTS_PATH>/date=<ngày>/*.csv   (mặc định ../../event-consumer-fastapi/data/storage/events)
+# Kết quả ở ../output/daily/<model>/<ngày>/ (có customer_id, device_id: giữ trên máy này).
+#
+#   cd Unsupervised-Journey-Clustering/deploy
+#   cp model.env.example model.env
+#   docker compose build
+#   docker compose run --rm journey-model --date 2026-03-25
+#   docker compose run --rm journey-model --date 2026-03-25 --step load   # chỉ nạp lại MariaDB
+name: journey-model
+
+services:
+  journey-model:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: hifpt-journey-model:latest
+    env_file: model.env
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+      EVENTS_SOURCE: folder
+      EVENTS_DIR: /data/events
+    volumes:
+      # chỉ đọc: event theo ngày của service Kafka
+      - ${EVENTS_PATH:-../../event-consumer-fastapi/data/storage/events}:/data/events:ro
+      # model (partitioned_runs), tên cụm (scores) và kết quả hằng ngày (daily)
+      - ../output:/app/output

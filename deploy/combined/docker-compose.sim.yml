@@ -1,0 +1,12 @@
+# Cho journey-service vào chung network với event-consumer-fastapi/simulation/docker-compose.sim.yml,
+# gọi broker giả lập là kafka:9092 (localhost:9094 là cổng trên máy host).
+services:
+  journey-service:
+    networks: [default, kafka-sim]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+
+networks:
+  kafka-sim:
+    name: hifpt-event-simulation_default
+    external: true

@@ -1,0 +1,16 @@
+# Paths are relative to the build context (the hifpt-journey folder).
+# Only code enters the image: no data, outputs, models, .env or git metadata.
+**
+!event-consumer-fastapi/requirements.txt
+!event-consumer-fastapi/app/
+!event-consumer-fastapi/app/**
+!Unsupervised-Journey-Clustering/pyproject.toml
+!Unsupervised-Journey-Clustering/README.md
+!Unsupervised-Journey-Clustering/src/
+!Unsupervised-Journey-Clustering/src/**
+!Unsupervised-Journey-Clustering/scripts/
+!Unsupervised-Journey-Clustering/scripts/**
+!Unsupervised-Journey-Clustering/taxonomy/
+!Unsupervised-Journey-Clustering/taxonomy/**
+**/__pycache__
+**/*.egg-info
